@@ -1,14 +1,12 @@
 // ==================================================
-// 缇庡缇庡彂棰勭害绯荤粺 - 鏋佺畝鍗曟枃浠剁増锛圧ender鐩存帴閮ㄧ讲锛�
+// 缇庡缇庡彂棰勭害绯荤粺 - 淇鐗堬紙Render鐩存帴閮ㄧ讲锛�
 // ==================================================
 const express = require('express');
 const app = express();
 app.use(express.json());
-app.use(express.static('public'));
 
-// ========== 銆愪綘鍙敼杩欓噷锛佸簵鍚�/浠锋牸/鍛樺伐/鎺堟潈鍒版湡鏃ャ€�==========
 const CONFIG = {
-  shopName: "Bella Nail Nail Salon",
+  shopName: "Bella Nail Salon",
   currency: "S$",
   validUntil: "2026-09-19",
   adminPassword: "123456",
@@ -20,13 +18,12 @@ const CONFIG = {
   staff: ["Lily", "Coco", "Mia"],
   businessHours: { start: "10:00", end: "21:00" }
 };
-// ============== 閰嶇疆缁撴潫 涓嬮潰涓嶇敤纰� ==============
 
 let bookings = [];
 
 const checkAuth = (req, res, next) => {
   if (new Date() > new Date(CONFIG.validUntil) && req.path.startsWith('/api/new')) {
-    return res.json({ success: false, message: 'Service expired. Please renew to continue.' });
+    return res.json({ success: false, message: 'Service expired.' });
   }
   next();
 };
@@ -38,13 +35,14 @@ app.get('/api/bookings', (req, res) => res.json({ success: true, data: bookings 
 app.post('/api/new', (req, res) => {
   const b = { id: Date.now(), ...req.body, time: new Date().toLocaleString('zh-SG') };
   bookings.unshift(b);
-  res.json({ success: true, message: 'Booking successful! We will confirm soon.' });
+  res.json({ success: true, message: 'Booking successful!' });
 });
 
 app.post('/api/admin/login', (req, res) => {
   if (req.body.password === CONFIG.adminPassword) res.json({ success: true });
   else res.status(401).json({ success: false, message: 'Wrong password' });
 });
+
 app.post('/api/admin/update-status', (req, res) => {
   const item = bookings.find(b => b.id === req.body.id);
   if (item) item.status = req.body.status;
@@ -52,6 +50,13 @@ app.post('/api/admin/update-status', (req, res) => {
 });
 
 app.get('/', (req, res) => {
+  const serviceList = CONFIG.services.map(s => 
+    `<div class="item" data-id="${s.id}">${s.name} 路 ${CONFIG.currency}${s.price} 路 ${s.duration} min</div>`
+  ).join('');
+  const staffList = CONFIG.staff.map((s, i) => 
+    `<div class="item" data-staff="${i}">${s}</div>`
+  ).join('');
+
   res.send(`
     <!DOCTYPE html>
     <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -65,36 +70,86 @@ app.get('/', (req, res) => {
       .btn{width:100%; padding:14px; border:none; border-radius:10px; font-size:16px; cursor:pointer; margin:5px 0}
       .btn-primary{background:linear-gradient(135deg,#6366f1,#8b5cf6); color:white; font-weight:600}
       .btn-outline{background:white; border:1px solid #ddd; color:#333}
-      input,select{width:100%; padding:12px; border:1px solid #ddd; border-radius:8px; margin:6px 0; font-size:15px}
+      input{width:100%; padding:12px; border:1px solid #ddd; border-radius:8px; margin:6px 0; font-size:15px}
       .item{padding:10px; border-bottom:1px solid #f0f0f0; cursor:pointer}
       .item:hover{background:#f5f5f5}
-      .price{color:#e53e3e; font-weight:600}
+      .item.selected{background:#eef2ff}
       #success{display:none; text-align:center; padding:40px 20px}
-      .tag{display:inline-block; padding:2px 8px; border-radius:12px; font-size:12px; margin-left:8px}
-      .tag-pending{background:#fef3c7; color:#92400e}
-      .tag-confirm{background:#d1fae5; color:#065f46}
     </style></head>
     <body>
       <h1>鉁� ${CONFIG.shopName}</h1>
       <div id="booking-form">
-        <div class="card"><div class="title">Select Service</div><div id="service-list"></div></div>
-        <div class="card"><div class="title">Select Staff</div><div id="staff-list"></div></div>
+        <div class="card"><div class="title">Select Service</div><div id="service-list">${serviceList}</div></div>
+        <div class="card"><div class="title">Select Staff</div><div id="staff-list">${staffList}</div></div>
         <div class="card"><div class="title">Date & Time</div><input type="date" id="date"><input type="time" id="time"></div>
         <div class="card"><div class="title">Your Info</div><input type="text" id="name" placeholder="Name"><input type="tel" id="phone" placeholder="Phone"></div>
-        <button class="btn btn-primary" onclick="submitBooking()">Confirm Booking</button>
-        <button class="btn btn-outline" onclick="showAdmin()">Admin Login</button>
+        <button class="btn btn-primary" id="submit-btn">Confirm Booking</button>
+        <button class="btn btn-outline" id="admin-btn">Admin Login</button>
       </div>
       <div id="success"><div style="font-size:50px;">鉁�</div><h2>Booking Submitted!</h2><p style="color:#666; margin-top:10px;">We will confirm shortly</p><button class="btn btn-primary" onclick="location.reload()" style="margin-top:20px;">Back to Home</button></div>
       <script>
-        let selected = { service:null, staff:null };
-        const CONFIG = ${JSON.stringify(CONFIG)};
-        function renderServices(){const list=document.getElementById('service-list');list.innerHTML=CONFIG.services.map(s=>`<div class="item" onclick="selectService(${s.id})" id="svc-${s.id}">${s.name} 路 ${CONFIG.currency}${s.price} 路 ${s.duration} min</div>`).join('');}
-        function renderStaff(){const list=document.getElementById('staff-list');list.innerHTML=CONFIG.staff.map((s,i)=>`<div class="item" onclick="selectStaff(${i})" id="stf-${i}">${s}</div>`).join('');}
-        function selectService(id){selected.service=CONFIG.services.find(s=>s.id===id);document.querySelectorAll('#service-list .item').forEach(el=>el.style.background='');document.getElementById('svc-'+id).style.background='#eef2ff';}
-        function selectStaff(i){selected.staff=CONFIG.staff[i];document.querySelectorAll('#staff-list .item').forEach(el=>el.style.background='');document.getElementById('stf-'+i).style.background='#eef2ff';}
-        async function submitBooking(){const name=document.getElementById('name').value.trim(),phone=document.getElementById('phone').value.trim(),date=document.getElementById('date').value,time=document.getElementById('time').value;if(!selected.service||!selected.staff||!name||!phone||!date||!time)return alert('Please fill all fields');const res=await fetch('/api/new',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...selected,customerName:name,phone,date,time,status:'Pending'})});const data=await res.json();if(data.success){document.getElementById('booking-form').style.display='none';document.getElementById('success').style.display='block';}else alert(data.message);}
-        function showAdmin(){const pwd=prompt('Enter admin password');if(!pwd)return;fetch('/api/admin/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:pwd})}).then(r=>r.json()).then(d=>{if(d.success)window.location.href='/admin.html';else alert('Wrong password');});}
-        renderServices();renderStaff();document.getElementById('date').valueAsDate=new Date();
+        let selectedService = null, selectedStaff = null;
+        const services = ${JSON.stringify(CONFIG.services)};
+        const staff = ${JSON.stringify(CONFIG.staff)};
+
+        document.getElementById('service-list').addEventListener('click', e => {
+          if (e.target.classList.contains('item')) {
+            document.querySelectorAll('#service-list .item').forEach(el => el.classList.remove('selected'));
+            e.target.classList.add('selected');
+            selectedService = services.find(s => s.id === parseInt(e.target.dataset.id));
+          }
+        });
+
+        document.getElementById('staff-list').addEventListener('click', e => {
+          if (e.target.classList.contains('item')) {
+            document.querySelectorAll('#staff-list .item').forEach(el => el.classList.remove('selected'));
+            e.target.classList.add('selected');
+            selectedStaff = staff[parseInt(e.target.dataset.staff)];
+          }
+        });
+
+        document.getElementById('submit-btn').addEventListener('click', async () => {
+          const name = document.getElementById('name').value.trim();
+          const phone = document.getElementById('phone').value.trim();
+          const date = document.getElementById('date').value;
+          const time = document.getElementById('time').value;
+          if (!selectedService || !selectedStaff || !name || !phone || !date || !time) {
+            return alert('Please fill all fields');
+          }
+          const res = await fetch('/api/new', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              service: selectedService,
+              staff: selectedStaff,
+              customerName: name,
+              phone, date, time,
+              status: 'Pending'
+            })
+          });
+          const data = await res.json();
+          if (data.success) {
+            document.getElementById('booking-form').style.display = 'none';
+            document.getElementById('success').style.display = 'block';
+          } else {
+            alert(data.message);
+          }
+        });
+
+        document.getElementById('admin-btn').addEventListener('click', () => {
+          const pwd = prompt('Enter admin password');
+          if (!pwd) return;
+          fetch('/api/admin/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ password: pwd })
+          }).then(r => r.json()).then(d => {
+            if (d.success) window.location.href = '/admin.html';
+            else alert('Wrong password');
+          });
+        });
+
+        document.getElementById('date').valueAsDate = new Date();
       </script>
     </body></html>
   `);
@@ -124,9 +179,32 @@ app.get('/admin.html', (req, res) => {
       <div class="info"><strong>Shop:</strong> ${CONFIG.shopName}<br><strong>Valid until:</strong> ${CONFIG.validUntil}<br><strong>Total:</strong> <span id="count">0</span></div>
       <div id="list"></div>
       <script>
-        async function load(){const res=await fetch('/api/bookings');const data=await res.json();document.getElementById('count').textContent=data.data.length;document.getElementById('list').innerHTML=data.data.map(b=>`<div class="card"><div><strong>${b.customerName}</strong> 路 ${b.phone}</div><div>${b.service.name} 路 ${b.staff} 路 ${b.date} ${b.time}</div><div style="margin-top:8px;"><span class="tag ${b.status==='Confirmed'?'confirm':b.status==='Cancelled'?'cancel':'pending'}">${b.status||'Pending'}</span><button class="btn-confirm" onclick="updateStatus(${b.id},'Confirmed')">Confirm</button><button class="btn-cancel" onclick="updateStatus(${b.id},'Cancelled')">Cancel</button></div></div>`).join('');}
-        async function updateStatus(id,status){await fetch('/api/admin/update-status',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,status})});load();}
-        load();setInterval(load,10000);
+        async function load(){
+          const res = await fetch('/api/bookings');
+          const data = await res.json();
+          document.getElementById('count').textContent = data.data.length;
+          document.getElementById('list').innerHTML = data.data.map(b => \`
+            <div class="card">
+              <div><strong>\${b.customerName}</strong> 路 \${b.phone}</div>
+              <div>\${b.service.name} 路 \${b.staff} 路 \${b.date} \${b.time}</div>
+              <div style="margin-top:8px;">
+                <span class="tag \${b.status==='Confirmed'?'confirm':b.status==='Cancelled'?'cancel':'pending'}">\${b.status||'Pending'}</span>
+                <button class="btn-confirm" onclick="updateStatus(\${b.id},'Confirmed')">Confirm</button>
+                <button class="btn-cancel" onclick="updateStatus(\${b.id},'Cancelled')">Cancel</button>
+              </div>
+            </div>
+          \`).join('');
+        }
+        async function updateStatus(id, status){
+          await fetch('/api/admin/update-status', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id, status })
+          });
+          load();
+        }
+        load();
+        setInterval(load, 10000);
       </script>
     </body></html>
   `);
