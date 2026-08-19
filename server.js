@@ -6,17 +6,37 @@ const app = express();
 app.use(express.json());
 
 const CONFIG = {
-  shopName: "Bella Nail Salon",
+  shopName: "GG-Beauty",
   currency: "S$",
   validUntil: "2026-09-19",
   adminPassword: "123456",
   services: [
-    { id:1, name: "Basic Manicure", price: 38, duration: 60 },
-    { id:2, name: "Gel Extension", price: 68, duration: 90 },
-    { id:3, name: "Nail Repair", price: 28, duration: 45 }
+    // 鍏荤敓鎶ょ悊
+    { id:101, name: "鍏荤敓 - 鑲╅鑸掔紦鎶ょ悊", price: null, duration: 60 },
+    { id:102, name: "鍏荤敓 - 韬綋鑸掔紦鎶ょ悊", price: null, duration: 60 },
+    { id:103, name: "鍏荤敓 - 缁忕粶鎶ょ悊", price: null, duration: 60 },
+    { id:104, name: "鍏荤敓 - 娣嬪反鎶ょ悊", price: null, duration: 60 },
+    { id:105, name: "鍏荤敓 - 绮炬补韬綋鎶ょ悊", price: null, duration: 60 },
+    { id:106, name: "鍏荤敓 - 鑵归儴鎶ょ悊", price: null, duration: 45 },
+    { id:107, name: "鍏荤敓 - 鑳岄儴鎶ょ悊", price: null, duration: 45 },
+    // 闈㈤儴鎶ょ悊 / 鎹忚劯
+    { id:201, name: "闈㈤儴 - 鍩虹闈㈤儴鎶ょ悊", price: null, duration: 60 },
+    { id:202, name: "闈㈤儴 - 娣卞眰娓呮磥", price: null, duration: 60 },
+    { id:203, name: "闈㈤儴 - 琛ユ按鎶ょ悊", price: null, duration: 60 },
+    { id:204, name: "闈㈤儴 - 闈㈤儴娣嬪反鎶ょ悊", price: null, duration: 60 },
+    { id:205, name: "闈㈤儴 - 闈㈤儴濉戝舰鎶ょ悊", price: null, duration: 60 },
+    { id:206, name: "闈㈤儴 - 鎻愭媺绱ц嚧鎶ょ悊", price: null, duration: 75 },
+    { id:207, name: "闈㈤儴 - 灏廣鑴告姢鐞�", price: null, duration: 75 },
+    // 韬綋濉戝舰
+    { id:301, name: "濉戝舰 - 鑵归儴濉戝舰", price: null, duration: 60 },
+    { id:302, name: "濉戝舰 - 鑵拌吂鎶ょ悊", price: null, duration: 60 },
+    { id:303, name: "濉戝舰 - 鑵块儴濉戝舰", price: null, duration: 60 },
+    { id:304, name: "濉戝舰 - 韬綋绱ц嚧鎶ょ悊", price: null, duration: 75 },
+    { id:305, name: "濉戝舰 - 鍏ㄨ韩濉戝舰鎶ょ悊", price: null, duration: 90 },
+    { id:306, name: "濉戝舰 - 灞€閮ㄥ褰㈡姢鐞�", price: null, duration: 60 }
   ],
   staff: ["Lily", "Coco", "Mia"],
-  businessHours: { start: "10:00", end: "21:00" }
+  businessHours: { start: "10:00", end: "20:30" }
 };
 
 let bookings = [];
