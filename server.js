@@ -3,11 +3,40 @@
 // ==================================================
 const express = require('express');
 const path = require('path');
+const { Pool } = require('pg');
+
 const app = express();
+
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: {
+    rejectUnauthorized: false
+  }
+});
 
 // 中间件
 app.use(express.json());
 app.use(express.static('public')); // 提供静态文件服务
+
+app.get('/api/db-test', async (req, res) => {
+  try {
+    const result = await pool.query('SELECT NOW() AS now');
+
+    res.json({
+      success: true,
+      message: 'Database connected successfully',
+      time: result.rows[0].now
+    });
+
+  } catch (error) {
+    console.error(error);
+
+    res.status(500).json({
+      success: false,
+      message: 'Database connection failed'
+    });
+  }
+});
 
 // ==================================================
 // 配置数据
