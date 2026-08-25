@@ -37,7 +37,56 @@ app.get('/api/db-test', async (req, res) => {
     });
   }
 });
+app.get('/api/appointments-db', async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT
+        a.id,
+        a.appointment_no,
+        a.start_at,
+        a.end_at,
+        a.status,
+        a.booking_source,
 
+        c.name AS customer_name,
+        c.phone AS customer_phone,
+        c.email AS customer_email,
+
+        s.name AS service_name,
+        s.duration_minutes,
+        s.price,
+
+        st.name AS staff_name,
+        st.staff_code
+
+      FROM appointments a
+
+      JOIN customers c
+        ON c.id = a.customer_id
+
+      JOIN services s
+        ON s.id = a.service_id
+
+      JOIN staff st
+        ON st.id = a.staff_id
+
+      ORDER BY a.start_at DESC
+    `);
+
+    res.json({
+      success: true,
+      data: result.rows
+    });
+
+  } catch (error) {
+    console.error('Read appointments error:', error);
+
+    res.status(500).json({
+      success: false,
+      message: '读取数据库预约失败'
+    });
+  }
+});
 // ==================================================
 // 配置数据
 // ==================================================
