@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <title>GG-Beauty 在线预约</title>
+
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: Arial, "PingFang SC", sans-serif;
+      background: #f6f6f6;
+      color: #222;
+    }
+
+    .container {
+      max-width: 520px;
+      margin: 0 auto;
+      padding: 24px 18px 50px;
+    }
+
+    .header {
+      text-align: center;
+      margin-bottom: 24px;
+    }
+
+    .header h1 {
+      margin-bottom: 6px;
+    }
+
+    .header p {
+      color: #777;
+      margin-top: 0;
+    }
+
+    .card {
+      background: white;
+      border-radius: 16px;
+      padding: 20px;
+      margin-bottom: 16px;
+      box-shadow: 0 4px 18px rgba(0,0,0,0.06);
+    }
+
+    label {
+      display: block;
+      margin-top: 14px;
+      margin-bottom: 6px;
+      font-weight: 600;
+    }
+
+    input,
+    select {
+      width: 100%;
+      padding: 13px;
+      border: 1px solid #ddd;
+      border-radius: 10px;
+      font-size: 16px;
+      background: white;
+    }
+
+    button {
+      width: 100%;
+      border: none;
+      padding: 15px;
+      border-radius: 12px;
+      font-size: 17px;
+      font-weight: 600;
+      cursor: pointer;
+      margin-top: 18px;
+      background: #111;
+      color: white;
+    }
+
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .time-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+      margin-top: 12px;
+    }
+
+    .time-btn {
+      padding: 11px 5px;
+      border: 1px solid #ddd;
+      border-radius: 9px;
+      text-align: center;
+      background: white;
+      cursor: pointer;
+    }
+
+    .time-btn.selected {
+      background: #111;
+      color: white;
+      border-color: #111;
+    }
+
+    .message {
+      margin-top: 15px;
+      text-align: center;
+      line-height: 1.6;
+    }
+
+    .success {
+      color: green;
+    }
+
+    .error {
+      color: #c62828;
+    }
+  </style>
+</head>
+
+<body>
+
+<div class="container">
+
+  <div class="header">
+    <h1>GG-Beauty</h1>
+    <p>Online Appointment · 在线预约</p>
+  </div>
+
+  <div class="card">
+
+    <label>服务项目</label>
+    <select id="service">
+      <option value="Test Haircut">Test Haircut · 测试剪发</option>
+    </select>
+
+    <label>选择员工</label>
+    <select id="staff">
+      <option value="Staff 01">Staff 01</option>
+    </select>
+
+    <label>预约日期</label>
+    <input type="date" id="date">
+
+    <label>可预约时间</label>
+
+    <div id="times" class="time-grid">
+      <div>请先选择日期</div>
+    </div>
+
+  </div>
+
+  <div class="card">
+
+    <label>姓名</label>
+    <input
+      type="text"
+      id="customerName"
+      placeholder="请输入姓名"
+    >
+
+    <label>手机号码</label>
+    <input
+      type="tel"
+      id="phone"
+      placeholder="请输入手机号码"
+    >
+
+    <label>Email（选填）</label>
+    <input
+      type="email"
+      id="email"
+      placeholder="example@email.com"
+    >
+
+    <button id="submitBtn">
+      确认预约
+    </button>
+
+    <div id="message" class="message"></div>
+
+  </div>
+
+</div>
+
+<script>
+
+const SHOP_SLUG = 'gg-beauty-test';
+
+let selectedTime = '';
+
+const dateInput =
+  document.getElementById('date');
+
+const staffInput =
+  document.getElementById('staff');
+
+const serviceInput =
+  document.getElementById('service');
+
+const timesBox =
+  document.getElementById('times');
+
+const messageBox =
+  document.getElementById('message');
+
+
+// 不允许选择过去日期
+const today =
+  new Date().toISOString().split('T')[0];
+
+dateInput.min = today;
+
+
+// 日期 / 员工 / 项目变化时重新读取时间
+dateInput.addEventListener(
+  'change',
+  loadAvailableTimes
+);
+
+staffInput.addEventListener(
+  'change',
+  loadAvailableTimes
+);
+
+serviceInput.addEventListener(
+  'change',
+  loadAvailableTimes
+);
+
+
+// 获取数据库可预约时间
+async function loadAvailableTimes() {
+
+  const date = dateInput.value;
+  const staff = staffInput.value;
+  const service = serviceInput.value;
+
+  selectedTime = '';
+
+  if (!date) {
+    timesBox.innerHTML =
+      '<div>请先选择日期</div>';
+    return;
+  }
+
+  timesBox.innerHTML =
+    '<div>正在查询...</div>';
+
+  try {
+
+    const url =
+      `/api/available-times-db` +
+      `?shopSlug=${encodeURIComponent(SHOP_SLUG)}` +
+      `&date=${encodeURIComponent(date)}` +
+      `&staff=${encodeURIComponent(staff)}` +
+      `&service=${encodeURIComponent(service)}`;
+
+    const response =
+      await fetch(url);
+
+    const result =
+      await response.json();
+
+    if (!result.success) {
+      throw new Error(
+        result.message || '获取时间失败'
+      );
+    }
+
+    renderTimes(result.data);
+
+  } catch (error) {
+
+    timesBox.innerHTML =
+      `<div class="error">${error.message}</div>`;
+
+  }
+}
+
+
+// 显示时间按钮
+function renderTimes(times) {
+
+  timesBox.innerHTML = '';
+
+  if (!times || times.length === 0) {
+
+    timesBox.innerHTML =
+      '<div>当天暂无可预约时间</div>';
+
+    return;
+  }
+
+  times.forEach(time => {
+
+    const button =
+      document.createElement('div');
+
+    button.className = 'time-btn';
+
+    button.textContent = time;
+
+    button.onclick = () => {
+
+      document
+        .querySelectorAll('.time-btn')
+        .forEach(btn =>
+          btn.classList.remove('selected')
+        );
+
+      button.classList.add('selected');
+
+      selectedTime = time;
+    };
+
+    timesBox.appendChild(button);
+  });
+}
+
+
+// 提交预约
+document
+  .getElementById('submitBtn')
+  .addEventListener(
+    'click',
+    async () => {
+
+      const customerName =
+        document
+          .getElementById('customerName')
+          .value
+          .trim();
+
+      const phone =
+        document
+          .getElementById('phone')
+          .value
+          .trim();
+
+      const email =
+        document
+          .getElementById('email')
+          .value
+          .trim();
+
+      const date =
+        dateInput.value;
+
+      const staff =
+        staffInput.value;
+
+      const service =
+        serviceInput.value;
+
+      if (
+        !customerName ||
+        !phone ||
+        !date ||
+        !selectedTime
+      ) {
+
+        messageBox.className =
+          'message error';
+
+        messageBox.textContent =
+          '请填写姓名、手机、日期并选择时间';
+
+        return;
+      }
+
+      const submitBtn =
+        document.getElementById('submitBtn');
+
+      submitBtn.disabled = true;
+
+      submitBtn.textContent =
+        '正在提交...';
+
+      messageBox.textContent = '';
+
+      try {
+
+        const response =
+          await fetch(
+            '/api/new-db',
+            {
+              method: 'POST',
+
+              headers: {
+                'Content-Type':
+                  'application/json'
+              },
+
+              body: JSON.stringify({
+                shopSlug: SHOP_SLUG,
+                service,
+                staff,
+                customerName,
+                phone,
+                email,
+                date,
+                time: selectedTime
+              })
+            }
+          );
+
+        const result =
+          await response.json();
+
+        if (!result.success) {
+          throw new Error(
+            result.message || '预约失败'
+          );
+        }
+
+        messageBox.className =
+          'message success';
+
+        messageBox.innerHTML =
+          `✅ 预约成功！<br>` +
+          `${date} ${selectedTime}<br>` +
+          `${service} · ${staff}`;
+
+        // 成功后重新读取时间
+        await loadAvailableTimes();
+
+      } catch (error) {
+
+        messageBox.className =
+          'message error';
+
+        messageBox.textContent =
+          error.message;
+
+      } finally {
+
+        submitBtn.disabled = false;
+
+        submitBtn.textContent =
+          '确认预约';
+      }
+    }
+  );
+
+</script>
+
+</body>
+</html>
