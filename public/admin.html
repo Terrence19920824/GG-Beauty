@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <title>GG-Beauty 老板端预约后台</title>
+
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: Arial, "PingFang SC", sans-serif;
+      background: #f5f5f5;
+      color: #222;
+    }
+
+    .container {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 24px 16px 50px;
+    }
+
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 15px;
+      margin-bottom: 20px;
+    }
+
+    .header h1 {
+      margin: 0;
+      font-size: 28px;
+    }
+
+    .header p {
+      margin: 6px 0 0;
+      color: #777;
+    }
+
+    .refresh-btn {
+      border: none;
+      background: #111;
+      color: white;
+      padding: 12px 18px;
+      border-radius: 10px;
+      cursor: pointer;
+      font-size: 15px;
+    }
+
+    .summary {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+      margin-bottom: 18px;
+    }
+
+    .summary-card {
+      background: white;
+      border-radius: 14px;
+      padding: 18px;
+      box-shadow: 0 4px 15px rgba(0,0,0,0.05);
+    }
+
+    .summary-card .number {
+      font-size: 28px;
+      font-weight: bold;
+      margin-top: 5px;
+    }
+
+    .summary-card .label {
+      color: #777;
+      font-size: 14px;
+    }
+
+    .card {
+      background: white;
+      border-radius: 16px;
+      padding: 18px;
+      box-shadow: 0 4px 18px rgba(0,0,0,0.06);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    th,
+    td {
+      padding: 13px 10px;
+      text-align: left;
+      border-bottom: 1px solid #eee;
+      font-size: 14px;
+    }
+
+    th {
+      background: #fafafa;
+      font-weight: 600;
+    }
+
+    .status {
+      display: inline-block;
+      padding: 5px 9px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .pending {
+      background: #fff3cd;
+      color: #8a6d00;
+    }
+
+    .confirmed {
+      background: #d9f7e8;
+      color: #087443;
+    }
+
+    .cancelled {
+      background: #fde2e2;
+      color: #a61b1b;
+    }
+
+    .completed {
+      background: #e8e8e8;
+      color: #444;
+    }
+
+    .empty,
+    .error,
+    .loading {
+      padding: 30px 10px;
+      text-align: center;
+      color: #777;
+    }
+
+    .error {
+      color: #c62828;
+    }
+
+    @media (max-width: 800px) {
+      .summary {
+        grid-template-columns: 1fr;
+      }
+
+      .card {
+        overflow-x: auto;
+      }
+
+      table {
+        min-width: 850px;
+      }
+
+      .header {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+    }
+  </style>
+</head>
+
+<body>
+
+<div class="container">
+
+  <div class="header">
+    <div>
+      <h1>GG-Beauty 老板端</h1>
+      <p>Appointment Dashboard · 预约管理后台</p>
+    </div>
+
+    <button
+      class="refresh-btn"
+      onclick="loadAppointments()"
+    >
+      刷新预约
+    </button>
+  </div>
+
+  <div class="summary">
+
+    <div class="summary-card">
+      <div class="label">全部预约</div>
+      <div class="number" id="totalCount">0</div>
+    </div>
+
+    <div class="summary-card">
+      <div class="label">待确认</div>
+      <div class="number" id="pendingCount">0</div>
+    </div>
+
+    <div class="summary-card">
+      <div class="label">今日预约</div>
+      <div class="number" id="todayCount">0</div>
+    </div>
+
+  </div>
+
+  <div class="card">
+
+    <div id="content" class="loading">
+      正在读取预约...
+    </div>
+
+  </div>
+
+</div>
+
+
+<script>
+
+const content =
+  document.getElementById('content');
+
+
+// 格式化新加坡时间
+function formatSingaporeTime(dateString) {
+
+  if (!dateString) return '-';
+
+  const date =
+    new Date(dateString);
+
+  return new Intl.DateTimeFormat(
+    'zh-CN',
+    {
+      timeZone: 'Asia/Singapore',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false
+    }
+  ).format(date);
+}
+
+
+// 状态中文
+function getStatusText(status) {
+
+  const map = {
+    pending: '待确认',
+    confirmed: '已确认',
+    cancelled: '已取消',
+    completed: '已完成'
+  };
+
+  return map[status] || status || '-';
+}
+
+
+// 今天日期（新加坡）
+function getSingaporeToday() {
+
+  return new Intl.DateTimeFormat(
+    'en-CA',
+    {
+      timeZone: 'Asia/Singapore',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    }
+  ).format(new Date());
+}
+
+
+// 加载预约
+async function loadAppointments() {
+
+  content.className = 'loading';
+
+  content.textContent =
+    '正在读取预约...';
+
+  try {
+
+    const response =
+      await fetch('/api/appointments-db');
+
+    const result =
+      await response.json();
+
+    if (!result.success) {
+      throw new Error(
+        result.message || '读取预约失败'
+      );
+    }
+
+    const appointments =
+      result.data || [];
+
+    updateSummary(appointments);
+
+    renderAppointments(appointments);
+
+  } catch (error) {
+
+    content.className = 'error';
+
+    content.textContent =
+      error.message;
+
+  }
+}
+
+
+// 更新顶部统计
+function updateSummary(appointments) {
+
+  document
+    .getElementById('totalCount')
+    .textContent =
+    appointments.length;
+
+  document
+    .getElementById('pendingCount')
+    .textContent =
+    appointments.filter(
+      item => item.status === 'pending'
+    ).length;
+
+  const today =
+    getSingaporeToday();
+
+  const todayCount =
+    appointments.filter(item => {
+
+      if (!item.start_at) {
+        return false;
+      }
+
+      const date =
+        new Intl.DateTimeFormat(
+          'en-CA',
+          {
+            timeZone: 'Asia/Singapore',
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit'
+          }
+        ).format(
+          new Date(item.start_at)
+        );
+
+      return date === today;
+
+    }).length;
+
+  document
+    .getElementById('todayCount')
+    .textContent =
+    todayCount;
+}
+
+
+// 显示预约表格
+function renderAppointments(appointments) {
+
+  if (
+    !appointments ||
+    appointments.length === 0
+  ) {
+
+    content.className = 'empty';
+
+    content.textContent =
+      '目前没有预约';
+
+    return;
+  }
+
+  content.className = '';
+
+  const rows =
+    appointments.map(item => {
+
+      const statusClass =
+        item.status || 'pending';
+
+      return `
+        <tr>
+
+          <td>
+            ${formatSingaporeTime(
+              item.start_at
+            )}
+          </td>
+
+          <td>
+            ${item.customer_name || '-'}
+          </td>
+
+          <td>
+            ${item.customer_phone || '-'}
+          </td>
+
+          <td>
+            ${item.service_name || '-'}
+          </td>
+
+          <td>
+            ${item.staff_name || '-'}
+          </td>
+
+          <td>
+            <span
+              class="status ${statusClass}"
+            >
+              ${getStatusText(
+                item.status
+              )}
+            </span>
+          </td>
+
+        </tr>
+      `;
+
+    }).join('');
+
+  content.innerHTML = `
+    <table>
+
+      <thead>
+        <tr>
+          <th>预约时间</th>
+          <th>顾客姓名</th>
+          <th>电话</th>
+          <th>项目</th>
+          <th>员工</th>
+          <th>状态</th>
+        </tr>
+      </thead>
+
+      <tbody>
+        ${rows}
+      </tbody>
+
+    </table>
+  `;
+}
+
+
+// 页面打开自动读取
+loadAppointments();
+
+</script>
+
+</body>
+</html>
