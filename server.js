@@ -484,7 +484,168 @@ app.get('/api/available-times', (req, res) => {
     res.json({ success: true, data: allTimes });
   }
 });
+// ===============================================
+// 新版可预约时间 API - 从 Supabase PostgreSQL 查询
+// 暂时保留旧 /api/available-times
+// ===============================================
+app.get('/api/available-times-db', async (req, res) => {
+  const { shopSlug, date, staff, service } = req.query;
 
+  if (!shopSlug || !date || !staff || !service) {
+    return res.status(400).json({
+      success: false,
+      message: '缺少 shopSlug、date、staff 或 service'
+    });
+  }
+
+  try {
+    // 1. 找店铺
+    const shopResult = await pool.query(
+      `
+      SELECT id
+      FROM shops
+      WHERE slug = $1
+        AND status = 'active'
+      LIMIT 1
+      `,
+      [shopSlug]
+    );
+
+    if (shopResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: '找不到店铺'
+      });
+    }
+
+    const shopId = shopResult.rows[0].id;
+
+    // 2. 找员工
+    const staffResult = await pool.query(
+      `
+      SELECT id
+      FROM staff
+      WHERE shop_id = $1
+        AND name = $2
+        AND is_active = true
+        AND bookable = true
+      LIMIT 1
+      `,
+      [shopId, staff]
+    );
+
+    if (staffResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: '找不到员工'
+      });
+    }
+
+    const staffId = staffResult.rows[0].id;
+
+    // 3. 找服务项目，并取得服务时长
+    const serviceResult = await pool.query(
+      `
+      SELECT id, duration_minutes
+      FROM services
+      WHERE shop_id = $1
+        AND name = $2
+        AND is_active = true
+        AND bookable = true
+      LIMIT 1
+      `,
+      [shopId, service]
+    );
+
+    if (serviceResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: '找不到服务项目'
+      });
+    }
+
+    const durationMinutes =
+      serviceResult.rows[0].duration_minutes;
+
+    // 4. 生成当天基础时间
+    const allTimes = [
+      '10:00', '10:30', '11:00', '11:30',
+      '12:00', '12:30', '13:00', '13:30',
+      '14:00', '14:30', '15:00', '15:30',
+      '16:00', '16:30', '17:00', '17:30',
+      '18:00', '18:30', '19:00', '19:30',
+      '20:00', '20:30'
+    ];
+
+    // 5. 查询这位员工当天已有预约
+    const dayStart = new Date(
+      `${date}T00:00:00+08:00`
+    );
+
+    const dayEnd = new Date(
+      `${date}T23:59:59+08:00`
+    );
+
+    const bookingResult = await pool.query(
+      `
+      SELECT start_at, end_at
+      FROM appointments
+      WHERE shop_id = $1
+        AND staff_id = $2
+        AND status <> 'cancelled'
+        AND start_at < $4
+        AND end_at > $3
+      ORDER BY start_at ASC
+      `,
+      [shopId, staffId, dayStart, dayEnd]
+    );
+
+    // 6. 根据服务时长过滤掉有冲突的时间
+    const availableTimes = allTimes.filter(time => {
+      const slotStart = new Date(
+        `${date}T${time}:00+08:00`
+      );
+
+      const slotEnd = new Date(
+        slotStart.getTime() +
+        durationMinutes * 60 * 1000
+      );
+
+      const hasConflict = bookingResult.rows.some(
+        booking => {
+          const bookedStart =
+            new Date(booking.start_at);
+
+          const bookedEnd =
+            new Date(booking.end_at);
+
+          return (
+            slotStart < bookedEnd &&
+            slotEnd > bookedStart
+          );
+        }
+      );
+
+      return !hasConflict;
+    });
+
+    res.json({
+      success: true,
+      data: availableTimes
+    });
+
+  } catch (error) {
+    console.error(
+      'Available times DB error:',
+      error
+    );
+
+    res.status(500).json({
+      success: false,
+      message: '获取可预约时间失败'
+    });
+  }
+});
 // ==================================================
 // 管理员 API
 // ==================================================
