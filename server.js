@@ -677,7 +677,89 @@ app.post('/api/admin/update-status', (req, res) => {
     res.json({ success: false, message: '未找到该预约' });
   }
 });
+// ==================================================
+// 新版管理员预约状态 API - 写入 Supabase PostgreSQL
+// 暂时保留旧 /api/admin/update-status
+// ==================================================
+app.post('/api/admin/update-status-db', async (req, res) => {
+  if (!adminSession[req.ip]) {
+    return res.status(401).json({
+      success: false,
+      message: '请先登录'
+    });
+  }
 
+  const { id, status } = req.body;
+
+  const allowedStatuses = [
+    'pending',
+    'confirmed',
+    'cancelled',
+    'completed'
+  ];
+
+  if (!id || !status) {
+    return res.status(400).json({
+      success: false,
+      message: '缺少预约ID或状态'
+    });
+  }
+
+  if (!allowedStatuses.includes(status)) {
+    return res.status(400).json({
+      success: false,
+      message: '预约状态不正确'
+    });
+  }
+
+  try {
+    const result = await pool.query(
+      `
+      UPDATE appointments
+      SET
+        status = $1,
+        cancelled_at = CASE
+          WHEN $1 = 'cancelled' THEN NOW()
+          ELSE cancelled_at
+        END,
+        service_completed_at = CASE
+          WHEN $1 = 'completed' THEN NOW()
+          ELSE service_completed_at
+        END,
+        updated_at = NOW()
+      WHERE id = $2
+      RETURNING
+        id,
+        status,
+        start_at,
+        end_at,
+        updated_at
+      `,
+      [status, id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: '未找到该预约'
+      });
+    }
+
+    res.json({
+      success: true,
+      message: '预约状态更新成功',
+      data: result.rows[0]
+    });
+
+  } catch (error) {
+    console.error('Update appointment status DB error:', error);
+
+    res.status(500).json({
+      success: false,
+      message: '更新预约状态失败'
+    });
+  }
+});
 // ==================================================
 // 启动服务器
 // ==================================================
