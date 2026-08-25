@@ -221,7 +221,243 @@ app.post('/api/new', (req, res) => {
     data: booking 
   });
 });
+// ===============================================
+// 新版预约 API - 写入 Supabase PostgreSQL
+// 暂时保留旧 /api/new，测试成功后再切换
+// ===============================================
+app.post('/api/new-db', async (req, res) => {
+  const {
+    shopSlug,
+    service,
+    staff,
+    customerName,
+    phone,
+    email,
+    date,
+    time
+  } = req.body;
 
+  if (
+    !shopSlug ||
+    !service ||
+    !staff ||
+    !customerName ||
+    !phone ||
+    !date ||
+    !time
+  ) {
+    return res.status(400).json({
+      success: false,
+      message: '请完整填写所有必填信息'
+    });
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    // 1. 找店铺
+    const shopResult = await client.query(
+      `
+      SELECT id
+      FROM shops
+      WHERE slug = $1
+        AND status = 'active'
+      LIMIT 1
+      `,
+      [shopSlug]
+    );
+
+    if (shopResult.rows.length === 0) {
+      throw new Error('找不到店铺');
+    }
+
+    const shopId = shopResult.rows[0].id;
+
+    // 2. 找营业地点
+    const locationResult = await client.query(
+      `
+      SELECT id
+      FROM locations
+      WHERE shop_id = $1
+        AND is_active = true
+      ORDER BY created_at ASC
+      LIMIT 1
+      `,
+      [shopId]
+    );
+
+    if (locationResult.rows.length === 0) {
+      throw new Error('找不到营业地点');
+    }
+
+    const locationId = locationResult.rows[0].id;
+
+    // 3. 找服务项目
+    const serviceResult = await client.query(
+      `
+      SELECT id, duration_minutes
+      FROM services
+      WHERE shop_id = $1
+        AND name = $2
+        AND is_active = true
+        AND bookable = true
+      LIMIT 1
+      `,
+      [shopId, service]
+    );
+
+    if (serviceResult.rows.length === 0) {
+      throw new Error('找不到服务项目');
+    }
+
+    const serviceId = serviceResult.rows[0].id;
+    const durationMinutes = serviceResult.rows[0].duration_minutes;
+
+    // 4. 找员工
+    const staffResult = await client.query(
+      `
+      SELECT id
+      FROM staff
+      WHERE shop_id = $1
+        AND name = $2
+        AND is_active = true
+        AND bookable = true
+      LIMIT 1
+      `,
+      [shopId, staff]
+    );
+
+    if (staffResult.rows.length === 0) {
+      throw new Error('找不到员工');
+    }
+
+    const staffId = staffResult.rows[0].id;
+
+    // 5. 找顾客；没有就创建
+    let customerResult = await client.query(
+      `
+      SELECT id
+      FROM customers
+      WHERE shop_id = $1
+        AND phone = $2
+      LIMIT 1
+      `,
+      [shopId, phone]
+    );
+
+    let customerId;
+
+    if (customerResult.rows.length > 0) {
+      customerId = customerResult.rows[0].id;
+    } else {
+      customerResult = await client.query(
+        `
+        INSERT INTO customers (
+          shop_id,
+          name,
+          phone,
+          email
+        )
+        VALUES ($1, $2, $3, $4)
+        RETURNING id
+        `,
+        [shopId, customerName, phone, email || null]
+      );
+
+      customerId = customerResult.rows[0].id;
+    }
+
+    // 6. 计算预约开始和结束时间
+    const startAt = new Date(`${date}T${time}:00+08:00`);
+    const endAt = new Date(
+      startAt.getTime() + durationMinutes * 60 * 1000
+    );
+
+    // 7. 数据库防撞单
+    const conflictResult = await client.query(
+      `
+      SELECT id
+      FROM appointments
+      WHERE shop_id = $1
+        AND staff_id = $2
+        AND status <> 'cancelled'
+        AND start_at < $4
+        AND end_at > $3
+      LIMIT 1
+      `,
+      [shopId, staffId, startAt, endAt]
+    );
+
+    if (conflictResult.rows.length > 0) {
+      await client.query('ROLLBACK');
+
+      return res.status(409).json({
+        success: false,
+        message: '该时间段已被预约，请选择其他时间'
+      });
+    }
+
+    // 8. 写入正式预约
+    const appointmentResult = await client.query(
+      `
+      INSERT INTO appointments (
+        shop_id,
+        location_id,
+        customer_id,
+        service_id,
+        staff_id,
+        start_at,
+        end_at,
+        status,
+        booking_source
+      )
+      VALUES (
+        $1, $2, $3, $4, $5,
+        $6, $7, 'pending', 'online'
+      )
+      RETURNING
+        id,
+        appointment_no,
+        start_at,
+        end_at,
+        status,
+        created_at
+      `,
+      [
+        shopId,
+        locationId,
+        customerId,
+        serviceId,
+        staffId,
+        startAt,
+        endAt
+      ]
+    );
+
+    await client.query('COMMIT');
+
+    res.json({
+      success: true,
+      message: '预约成功',
+      data: appointmentResult.rows[0]
+    });
+
+  } catch (error) {
+    await client.query('ROLLBACK');
+
+    console.error('Create appointment error:', error);
+
+    res.status(500).json({
+      success: false,
+      message: error.message || '预约失败'
+    });
+
+  } finally {
+    client.release();
+  }
+});
 // 获取可预约时间
 app.get('/api/available-times', (req, res) => {
   const { date, staff } = req.query;
