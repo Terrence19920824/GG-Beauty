@@ -417,8 +417,14 @@ function renderAppointments(appointments) {
             </span>
           </td>
 
-        </tr>
-      `;
+        
+      <td>
+  <button onclick="updateAppointmentStatus('${item.id}', 'confirmed')">确认</button>
+  <button onclick="updateAppointmentStatus('${item.id}', 'completed')">完成</button>
+  <button onclick="updateAppointmentStatus('${item.id}', 'cancelled')">取消</button>
+</td>
+</tr>
+`;
 
     }).join('');
 
@@ -433,6 +439,7 @@ function renderAppointments(appointments) {
           <th>项目</th>
           <th>员工</th>
           <th>状态</th>
+          <th>操作</th>
         </tr>
       </thead>
 
@@ -443,7 +450,41 @@ function renderAppointments(appointments) {
     </table>
   `;
 }
+async function updateAppointmentStatus(id, status) {
+  const actionText = {
+    confirmed: '确认',
+    completed: '完成',
+    cancelled: '取消'
+  }[status] || status;
 
+  if (!confirm(`确定要${actionText}这条预约吗？`)) {
+    return;
+  }
+
+  try {
+    const response = await fetch('/api/admin/update-status-db', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        id: id,
+        status: status
+      })
+    });
+
+    const result = await response.json();
+
+    if (!response.ok || !result.success) {
+      throw new Error(result.message || '操作失败');
+    }
+
+    await loadAppointments();
+
+  } catch (error) {
+    alert(error.message || '操作失败');
+  }
+}
 
 // 页面打开自动读取
 loadAppointments();
