@@ -1,6 +1,7 @@
 // ==================================================
 // GG-Beauty 美容养生预约系统 - 后端服务器
 // ==================================================
+
 const express = require('express');
 const path = require('path');
 const { Pool } = require('pg');
@@ -14,13 +15,23 @@ const pool = new Pool({
   }
 });
 
+// ==================================================
 // 中间件
+// ==================================================
+
 app.use(express.json());
-app.use(express.static('public')); // 提供静态文件服务
+app.use(express.static('public'));
+
+
+// ==================================================
+// 数据库连接测试
+// ==================================================
 
 app.get('/api/db-test', async (req, res) => {
   try {
-    const result = await pool.query('SELECT NOW() AS now');
+    const result = await pool.query(
+      'SELECT NOW() AS now'
+    );
 
     res.json({
       success: true,
@@ -37,6 +48,12 @@ app.get('/api/db-test', async (req, res) => {
     });
   }
 });
+
+
+// ==================================================
+// 从数据库读取真实预约
+// ==================================================
+
 app.get('/api/appointments-db', async (req, res) => {
   try {
     const result = await pool.query(`
@@ -79,7 +96,10 @@ app.get('/api/appointments-db', async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Read appointments error:', error);
+    console.error(
+      'Read appointments error:',
+      error
+    );
 
     res.status(500).json({
       success: false,
@@ -87,144 +107,347 @@ app.get('/api/appointments-db', async (req, res) => {
     });
   }
 });
+
+
 // ==================================================
 // 配置数据
 // ==================================================
+
 const CONFIG = {
-  shopName: "GG-Beauty",
-  currency: "S$",
-  validUntil: "2026-09-19",
-  adminPassword: "123456",
+  shopName: 'GG-Beauty',
+  currency: 'S$',
+  validUntil: '2026-09-19',
+  adminPassword: '123456',
+
   services: [
     // 面部护理
-    { id: 101, name: "深层清洁", duration: 60, price: 68, category: "beauty" },
-    { id: 102, name: "补水护理", duration: 60, price: 78, category: "beauty" },
-    { id: 103, name: "抗皱紧致", duration: 60, price: 88, category: "beauty" },
-    { id: 104, name: "美白提亮", duration: 60, price: 82, category: "beauty" },
-    { id: 105, name: "水光针导入", duration: 60, price: 98, category: "beauty" },
-    { id: 106, name: "眼部护理", duration: 45, price: 58, category: "beauty" },
-    { id: 107, name: "颈部护理", duration: 45, price: 55, category: "beauty" },
+    {
+      id: 101,
+      name: '深层清洁',
+      duration: 60,
+      price: 68,
+      category: 'beauty'
+    },
+    {
+      id: 102,
+      name: '补水护理',
+      duration: 60,
+      price: 78,
+      category: 'beauty'
+    },
+    {
+      id: 103,
+      name: '抗皱紧致',
+      duration: 60,
+      price: 88,
+      category: 'beauty'
+    },
+    {
+      id: 104,
+      name: '美白提亮',
+      duration: 60,
+      price: 82,
+      category: 'beauty'
+    },
+    {
+      id: 105,
+      name: '水光针导入',
+      duration: 60,
+      price: 98,
+      category: 'beauty'
+    },
+    {
+      id: 106,
+      name: '眼部护理',
+      duration: 45,
+      price: 58,
+      category: 'beauty'
+    },
+    {
+      id: 107,
+      name: '颈部护理',
+      duration: 45,
+      price: 55,
+      category: 'beauty'
+    },
+
     // 身体护理
-    { id: 201, name: "全身按摩", duration: 60, price: 75, category: "wellness" },
-    { id: 202, name: "背部舒压", duration: 60, price: 70, category: "wellness" },
-    { id: 203, name: "推拿理疗", duration: 60, price: 80, category: "wellness" },
-    { id: 204, name: "美白身体护理", duration: 60, price: 85, category: "wellness" },
-    { id: 205, name: "纤体塑形", duration: 60, price: 90, category: "wellness" },
-    { id: 206, name: "经络疏通", duration: 75, price: 95, category: "wellness" },
-    { id: 207, name: "热石疗法", duration: 75, price: 100, category: "wellness" },
+    {
+      id: 201,
+      name: '全身按摩',
+      duration: 60,
+      price: 75,
+      category: 'wellness'
+    },
+    {
+      id: 202,
+      name: '背部舒压',
+      duration: 60,
+      price: 70,
+      category: 'wellness'
+    },
+    {
+      id: 203,
+      name: '推拿理疗',
+      duration: 60,
+      price: 80,
+      category: 'wellness'
+    },
+    {
+      id: 204,
+      name: '美白身体护理',
+      duration: 60,
+      price: 85,
+      category: 'wellness'
+    },
+    {
+      id: 205,
+      name: '纤体塑形',
+      duration: 60,
+      price: 90,
+      category: 'wellness'
+    },
+    {
+      id: 206,
+      name: '经络疏通',
+      duration: 75,
+      price: 95,
+      category: 'wellness'
+    },
+    {
+      id: 207,
+      name: '热石疗法',
+      duration: 75,
+      price: 100,
+      category: 'wellness'
+    },
+
     // 手足护理
-    { id: 301, name: "手部护理", duration: 60, price: 60, category: "wellness" },
-    { id: 302, name: "足部护理", duration: 60, price: 65, category: "wellness" },
-    { id: 303, name: "美甲护理", duration: 60, price: 70, category: "wellness" },
-    { id: 304, name: "深层滋润", duration: 75, price: 75, category: "wellness" },
-    { id: 305, name: "精致美甲", duration: 90, price: 95, category: "wellness" },
-    { id: 306, name: "指甲修复", duration: 60, price: 68, category: "wellness" }
+    {
+      id: 301,
+      name: '手部护理',
+      duration: 60,
+      price: 60,
+      category: 'wellness'
+    },
+    {
+      id: 302,
+      name: '足部护理',
+      duration: 60,
+      price: 65,
+      category: 'wellness'
+    },
+    {
+      id: 303,
+      name: '美甲护理',
+      duration: 60,
+      price: 70,
+      category: 'wellness'
+    },
+    {
+      id: 304,
+      name: '深层滋润',
+      duration: 75,
+      price: 75,
+      category: 'wellness'
+    },
+    {
+      id: 305,
+      name: '精致美甲',
+      duration: 90,
+      price: 95,
+      category: 'wellness'
+    },
+    {
+      id: 306,
+      name: '指甲修复',
+      duration: 60,
+      price: 68,
+      category: 'wellness'
+    }
   ],
-  staff: ["Lily", "Coco", "Mia"],
-  businessHours: { start: "10:00", end: "21:00" }
+
+  staff: [
+    'Lily',
+    'Coco',
+    'Mia'
+  ],
+
+  businessHours: {
+    start: '10:00',
+    end: '21:00'
+  }
 };
 
-// 预约数据（内存存储）
+
+// ==================================================
+// 旧版内存预约数据
+// 暂时保留，不删除
+// ==================================================
+
 let bookings = [];
 let bookingIdCounter = 1000;
 
-// 管理员会话（简单实现）
+
+// ==================================================
+// 管理员会话
+// ==================================================
+
 let adminSession = {};
 
+
 // ==================================================
-// 中间件
+// 检查服务有效期
 // ==================================================
 
-// 检查是否过期
 const checkAuth = (req, res, next) => {
-  if (new Date() > new Date(CONFIG.validUntil) && req.path.startsWith('/api/new')) {
-    return res.json({ success: false, message: '服务已过期，请联系商家续费。' });
-  }
-  next();
-};
-app.use(checkAuth);
-
-// ==================================================
-// API 路由
-// ==================================================
-
-// 获取配置
-app.get('/api/config', (req, res) => {
-  res.json({ success: true, data: CONFIG });
-});
-
-// 获取所有预约
-app.get('/api/bookings', (req, res) => {
-  res.json({ success: true, data: bookings });
-});
-
-// 获取单个预约
-app.get('/api/bookings/:id', (req, res) => {
-  const booking = bookings.find(b => b.id === parseInt(req.params.id));
-  if (booking) {
-    res.json({ success: true, data: booking });
-  } else {
-    res.status(404).json({ success: false, message: '预约不存在' });
-  }
-});
-
-// 根据手机号查询预约
-app.get('/api/bookings/phone/:phone', (req, res) => {
-  const userBookings = bookings.filter(b => b.phone === req.params.phone);
-  res.json({ success: true, data: userBookings });
-});
-
-// 新增预约
-app.post('/api/new', (req, res) => {
-  const { service, staff, customerName, phone, email, date, time } = req.body;
-  
-  // 简单验证
-  if (!service || !staff || !customerName || !phone || !date || !time) {
-    return res.status(400).json({ 
-      success: false, 
-      message: '请完整填写所有必填信息' 
+  if (
+    new Date() > new Date(CONFIG.validUntil) &&
+    req.path.startsWith('/api/new')
+  ) {
+    return res.json({
+      success: false,
+      message: '服务已过期，请联系商家续费。'
     });
   }
-  
-  // 检查该时间段是否已被预约
-  const existingBooking = bookings.find(b => 
-    b.date === date && 
-    b.time === time && 
-    b.staff === staff
+
+  next();
+};
+
+app.use(checkAuth);
+
+
+// ==================================================
+// 基础 API
+// ==================================================
+
+app.get('/api/config', (req, res) => {
+  res.json({
+    success: true,
+    data: CONFIG
+  });
+});
+
+
+// ==================================================
+// 旧版预约 API
+// 暂时保留
+// ==================================================
+
+app.get('/api/bookings', (req, res) => {
+  res.json({
+    success: true,
+    data: bookings
+  });
+});
+
+
+app.get('/api/bookings/:id', (req, res) => {
+  const booking = bookings.find(
+    b => b.id === parseInt(req.params.id)
   );
-  
+
+  if (booking) {
+    res.json({
+      success: true,
+      data: booking
+    });
+
+  } else {
+    res.status(404).json({
+      success: false,
+      message: '预约不存在'
+    });
+  }
+});
+
+
+app.get('/api/bookings/phone/:phone', (req, res) => {
+  const userBookings = bookings.filter(
+    b => b.phone === req.params.phone
+  );
+
+  res.json({
+    success: true,
+    data: userBookings
+  });
+});
+
+
+// ==================================================
+// 旧版新增预约
+// 暂时保留
+// ==================================================
+
+app.post('/api/new', (req, res) => {
+  const {
+    service,
+    staff,
+    customerName,
+    phone,
+    email,
+    date,
+    time
+  } = req.body;
+
+  if (
+    !service ||
+    !staff ||
+    !customerName ||
+    !phone ||
+    !date ||
+    !time
+  ) {
+    return res.status(400).json({
+      success: false,
+      message: '请完整填写所有必填信息'
+    });
+  }
+
+  const existingBooking = bookings.find(
+    b =>
+      b.date === date &&
+      b.time === time &&
+      b.staff === staff
+  );
+
   if (existingBooking) {
     return res.status(409).json({
       success: false,
       message: '该时间段已被预约，请选择其他时间'
     });
   }
-  
+
   const booking = {
     id: bookingIdCounter++,
-    service: service,
-    staff: staff,
-    customerName: customerName,
-    phone: phone,
+    service,
+    staff,
+    customerName,
+    phone,
     email: email || '',
-    date: date,
-    time: time,
+    date,
+    time,
     status: 'Pending',
     createdAt: new Date().toISOString(),
-    bookingNumber: `GG-${String(bookingIdCounter).padStart(4, '0')}`
+    bookingNumber:
+      `GG-${String(bookingIdCounter).padStart(4, '0')}`
   };
-  
+
   bookings.unshift(booking);
-  res.json({ 
-    success: true, 
+
+  res.json({
+    success: true,
     message: '预约成功！',
-    data: booking 
+    data: booking
   });
 });
-// ===============================================
-// 新版预约 API - 写入 Supabase PostgreSQL
-// 暂时保留旧 /api/new，测试成功后再切换
-// ===============================================
+
+
+// ==================================================
+// 新版预约 API
+// 写入 Supabase PostgreSQL
+// ==================================================
+
 app.post('/api/new-db', async (req, res) => {
   const {
     shopSlug,
@@ -273,7 +496,9 @@ app.post('/api/new-db', async (req, res) => {
       throw new Error('找不到店铺');
     }
 
-    const shopId = shopResult.rows[0].id;
+    const shopId =
+      shopResult.rows[0].id;
+
 
     // 2. 找营业地点
     const locationResult = await client.query(
@@ -292,12 +517,16 @@ app.post('/api/new-db', async (req, res) => {
       throw new Error('找不到营业地点');
     }
 
-    const locationId = locationResult.rows[0].id;
+    const locationId =
+      locationResult.rows[0].id;
+
 
     // 3. 找服务项目
     const serviceResult = await client.query(
       `
-      SELECT id, duration_minutes
+      SELECT
+        id,
+        duration_minutes
       FROM services
       WHERE shop_id = $1
         AND name = $2
@@ -305,15 +534,22 @@ app.post('/api/new-db', async (req, res) => {
         AND bookable = true
       LIMIT 1
       `,
-      [shopId, service]
+      [
+        shopId,
+        service
+      ]
     );
 
     if (serviceResult.rows.length === 0) {
       throw new Error('找不到服务项目');
     }
 
-    const serviceId = serviceResult.rows[0].id;
-    const durationMinutes = serviceResult.rows[0].duration_minutes;
+    const serviceId =
+      serviceResult.rows[0].id;
+
+    const durationMinutes =
+      serviceResult.rows[0].duration_minutes;
+
 
     // 4. 找员工
     const staffResult = await client.query(
@@ -326,16 +562,21 @@ app.post('/api/new-db', async (req, res) => {
         AND bookable = true
       LIMIT 1
       `,
-      [shopId, staff]
+      [
+        shopId,
+        staff
+      ]
     );
 
     if (staffResult.rows.length === 0) {
       throw new Error('找不到员工');
     }
 
-    const staffId = staffResult.rows[0].id;
+    const staffId =
+      staffResult.rows[0].id;
 
-    // 5. 找顾客；没有就创建
+
+    // 5. 找顾客，没有就创建
     let customerResult = await client.query(
       `
       SELECT id
@@ -344,13 +585,18 @@ app.post('/api/new-db', async (req, res) => {
         AND phone = $2
       LIMIT 1
       `,
-      [shopId, phone]
+      [
+        shopId,
+        phone
+      ]
     );
 
     let customerId;
 
     if (customerResult.rows.length > 0) {
-      customerId = customerResult.rows[0].id;
+      customerId =
+        customerResult.rows[0].id;
+
     } else {
       customerResult = await client.query(
         `
@@ -360,22 +606,41 @@ app.post('/api/new-db', async (req, res) => {
           phone,
           email
         )
-        VALUES ($1, $2, $3, $4)
+        VALUES (
+          $1,
+          $2,
+          $3,
+          $4
+        )
         RETURNING id
         `,
-        [shopId, customerName, phone, email || null]
+        [
+          shopId,
+          customerName,
+          phone,
+          email || null
+        ]
       );
 
-      customerId = customerResult.rows[0].id;
+      customerId =
+        customerResult.rows[0].id;
     }
 
-    // 6. 计算预约开始和结束时间
-    const startAt = new Date(`${date}T${time}:00+08:00`);
-    const endAt = new Date(
-      startAt.getTime() + durationMinutes * 60 * 1000
-    );
 
-    // 7. 数据库防撞单
+    // 6. 计算开始和结束时间
+    const startAt =
+      new Date(
+        `${date}T${time}:00+08:00`
+      );
+
+    const endAt =
+      new Date(
+        startAt.getTime() +
+        durationMinutes * 60 * 1000
+      );
+
+
+    // 7. 防撞单
     const conflictResult = await client.query(
       `
       SELECT id
@@ -387,7 +652,12 @@ app.post('/api/new-db', async (req, res) => {
         AND end_at > $3
       LIMIT 1
       `,
-      [shopId, staffId, startAt, endAt]
+      [
+        shopId,
+        staffId,
+        startAt,
+        endAt
+      ]
     );
 
     if (conflictResult.rows.length > 0) {
@@ -398,6 +668,7 @@ app.post('/api/new-db', async (req, res) => {
         message: '该时间段已被预约，请选择其他时间'
       });
     }
+
 
     // 8. 写入正式预约
     const appointmentResult = await client.query(
@@ -414,8 +685,15 @@ app.post('/api/new-db', async (req, res) => {
         booking_source
       )
       VALUES (
-        $1, $2, $3, $4, $5,
-        $6, $7, 'pending', 'online'
+        $1,
+        $2,
+        $3,
+        $4,
+        $5,
+        $6,
+        $7,
+        'pending',
+        'online'
       )
       RETURNING
         id,
@@ -447,327 +725,505 @@ app.post('/api/new-db', async (req, res) => {
   } catch (error) {
     await client.query('ROLLBACK');
 
-    console.error('Create appointment error:', error);
+    console.error(
+      'Create appointment error:',
+      error
+    );
 
     res.status(500).json({
       success: false,
-      message: error.message || '预约失败'
+      message:
+        error.message || '预约失败'
     });
 
   } finally {
     client.release();
   }
 });
-// 获取可预约时间
+
+
+// ==================================================
+// 旧版可预约时间
+// 暂时保留
+// ==================================================
+
 app.get('/api/available-times', (req, res) => {
-  const { date, staff } = req.query;
-  
-  // 生成当天所有可预约时间（简化版）
+  const {
+    date,
+    staff
+  } = req.query;
+
   const allTimes = [
-    '10:00', '10:30', '11:00', '11:30', 
-    '12:00', '12:30', '13:00', '13:30',
-    '14:00', '14:30', '15:00', '15:30',
-    '16:00', '16:30', '17:00', '17:30',
-    '18:00', '18:30', '19:00', '19:30',
+    '10:00', '10:30',
+    '11:00', '11:30',
+    '12:00', '12:30',
+    '13:00', '13:30',
+    '14:00', '14:30',
+    '15:00', '15:30',
+    '16:00', '16:30',
+    '17:00', '17:30',
+    '18:00', '18:30',
+    '19:00', '19:30',
     '20:00', '20:30'
   ];
-  
-  // 如果指定了日期和员工，过滤掉已预约的时间
+
   if (date && staff) {
     const bookedTimes = bookings
-      .filter(b => b.date === date && b.staff === staff)
-      .map(b => b.time);
-    
-    const availableTimes = allTimes.filter(t => !bookedTimes.includes(t));
-    res.json({ success: true, data: availableTimes });
-  } else {
-    res.json({ success: true, data: allTimes });
-  }
-});
-// ===============================================
-// 新版可预约时间 API - 从 Supabase PostgreSQL 查询
-// 暂时保留旧 /api/available-times
-// ===============================================
-app.get('/api/available-times-db', async (req, res) => {
-  const { shopSlug, date, staff, service } = req.query;
-
-  if (!shopSlug || !date || !staff || !service) {
-    return res.status(400).json({
-      success: false,
-      message: '缺少 shopSlug、date、staff 或 service'
-    });
-  }
-
-  try {
-    // 1. 找店铺
-    const shopResult = await pool.query(
-      `
-      SELECT id
-      FROM shops
-      WHERE slug = $1
-        AND status = 'active'
-      LIMIT 1
-      `,
-      [shopSlug]
-    );
-
-    if (shopResult.rows.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: '找不到店铺'
-      });
-    }
-
-    const shopId = shopResult.rows[0].id;
-
-    // 2. 找员工
-    const staffResult = await pool.query(
-      `
-      SELECT id
-      FROM staff
-      WHERE shop_id = $1
-        AND name = $2
-        AND is_active = true
-        AND bookable = true
-      LIMIT 1
-      `,
-      [shopId, staff]
-    );
-
-    if (staffResult.rows.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: '找不到员工'
-      });
-    }
-
-    const staffId = staffResult.rows[0].id;
-
-    // 3. 找服务项目，并取得服务时长
-    const serviceResult = await pool.query(
-      `
-      SELECT id, duration_minutes
-      FROM services
-      WHERE shop_id = $1
-        AND name = $2
-        AND is_active = true
-        AND bookable = true
-      LIMIT 1
-      `,
-      [shopId, service]
-    );
-
-    if (serviceResult.rows.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: '找不到服务项目'
-      });
-    }
-
-    const durationMinutes =
-      serviceResult.rows[0].duration_minutes;
-
-    // 4. 生成当天基础时间
-    const allTimes = [
-      '10:00', '10:30', '11:00', '11:30',
-      '12:00', '12:30', '13:00', '13:30',
-      '14:00', '14:30', '15:00', '15:30',
-      '16:00', '16:30', '17:00', '17:30',
-      '18:00', '18:30', '19:00', '19:30',
-      '20:00', '20:30'
-    ];
-
-    // 5. 查询这位员工当天已有预约
-    const dayStart = new Date(
-      `${date}T00:00:00+08:00`
-    );
-
-    const dayEnd = new Date(
-      `${date}T23:59:59+08:00`
-    );
-
-    const bookingResult = await pool.query(
-      `
-      SELECT start_at, end_at
-      FROM appointments
-      WHERE shop_id = $1
-        AND staff_id = $2
-        AND status <> 'cancelled'
-        AND start_at < $4
-        AND end_at > $3
-      ORDER BY start_at ASC
-      `,
-      [shopId, staffId, dayStart, dayEnd]
-    );
-
-    // 6. 根据服务时长过滤掉有冲突的时间
-    const availableTimes = allTimes.filter(time => {
-      const slotStart = new Date(
-        `${date}T${time}:00+08:00`
+      .filter(
+        b =>
+          b.date === date &&
+          b.staff === staff
+      )
+      .map(
+        b => b.time
       );
 
-      const slotEnd = new Date(
-        slotStart.getTime() +
-        durationMinutes * 60 * 1000
+    const availableTimes =
+      allTimes.filter(
+        t => !bookedTimes.includes(t)
       );
-
-      const hasConflict = bookingResult.rows.some(
-        booking => {
-          const bookedStart =
-            new Date(booking.start_at);
-
-          const bookedEnd =
-            new Date(booking.end_at);
-
-          return (
-            slotStart < bookedEnd &&
-            slotEnd > bookedStart
-          );
-        }
-      );
-
-      return !hasConflict;
-    });
 
     res.json({
       success: true,
       data: availableTimes
     });
 
-  } catch (error) {
-    console.error(
-      'Available times DB error:',
-      error
-    );
-
-    res.status(500).json({
-      success: false,
-      message: '获取可预约时间失败'
+  } else {
+    res.json({
+      success: true,
+      data: allTimes
     });
   }
 });
+
+
+// ==================================================
+// 新版可预约时间 API
+// 从 Supabase PostgreSQL 查询
+// ==================================================
+
+app.get(
+  '/api/available-times-db',
+  async (req, res) => {
+
+    const {
+      shopSlug,
+      date,
+      staff,
+      service
+    } = req.query;
+
+    if (
+      !shopSlug ||
+      !date ||
+      !staff ||
+      !service
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          '缺少 shopSlug、date、staff 或 service'
+      });
+    }
+
+    try {
+
+      // 1. 找店铺
+      const shopResult = await pool.query(
+        `
+        SELECT id
+        FROM shops
+        WHERE slug = $1
+          AND status = 'active'
+        LIMIT 1
+        `,
+        [shopSlug]
+      );
+
+      if (shopResult.rows.length === 0) {
+        return res.status(404).json({
+          success: false,
+          message: '找不到店铺'
+        });
+      }
+
+      const shopId =
+        shopResult.rows[0].id;
+
+
+      // 2. 找员工
+      const staffResult = await pool.query(
+        `
+        SELECT id
+        FROM staff
+        WHERE shop_id = $1
+          AND name = $2
+          AND is_active = true
+          AND bookable = true
+        LIMIT 1
+        `,
+        [
+          shopId,
+          staff
+        ]
+      );
+
+      if (staffResult.rows.length === 0) {
+        return res.status(404).json({
+          success: false,
+          message: '找不到员工'
+        });
+      }
+
+      const staffId =
+        staffResult.rows[0].id;
+
+
+      // 3. 找服务项目
+      const serviceResult = await pool.query(
+        `
+        SELECT
+          id,
+          duration_minutes
+        FROM services
+        WHERE shop_id = $1
+          AND name = $2
+          AND is_active = true
+          AND bookable = true
+        LIMIT 1
+        `,
+        [
+          shopId,
+          service
+        ]
+      );
+
+      if (serviceResult.rows.length === 0) {
+        return res.status(404).json({
+          success: false,
+          message: '找不到服务项目'
+        });
+      }
+
+      const durationMinutes =
+        serviceResult.rows[0].duration_minutes;
+
+
+      // 4. 基础时间
+      const allTimes = [
+        '10:00', '10:30',
+        '11:00', '11:30',
+        '12:00', '12:30',
+        '13:00', '13:30',
+        '14:00', '14:30',
+        '15:00', '15:30',
+        '16:00', '16:30',
+        '17:00', '17:30',
+        '18:00', '18:30',
+        '19:00', '19:30',
+        '20:00', '20:30'
+      ];
+
+
+      // 5. 查询当天已有预约
+      const dayStart =
+        new Date(
+          `${date}T00:00:00+08:00`
+        );
+
+      const dayEnd =
+        new Date(
+          `${date}T23:59:59+08:00`
+        );
+
+      const bookingResult = await pool.query(
+        `
+        SELECT
+          start_at,
+          end_at
+        FROM appointments
+        WHERE shop_id = $1
+          AND staff_id = $2
+          AND status <> 'cancelled'
+          AND start_at < $4
+          AND end_at > $3
+        ORDER BY start_at ASC
+        `,
+        [
+          shopId,
+          staffId,
+          dayStart,
+          dayEnd
+        ]
+      );
+
+
+      // 6. 根据服务时长过滤冲突时间
+      const availableTimes =
+        allTimes.filter(time => {
+
+          const slotStart =
+            new Date(
+              `${date}T${time}:00+08:00`
+            );
+
+          const slotEnd =
+            new Date(
+              slotStart.getTime() +
+              durationMinutes * 60 * 1000
+            );
+
+          const hasConflict =
+            bookingResult.rows.some(
+              booking => {
+
+                const bookedStart =
+                  new Date(
+                    booking.start_at
+                  );
+
+                const bookedEnd =
+                  new Date(
+                    booking.end_at
+                  );
+
+                return (
+                  slotStart < bookedEnd &&
+                  slotEnd > bookedStart
+                );
+              }
+            );
+
+          return !hasConflict;
+        });
+
+
+      res.json({
+        success: true,
+        data: availableTimes
+      });
+
+    } catch (error) {
+      console.error(
+        'Available times DB error:',
+        error
+      );
+
+      res.status(500).json({
+        success: false,
+        message:
+          '获取可预约时间失败'
+      });
+    }
+  }
+);
+
+
 // ==================================================
 // 管理员 API
 // ==================================================
 
 app.post('/api/admin/login', (req, res) => {
-  if (req.body.password === CONFIG.adminPassword) {
+  if (
+    req.body.password ===
+    CONFIG.adminPassword
+  ) {
     adminSession[req.ip] = true;
-    res.json({ success: true });
+
+    res.json({
+      success: true
+    });
+
   } else {
-    res.status(401).json({ success: false, message: '密码错误' });
+    res.status(401).json({
+      success: false,
+      message: '密码错误'
+    });
   }
 });
+
 
 app.post('/api/admin/logout', (req, res) => {
   delete adminSession[req.ip];
-  res.json({ success: true });
+
+  res.json({
+    success: true
+  });
 });
 
-app.post('/api/admin/update-status', (req, res) => {
-  if (!adminSession[req.ip]) {
-    return res.status(401).json({ success: false, message: '请先登录' });
-  }
-  
-  const item = bookings.find(b => b.id === req.body.id);
-  if (item) {
-    item.status = req.body.status;
-    res.json({ success: true });
-  } else {
-    res.json({ success: false, message: '未找到该预约' });
-  }
-});
+
 // ==================================================
-// 新版管理员预约状态 API - 写入 Supabase PostgreSQL
-// 暂时保留旧 /api/admin/update-status
+// 旧版修改预约状态
+// 暂时保留
 // ==================================================
-app.post('/api/admin/update-status-db', async (req, res) => {
-  if (!adminSession[req.ip]) {
-    return res.status(401).json({
-      success: false,
-      message: '请先登录'
-    });
-  }
 
-  const { id, status } = req.body;
+app.post(
+  '/api/admin/update-status',
+  (req, res) => {
 
-  const allowedStatuses = [
-    'pending',
-    'confirmed',
-    'cancelled',
-    'completed'
-  ];
+    if (!adminSession[req.ip]) {
+      return res.status(401).json({
+        success: false,
+        message: '请先登录'
+      });
+    }
 
-  if (!id || !status) {
-    return res.status(400).json({
-      success: false,
-      message: '缺少预约ID或状态'
-    });
-  }
-
-  if (!allowedStatuses.includes(status)) {
-    return res.status(400).json({
-      success: false,
-      message: '预约状态不正确'
-    });
-  }
-
-  try {
-    const result = await pool.query(
-      `
-      UPDATE appointments
-      SET
-        status = $1,
-        cancelled_at = CASE
-          WHEN $1 = 'cancelled' THEN NOW()
-          ELSE cancelled_at
-        END,
-        service_completed_at = CASE
-          WHEN $1 = 'completed' THEN NOW()
-          ELSE service_completed_at
-        END,
-        updated_at = NOW()
-      WHERE id = $2
-      RETURNING
-        id,
-        status,
-        start_at,
-        end_at,
-        updated_at
-      `,
-      [status, id]
+    const item = bookings.find(
+      b => b.id === req.body.id
     );
 
-    if (result.rows.length === 0) {
-      return res.status(404).json({
+    if (item) {
+      item.status =
+        req.body.status;
+
+      res.json({
+        success: true
+      });
+
+    } else {
+      res.json({
         success: false,
         message: '未找到该预约'
       });
     }
-
-    res.json({
-      success: true,
-      message: '预约状态更新成功',
-      data: result.rows[0]
-    });
-
-  } catch (error) {
-    console.error('Update appointment status DB error:', error);
-
-    res.status(500).json({
-      success: false,
-      message: '更新预约状态失败'
-    });
   }
-});
+);
+
+
+// ==================================================
+// 新版修改预约状态
+// 写入 Supabase PostgreSQL
+// ==================================================
+
+app.post(
+  '/api/admin/update-status-db',
+  async (req, res) => {
+
+    if (!adminSession[req.ip]) {
+      return res.status(401).json({
+        success: false,
+        message: '请先登录'
+      });
+    }
+
+    const {
+      id,
+      status
+    } = req.body;
+
+    const allowedStatuses = [
+      'pending',
+      'confirmed',
+      'cancelled',
+      'completed'
+    ];
+
+    if (!id || !status) {
+      return res.status(400).json({
+        success: false,
+        message: '缺少预约ID或状态'
+      });
+    }
+
+    if (
+      !allowedStatuses.includes(status)
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: '预约状态不正确'
+      });
+    }
+
+    try {
+      const result = await pool.query(
+        `
+        UPDATE appointments
+        SET
+          status = $1,
+
+          cancelled_at =
+            CASE
+              WHEN $1 = 'cancelled'
+              THEN NOW()
+              ELSE cancelled_at
+            END,
+
+          service_completed_at =
+            CASE
+              WHEN $1 = 'completed'
+              THEN NOW()
+              ELSE service_completed_at
+            END,
+
+          updated_at = NOW()
+
+        WHERE id = $2
+
+        RETURNING
+          id,
+          status,
+          start_at,
+          end_at,
+          updated_at
+        `,
+        [
+          status,
+          id
+        ]
+      );
+
+      if (result.rows.length === 0) {
+        return res.status(404).json({
+          success: false,
+          message: '未找到该预约'
+        });
+      }
+
+      res.json({
+        success: true,
+        message:
+          '预约状态更新成功',
+        data:
+          result.rows[0]
+      });
+
+    } catch (error) {
+      console.error(
+        'Update appointment status DB error:',
+        error
+      );
+
+      res.status(500).json({
+        success: false,
+        message:
+          '更新预约状态失败'
+      });
+    }
+  }
+);
+
+
 // ==================================================
 // 启动服务器
 // ==================================================
 
-const PORT = process.env.PORT || 3000;
+const PORT =
+  process.env.PORT || 3000;
+
 app.listen(PORT, () => {
-  console.log(`✅ GG-Beauty 服务器运行在端口 ${PORT}`);
-  console.log(`📋 访问地址: http://localhost:${PORT}`);
-  console.log(`🔑 管理员密码: ${CONFIG.adminPassword}`);
-  console.log(`📊 当前预约数: ${bookings.length}`);
+  console.log(
+    `✅ GG-Beauty 服务器运行在端口 ${PORT}`
+  );
+
+  console.log(
+    `📋 访问地址: http://localhost:${PORT}`
+  );
+
+  console.log(
+    `🔑 管理员密码: ${CONFIG.adminPassword}`
+  );
+
+  console.log(
+    `📊 当前预约数: ${bookings.length}`
+  );
 });
