@@ -164,7 +164,54 @@
 </head>
 
 <body>
+<div id="loginOverlay" style="
+  position: fixed;
+  inset: 0;
+  background: #f5f5f5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+">
+  <div style="
+    width: 360px;
+    background: white;
+    padding: 32px;
+    border-radius: 16px;
+  ">
+    <h2>GG-Beauty 老板登录</h2>
 
+    <input
+      id="adminPassword"
+      type="password"
+      placeholder="请输入管理员密码"
+      style="
+        width: 100%;
+        padding: 14px;
+        margin: 18px 0 12px;
+      "
+    >
+
+    <button
+      onclick="adminLogin()"
+      style="
+        width: 100%;
+        padding: 14px;
+        background: #111;
+        color: white;
+        border: 0;
+        border-radius: 8px;
+      "
+    >
+      登录
+    </button>
+
+    <div
+      id="loginMessage"
+      style="margin-top: 12px; color: red;"
+    ></div>
+  </div>
+</div>
 <div class="container">
 
   <div class="header">
@@ -216,7 +263,45 @@
 const content =
   document.getElementById('content');
 
+async function adminLogin() {
+  const password = document.getElementById('adminPassword').value;
+  const message = document.getElementById('loginMessage');
 
+  if (!password) {
+    message.textContent = '请输入管理员密码';
+    return;
+  }
+
+  message.textContent = '正在登录...';
+
+  try {
+    const response = await fetch('/api/admin/login', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        password: password
+      })
+    });
+
+    const result = await response.json();
+
+    if (!response.ok || !result.success) {
+      message.textContent = result.message || '密码错误';
+      return;
+    }
+
+    message.textContent = '';
+
+    document.getElementById('loginOverlay').style.display = 'none';
+
+    await loadAppointments();
+
+  } catch (error) {
+    message.textContent = '登录失败，请重试';
+  }
+}
 // 格式化新加坡时间
 function formatSingaporeTime(dateString) {
 
