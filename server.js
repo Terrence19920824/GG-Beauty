@@ -1758,6 +1758,181 @@ app.get(
 );
 
 
+app.get(
+  '/api/staff/appointments',
+  requireStaffAuth,
+  async (req, res) => {
+    const forbiddenIdentityParameters = [
+      'staff_id',
+      'staffId',
+      'shop_id',
+      'shopId',
+      'location_id',
+      'locationId',
+      'role',
+      'permissions'
+    ];
+
+    if (
+      forbiddenIdentityParameters.some(parameter =>
+        Object.prototype.hasOwnProperty.call(
+          req.query,
+          parameter
+        )
+      )
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: '请求包含不允许的身份参数'
+      });
+    }
+
+    const requestedDate =
+      typeof req.query.date === 'string'
+        ? req.query.date
+        : null;
+
+    if (requestedDate) {
+      const parsedDate = new Date(
+        `${requestedDate}T00:00:00.000Z`
+      );
+
+      if (
+        !/^\d{4}-\d{2}-\d{2}$/.test(
+          requestedDate
+        ) ||
+        Number.isNaN(parsedDate.getTime()) ||
+        parsedDate.toISOString().slice(0, 10) !==
+          requestedDate
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: '日期格式必须为 YYYY-MM-DD'
+        });
+      }
+    }
+
+    try {
+      const result = await pool.query(
+        `
+        WITH staff_scope AS (
+          SELECT
+            $1::UUID AS shop_id,
+            $2::UUID AS staff_id,
+            $3::UUID AS location_id,
+            l.timezone,
+            COALESCE(
+              $4::DATE,
+              (
+                CURRENT_TIMESTAMP
+                AT TIME ZONE l.timezone
+              )::DATE
+            ) AS local_date
+          FROM locations l
+          WHERE l.id = $3::UUID
+            AND l.shop_id = $1::UUID
+            AND l.is_active = TRUE
+        )
+        SELECT
+          scope.local_date::TEXT AS appointment_date,
+          scope.timezone,
+          COALESCE(
+            (
+              SELECT JSON_AGG(
+                JSON_BUILD_OBJECT(
+                  'id', a.id,
+                  'startAt', a.start_at,
+                  'endAt', a.end_at,
+                  'customerName', c.name,
+                  'customerPhone',
+                    CASE
+                      WHEN $5::BOOLEAN = TRUE
+                      THEN c.phone
+                      WHEN c.phone IS NULL
+                      THEN NULL
+                      ELSE
+                        '•••••' || RIGHT(
+                          REGEXP_REPLACE(
+                            c.phone,
+                            '[^0-9]',
+                            '',
+                            'g'
+                          ),
+                          3
+                        )
+                    END,
+                  'serviceName', s.name,
+                  'durationMinutes',
+                    s.duration_minutes,
+                  'status', a.status
+                )
+                ORDER BY a.start_at ASC, a.id ASC
+              )
+              FROM appointments a
+              JOIN customers c
+                ON c.id = a.customer_id
+               AND c.shop_id = a.shop_id
+              JOIN services s
+                ON s.id = a.service_id
+               AND s.shop_id = a.shop_id
+              WHERE a.shop_id = scope.shop_id
+                AND a.staff_id = scope.staff_id
+                AND a.location_id = scope.location_id
+                AND a.start_at >= (
+                  scope.local_date::TIMESTAMP
+                  AT TIME ZONE scope.timezone
+                )
+                AND a.start_at < (
+                  (scope.local_date + 1)::TIMESTAMP
+                  AT TIME ZONE scope.timezone
+                )
+            ),
+            '[]'::JSON
+          ) AS appointments
+        FROM staff_scope scope
+        `,
+        [
+          req.staffAuth.shopId,
+          req.staffAuth.staffId,
+          req.staffAuth.locationId,
+          requestedDate,
+          req.staffAuth.permissions
+            .can_view_full_customer_phone === true
+        ]
+      );
+
+      if (result.rows.length === 0) {
+        return res.status(401).json({
+          success: false,
+          message: '员工地点已失效'
+        });
+      }
+
+      const appointments = result.rows[0];
+
+      res.json({
+        success: true,
+        data: {
+          date: appointments.appointment_date,
+          timezone: appointments.timezone,
+          appointments: appointments.appointments
+        }
+      });
+    } catch (error) {
+      console.error(
+        'Read staff appointments error:',
+        safeStaffAuthErrorCode(error)
+      );
+
+      res.status(500).json({
+        success: false,
+        message: '读取员工预约失败'
+      });
+    }
+  }
+);
+
+
 // ==================================================
 // 管理员 API
 // ==================================================
