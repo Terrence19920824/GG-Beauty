@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0"
+  >
+  <title>员工登录 | GG-Beauty</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: Arial, sans-serif;
+      background: #f7f3f5;
+      color: #2d2429;
+    }
+
+    body {
+      min-height: 100vh;
+      margin: 0;
+      display: grid;
+      place-items: center;
+    }
+
+    main {
+      width: min(88vw, 380px);
+      padding: 32px;
+      background: #fff;
+      border-radius: 16px;
+      box-shadow: 0 16px 44px rgba(50, 34, 43, 0.12);
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: 26px;
+    }
+
+    p {
+      margin: 0 0 24px;
+      color: #74636c;
+    }
+
+    label {
+      display: block;
+      margin-top: 16px;
+      font-weight: 600;
+    }
+
+    input,
+    button {
+      box-sizing: border-box;
+      width: 100%;
+      margin-top: 8px;
+      padding: 12px;
+      border-radius: 8px;
+      font: inherit;
+    }
+
+    input {
+      border: 1px solid #d9cbd2;
+    }
+
+    button {
+      margin-top: 24px;
+      border: 0;
+      background: #8c4968;
+      color: #fff;
+      cursor: pointer;
+    }
+
+    button:disabled {
+      opacity: 0.65;
+      cursor: wait;
+    }
+
+    #message {
+      min-height: 20px;
+      margin: 16px 0 0;
+      color: #a12d3c;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>员工登录</h1>
+    <p>请使用店铺提供的员工账号登录。</p>
+
+    <form id="login-form">
+      <label for="shop-identifier">店铺</label>
+      <input
+        id="shop-identifier"
+        name="shopIdentifier"
+        autocomplete="organization"
+        required
+      >
+
+      <label for="username">员工账号</label>
+      <input
+        id="username"
+        name="username"
+        autocomplete="username"
+        required
+      >
+
+      <label for="password">密码</label>
+      <input
+        id="password"
+        name="password"
+        type="password"
+        autocomplete="current-password"
+        required
+      >
+
+      <button id="submit-button" type="submit">
+        登录
+      </button>
+    </form>
+
+    <button id="logout-button" type="button" hidden>
+      退出登录
+    </button>
+    <p id="message" role="alert"></p>
+  </main>
+
+  <script>
+    const form =
+      document.getElementById('login-form');
+    const button =
+      document.getElementById('submit-button');
+    const logoutButton =
+      document.getElementById('logout-button');
+    const message =
+      document.getElementById('message');
+
+    const showLoggedIn = statusMessage => {
+      form.hidden = true;
+      logoutButton.hidden = false;
+      message.style.color = '#28704d';
+      message.textContent = statusMessage;
+    };
+
+    const showLoggedOut = statusMessage => {
+      form.hidden = false;
+      logoutButton.hidden = true;
+      form.reset();
+      message.style.color = '#28704d';
+      message.textContent = statusMessage;
+    };
+
+    form.addEventListener('submit', async event => {
+      event.preventDefault();
+      button.disabled = true;
+      message.textContent = '';
+
+      const formData = new FormData(form);
+
+      try {
+        const response = await fetch('/api/staff/login', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          credentials: 'same-origin',
+          body: JSON.stringify({
+            shopIdentifier:
+              formData.get('shopIdentifier'),
+            username: formData.get('username'),
+            password: formData.get('password')
+          })
+        });
+
+        const result = await response.json();
+
+        if (!response.ok || !result.success) {
+          throw new Error(
+            result.message || '登录失败'
+          );
+        }
+
+        showLoggedIn('登录成功');
+      } catch (error) {
+        message.style.color = '#a12d3c';
+        message.textContent = error.message;
+      } finally {
+        button.disabled = false;
+      }
+    });
+
+    logoutButton.addEventListener('click', async () => {
+      logoutButton.disabled = true;
+
+      try {
+        const response = await fetch('/api/staff/logout', {
+          method: 'POST',
+          credentials: 'same-origin'
+        });
+
+        const result = await response.json();
+
+        if (!response.ok || !result.success) {
+          throw new Error('logout_failed');
+        }
+
+        showLoggedOut('已退出');
+      } catch (_error) {
+        message.style.color = '#a12d3c';
+        message.textContent = '退出失败，请重试';
+      } finally {
+        logoutButton.disabled = false;
+      }
+    });
+
+    const restoreLoginState = async () => {
+      try {
+        const response = await fetch('/api/staff/me', {
+          credentials: 'same-origin'
+        });
+
+        if (response.ok) {
+          showLoggedIn('已登录');
+        }
+      } catch (_error) {
+        // Keep the login form available when session checking is unavailable.
+      }
+    };
+
+    restoreLoginState();
+  </script>
+</body>
+</html>

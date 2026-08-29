@@ -4,6 +4,8 @@
 
 const express = require('express');
 const path = require('path');
+const crypto = require('crypto');
+const bcrypt = require('bcryptjs');
 const { Pool } = require('pg');
 
 const app = express();
@@ -24,6 +26,333 @@ const pool = new Pool({
 
 app.use(express.json());
 app.use(express.static('public'));
+
+
+// ==================================================
+// 员工认证工具
+// ==================================================
+
+const STAFF_SESSION_COOKIE =
+  'gg_beauty_staff_session';
+
+const STAFF_SESSION_MAX_AGE_MS =
+  12 * 60 * 60 * 1000;
+
+const STAFF_LOGIN_RATE_LIMIT_WINDOW_MS =
+  15 * 60 * 1000;
+
+const STAFF_LOGIN_RATE_LIMIT_MAX_REQUESTS =
+  10;
+
+const STAFF_LOGIN_RATE_LIMIT_MAX_KEYS =
+  10000;
+
+const STAFF_LOGIN_LOCK_THRESHOLD = 5;
+
+const staffLoginRateLimits = new Map();
+
+const STAFF_PERMISSION_NAMES = [
+  'can_view_customer_history',
+  'can_view_service_notes',
+  'can_view_own_sales',
+  'can_view_own_commission',
+  'can_view_full_customer_phone'
+];
+
+const DUMMY_STAFF_PASSWORD_HASH =
+  bcrypt.hashSync(
+    'invalid-staff-login-password',
+    12
+  );
+
+const normalizeLoginIdentifier = value =>
+  typeof value === 'string'
+    ? value.trim().toLowerCase()
+    : '';
+
+const setStaffAuthNoStore = response => {
+  response.setHeader(
+    'Cache-Control',
+    'no-store'
+  );
+};
+
+const safeStaffAuthErrorCode = error =>
+  error && typeof error.code === 'string'
+    ? error.code
+    : 'unknown_error';
+
+const staffLoginRateLimitKey = (
+  shopIdentifier,
+  username
+) =>
+  crypto
+    .createHash('sha256')
+    .update(`${shopIdentifier}\u0000${username}`)
+    .digest('hex');
+
+// Phase 1 uses a process-local first layer of protection. A multi-instance
+// deployment must replace this with a shared Redis, database, or gateway-level
+// rate limiter so every instance observes the same request window.
+const consumeStaffLoginAttempt = key => {
+  const now = Date.now();
+
+  if (
+    staffLoginRateLimits.size >=
+    STAFF_LOGIN_RATE_LIMIT_MAX_KEYS
+  ) {
+    for (const [storedKey, storedEntry]
+      of staffLoginRateLimits) {
+      if (storedEntry.windowEndsAt <= now) {
+        staffLoginRateLimits.delete(storedKey);
+      }
+    }
+
+    if (
+      staffLoginRateLimits.size >=
+      STAFF_LOGIN_RATE_LIMIT_MAX_KEYS
+    ) {
+      const oldestKey =
+        staffLoginRateLimits.keys().next().value;
+
+      staffLoginRateLimits.delete(oldestKey);
+    }
+  }
+
+  let entry = staffLoginRateLimits.get(key);
+
+  if (!entry || entry.windowEndsAt <= now) {
+    entry = {
+      requestCount: 0,
+      windowEndsAt:
+        now + STAFF_LOGIN_RATE_LIMIT_WINDOW_MS
+    };
+  }
+
+  if (
+    entry.requestCount >=
+    STAFF_LOGIN_RATE_LIMIT_MAX_REQUESTS
+  ) {
+    staffLoginRateLimits.set(key, entry);
+    return false;
+  }
+
+  entry.requestCount += 1;
+  staffLoginRateLimits.set(key, entry);
+
+  return true;
+};
+
+const clearStaffLoginRateLimit = key => {
+  staffLoginRateLimits.delete(key);
+};
+
+const rollbackStaffLogin = async client => {
+  if (!client) {
+    return;
+  }
+
+  try {
+    await client.query('ROLLBACK');
+  } catch (_rollbackError) {
+    console.error(
+      'Staff login rollback failed'
+    );
+  }
+};
+
+const parseCookies = request => {
+  const cookies = {};
+  const cookieHeader =
+    request.headers.cookie || '';
+
+  cookieHeader.split(';').forEach(part => {
+    const separatorIndex =
+      part.indexOf('=');
+
+    if (separatorIndex < 0) {
+      return;
+    }
+
+    const name =
+      part.slice(0, separatorIndex).trim();
+
+    if (!name) {
+      return;
+    }
+
+    const encodedValue =
+      part.slice(separatorIndex + 1).trim();
+
+    try {
+      cookies[name] =
+        decodeURIComponent(encodedValue);
+    } catch (_error) {
+      cookies[name] = '';
+    }
+  });
+
+  return cookies;
+};
+
+const hashStaffSessionToken = token =>
+  crypto
+    .createHash('sha256')
+    .update(token)
+    .digest('hex');
+
+const staffSessionCookieOptions = () => [
+  'Path=/',
+  'HttpOnly',
+  'SameSite=Lax',
+  `Max-Age=${Math.floor(
+    STAFF_SESSION_MAX_AGE_MS / 1000
+  )}`,
+  // Render production must explicitly set NODE_ENV=production so staff
+  // session cookies are never sent over an insecure connection.
+  ...(process.env.NODE_ENV === 'production'
+    ? ['Secure']
+    : [])
+];
+
+const setStaffSessionCookie = (
+  response,
+  token
+) => {
+  response.setHeader(
+    'Set-Cookie',
+    `${STAFF_SESSION_COOKIE}=${encodeURIComponent(token)}; ${staffSessionCookieOptions().join('; ')}`
+  );
+};
+
+const clearStaffSessionCookie = response => {
+  const options = [
+    'Path=/',
+    'HttpOnly',
+    'SameSite=Lax',
+    'Max-Age=0',
+    'Expires=Thu, 01 Jan 1970 00:00:00 GMT',
+    ...(process.env.NODE_ENV === 'production'
+      ? ['Secure']
+      : [])
+  ];
+
+  response.setHeader(
+    'Set-Cookie',
+    `${STAFF_SESSION_COOKIE}=; ${options.join('; ')}`
+  );
+};
+
+const permissionsFromRow = row =>
+  STAFF_PERMISSION_NAMES.reduce(
+    (permissions, permissionName) => {
+      permissions[permissionName] =
+        row[permissionName] === true;
+      return permissions;
+    },
+    {}
+  );
+
+const requireStaffAuth = async (
+  req,
+  res,
+  next
+) => {
+  setStaffAuthNoStore(res);
+
+  const token =
+    parseCookies(req)[STAFF_SESSION_COOKIE];
+
+  if (!token) {
+    return res.status(401).json({
+      success: false,
+      message: '请先登录员工账号'
+    });
+  }
+
+  const tokenHash =
+    hashStaffSessionToken(token);
+
+  try {
+    const result = await pool.query(
+      `
+      SELECT
+        ss.staff_account_id,
+        ss.shop_id,
+        ss.staff_id,
+        ss.location_id,
+        sp.can_view_customer_history,
+        sp.can_view_service_notes,
+        sp.can_view_own_sales,
+        sp.can_view_own_commission,
+        sp.can_view_full_customer_phone
+      FROM staff_sessions ss
+      JOIN staff_accounts sa
+        ON sa.id = ss.staff_account_id
+       AND sa.shop_id = ss.shop_id
+       AND sa.staff_id = ss.staff_id
+      JOIN staff st
+        ON st.id = ss.staff_id
+       AND st.shop_id = ss.shop_id
+      JOIN shops sh
+        ON sh.id = ss.shop_id
+      JOIN staff_location_assignments sla
+        ON sla.shop_id = ss.shop_id
+       AND sla.staff_id = ss.staff_id
+       AND sla.location_id = ss.location_id
+      JOIN locations l
+        ON l.id = ss.location_id
+       AND l.shop_id = ss.shop_id
+      LEFT JOIN staff_permissions sp
+        ON sp.shop_id = ss.shop_id
+       AND sp.staff_account_id = ss.staff_account_id
+      WHERE ss.token_hash = $1
+        AND ss.revoked_at IS NULL
+        AND ss.expires_at > NOW()
+        AND ss.session_version = sa.session_version
+        AND sa.status = 'active'
+        AND sh.status = 'active'
+        AND st.can_login = TRUE
+        AND st.is_active = TRUE
+        AND sla.is_active = TRUE
+        AND l.is_active = TRUE
+      LIMIT 1
+      `,
+      [tokenHash]
+    );
+
+    if (result.rows.length === 0) {
+      clearStaffSessionCookie(res);
+
+      return res.status(401).json({
+        success: false,
+        message: '员工登录已失效，请重新登录'
+      });
+    }
+
+    const row = result.rows[0];
+
+    req.staffAuth = {
+      accountId: row.staff_account_id,
+      shopId: row.shop_id,
+      staffId: row.staff_id,
+      locationId: row.location_id,
+      permissions: permissionsFromRow(row)
+    };
+
+    next();
+  } catch (error) {
+    console.error(
+      'Staff authentication error:',
+      safeStaffAuthErrorCode(error)
+    );
+
+    res.status(500).json({
+      success: false,
+      message: '员工认证暂时不可用'
+    });
+  }
+};
 
 
 // ==================================================
@@ -1022,6 +1351,407 @@ app.get(
         success: false,
         message:
           '获取可预约时间失败'
+      });
+    }
+  }
+);
+
+
+// ==================================================
+// 员工认证 API
+// ==================================================
+
+app.post('/api/staff/login', async (req, res) => {
+  setStaffAuthNoStore(res);
+
+  const shopIdentifier =
+    typeof req.body.shopIdentifier === 'string'
+      ? req.body.shopIdentifier.trim().toLowerCase()
+      : '';
+
+  const username =
+    normalizeLoginIdentifier(req.body.username);
+
+  const password =
+    typeof req.body.password === 'string'
+      ? req.body.password
+      : '';
+
+  if (
+    !shopIdentifier ||
+    !username ||
+    !password ||
+    shopIdentifier.length > 200 ||
+    username.length > 200 ||
+    password.length > 1024
+  ) {
+    return res.status(400).json({
+      success: false,
+      message: '请输入店铺、员工账号和密码'
+    });
+  }
+
+  const rateLimitKey =
+    staffLoginRateLimitKey(
+      shopIdentifier,
+      username
+    );
+
+  if (!consumeStaffLoginAttempt(rateLimitKey)) {
+    return res.status(429).json({
+      success: false,
+      message: '登录请求过多，请稍后再试'
+    });
+  }
+
+  let client;
+
+  try {
+    client = await pool.connect();
+    await client.query('BEGIN');
+
+    const accountResult = await client.query(
+      `
+      SELECT
+        sa.id AS staff_account_id,
+        sa.shop_id,
+        sa.staff_id,
+        sa.password_hash,
+        sa.status AS account_status,
+        sa.session_version,
+        sa.failed_login_attempts,
+        sa.locked_until,
+        st.can_login,
+        st.is_active AS staff_is_active
+      FROM staff_accounts sa
+      JOIN staff st
+        ON st.id = sa.staff_id
+       AND st.shop_id = sa.shop_id
+      JOIN shops sh
+        ON sh.id = sa.shop_id
+      WHERE LOWER(sh.slug) = $1
+        AND sh.status = 'active'
+        AND sa.login_identifier_normalized = $2
+      LIMIT 1
+      FOR UPDATE OF sa, st
+      `,
+      [shopIdentifier, username]
+    );
+
+    const account =
+      accountResult.rows[0];
+
+    const now = new Date();
+
+    const accountIsTemporarilyLocked =
+      account &&
+      account.locked_until &&
+      new Date(account.locked_until) > now;
+
+    const passwordMatches =
+      await bcrypt.compare(
+        password,
+        account && !accountIsTemporarilyLocked
+          ? account.password_hash
+          : DUMMY_STAFF_PASSWORD_HASH
+      );
+
+    const accountCanLogin =
+      account &&
+      !accountIsTemporarilyLocked &&
+      passwordMatches &&
+      account.account_status === 'active' &&
+      account.can_login === true &&
+      account.staff_is_active === true;
+
+    if (!accountCanLogin) {
+      const shouldRecordPasswordFailure =
+        account &&
+        !accountIsTemporarilyLocked &&
+        !passwordMatches &&
+        account.account_status === 'active' &&
+        account.can_login === true &&
+        account.staff_is_active === true;
+
+      if (shouldRecordPasswordFailure) {
+        const previousLockExpired =
+          account.locked_until &&
+          new Date(account.locked_until) <= now;
+
+        const previousFailures =
+          previousLockExpired
+            ? 0
+            : Number(
+              account.failed_login_attempts || 0
+            );
+
+        const nextFailureCount =
+          previousFailures + 1;
+
+        await client.query(
+          `
+          UPDATE staff_accounts
+          SET
+            failed_login_attempts = $1::INTEGER,
+            locked_until =
+              CASE
+                WHEN $1::INTEGER >= $2::INTEGER
+                THEN NOW() + INTERVAL '15 minutes'
+                ELSE NULL
+              END,
+            updated_at = NOW()
+          WHERE id = $3
+            AND shop_id = $4
+            AND staff_id = $5
+          `,
+          [
+            nextFailureCount,
+            STAFF_LOGIN_LOCK_THRESHOLD,
+            account.staff_account_id,
+            account.shop_id,
+            account.staff_id
+          ]
+        );
+
+        await client.query('COMMIT');
+      } else {
+        await rollbackStaffLogin(client);
+      }
+
+      return res.status(401).json({
+        success: false,
+        message: '员工账号或密码不正确'
+      });
+    }
+
+    const assignmentResult = await client.query(
+      `
+      SELECT
+        sla.location_id,
+        sla.is_primary
+      FROM staff_location_assignments sla
+      JOIN locations l
+        ON l.id = sla.location_id
+       AND l.shop_id = sla.shop_id
+      WHERE sla.shop_id = $1
+        AND sla.staff_id = $2
+        AND sla.is_active = TRUE
+        AND l.is_active = TRUE
+      ORDER BY
+        sla.is_primary DESC,
+        sla.created_at ASC,
+        sla.id ASC
+      FOR SHARE OF sla, l
+      `,
+      [account.shop_id, account.staff_id]
+    );
+
+    const primaryAssignments =
+      assignmentResult.rows.filter(
+        assignment =>
+          assignment.is_primary === true
+      );
+
+    const selectedAssignment =
+      primaryAssignments.length === 1
+        ? primaryAssignments[0]
+        : assignmentResult.rows.length === 1
+          ? assignmentResult.rows[0]
+          : null;
+
+    if (!selectedAssignment) {
+      await rollbackStaffLogin(client);
+
+      return res.status(403).json({
+        success: false,
+        message: '员工没有有效的登录地点'
+      });
+    }
+
+    const sessionToken =
+      crypto.randomBytes(32).toString('base64url');
+
+    const tokenHash =
+      hashStaffSessionToken(sessionToken);
+
+    const expiresAt =
+      new Date(
+        Date.now() + STAFF_SESSION_MAX_AGE_MS
+      );
+
+    await client.query(
+      `
+      INSERT INTO staff_sessions (
+        token_hash,
+        staff_account_id,
+        shop_id,
+        staff_id,
+        location_id,
+        session_version,
+        expires_at,
+        last_seen_at
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+      `,
+      [
+        tokenHash,
+        account.staff_account_id,
+        account.shop_id,
+        account.staff_id,
+        selectedAssignment.location_id,
+        account.session_version,
+        expiresAt
+      ]
+    );
+
+    await client.query(
+      `
+      UPDATE staff_accounts
+      SET
+        last_login_at = NOW(),
+        failed_login_attempts = 0,
+        locked_until = NULL,
+        updated_at = NOW()
+      WHERE id = $1
+        AND shop_id = $2
+        AND staff_id = $3
+      `,
+      [
+        account.staff_account_id,
+        account.shop_id,
+        account.staff_id
+      ]
+    );
+
+    await client.query('COMMIT');
+
+    clearStaffLoginRateLimit(rateLimitKey);
+
+    setStaffSessionCookie(res, sessionToken);
+
+    res.json({
+      success: true
+    });
+  } catch (error) {
+    await rollbackStaffLogin(client);
+
+    console.error(
+      'Staff login error:',
+      safeStaffAuthErrorCode(error)
+    );
+
+    res.status(500).json({
+      success: false,
+      message: '员工登录暂时不可用'
+    });
+  } finally {
+    if (client) {
+      client.release();
+    }
+  }
+});
+
+
+app.post('/api/staff/logout', async (req, res) => {
+  setStaffAuthNoStore(res);
+
+  const token =
+    parseCookies(req)[STAFF_SESSION_COOKIE];
+
+  try {
+    if (token) {
+      await pool.query(
+        `
+        UPDATE staff_sessions
+        SET
+          revoked_at = COALESCE(revoked_at, NOW()),
+          revoke_reason = COALESCE(
+            revoke_reason,
+            'staff_logout'
+          )
+        WHERE token_hash = $1
+        `,
+        [hashStaffSessionToken(token)]
+      );
+    }
+
+    clearStaffSessionCookie(res);
+
+    res.json({
+      success: true
+    });
+  } catch (error) {
+    console.error(
+      'Staff logout error:',
+      safeStaffAuthErrorCode(error)
+    );
+
+    res.status(500).json({
+      success: false,
+      message: '员工退出暂时不可用'
+    });
+  }
+});
+
+
+app.get(
+  '/api/staff/me',
+  requireStaffAuth,
+  async (req, res) => {
+    try {
+      const result = await pool.query(
+        `
+        SELECT
+          st.name AS staff_name,
+          st.staff_code,
+          sh.name AS shop_name,
+          l.name AS location_name
+        FROM staff st
+        JOIN shops sh
+          ON sh.id = st.shop_id
+        JOIN locations l
+          ON l.id = $3
+         AND l.shop_id = st.shop_id
+        WHERE st.id = $2
+          AND st.shop_id = $1
+        LIMIT 1
+        `,
+        [
+          req.staffAuth.shopId,
+          req.staffAuth.staffId,
+          req.staffAuth.locationId
+        ]
+      );
+
+      if (result.rows.length === 0) {
+        return res.status(401).json({
+          success: false,
+          message: '员工身份已失效'
+        });
+      }
+
+      const staff = result.rows[0];
+
+      res.json({
+        success: true,
+        data: {
+          name: staff.staff_name,
+          staffCode: staff.staff_code,
+          shopName: staff.shop_name,
+          locationName: staff.location_name,
+          permissions:
+            req.staffAuth.permissions
+        }
+      });
+    } catch (error) {
+      console.error(
+        'Read staff profile error:',
+        safeStaffAuthErrorCode(error)
+      );
+
+      res.status(500).json({
+        success: false,
+        message: '读取员工资料失败'
       });
     }
   }
