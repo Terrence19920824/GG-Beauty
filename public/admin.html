@@ -370,7 +370,24 @@ async function loadAppointments() {
     const result =
       await response.json();
 
-    if (!result.success) {
+    if (response.status === 401) {
+      document
+        .getElementById('loginOverlay')
+        .style.display = 'flex';
+
+      document
+        .getElementById('loginMessage')
+        .textContent =
+        result.message || '请先登录';
+
+      content.className = 'loading';
+      content.textContent =
+        '请先登录后查看预约';
+
+      return;
+    }
+
+    if (!response.ok || !result.success) {
       throw new Error(
         result.message || '读取预约失败'
       );
@@ -570,9 +587,6 @@ async function updateAppointmentStatus(id, status) {
     alert(error.message || '操作失败');
   }
 }
-
-// 页面打开自动读取
-loadAppointments();
 
 </script>
 

@@ -58,6 +58,13 @@ app.get('/api/db-test', async (req, res) => {
 // ==================================================
 
 app.get('/api/appointments-db', async (req, res) => {
+  if (!adminSession[req.ip]) {
+    return res.status(401).json({
+      success: false,
+      message: '请先登录'
+    });
+  }
+
   try {
     const result = await pool.query(`
       SELECT
