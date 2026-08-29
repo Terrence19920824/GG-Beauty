@@ -8,6 +8,9 @@ const { Pool } = require('pg');
 
 const app = express();
 
+const ADMIN_PASSWORD =
+  process.env.ADMIN_PASSWORD;
+
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: {
@@ -117,7 +120,6 @@ const CONFIG = {
   shopName: 'GG-Beauty',
   currency: 'S$',
   validUntil: '2026-09-19',
-  adminPassword: '123456',
 
   services: [
     // 面部护理
@@ -1025,8 +1027,9 @@ app.get(
 
 app.post('/api/admin/login', (req, res) => {
   if (
+    ADMIN_PASSWORD &&
     req.body.password ===
-    CONFIG.adminPassword
+    ADMIN_PASSWORD
   ) {
     adminSession[req.ip] = true;
 
@@ -1217,10 +1220,6 @@ app.listen(PORT, () => {
 
   console.log(
     `📋 访问地址: http://localhost:${PORT}`
-  );
-
-  console.log(
-    `🔑 管理员密码: ${CONFIG.adminPassword}`
   );
 
   console.log(
