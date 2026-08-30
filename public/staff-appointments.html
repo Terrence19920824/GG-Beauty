@@ -1,0 +1,877 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1, viewport-fit=cover"
+  >
+  <meta name="color-scheme" content="light">
+  <title>My Appointments</title>
+  <style>
+    :root {
+      --background: #f5f6f8;
+      --surface: #ffffff;
+      --text: #172027;
+      --muted: #68737d;
+      --line: #e6e9ec;
+      --accent: #1f6f68;
+      --accent-soft: #e8f4f2;
+      --danger: #a83d3d;
+      --shadow: 0 7px 24px rgba(24, 36, 43, 0.07);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-width: 320px;
+      min-height: 100vh;
+      background: var(--background);
+      color: var(--text);
+      font-family:
+        Inter,
+        -apple-system,
+        BlinkMacSystemFont,
+        "Segoe UI",
+        sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    button,
+    input {
+      font: inherit;
+    }
+
+    button {
+      cursor: pointer;
+    }
+
+    .app-shell {
+      width: min(100%, 520px);
+      min-height: 100vh;
+      margin: 0 auto;
+      padding:
+        max(22px, env(safe-area-inset-top))
+        18px
+        max(30px, env(safe-area-inset-bottom));
+    }
+
+    .top-row {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 20px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(1.65rem, 7vw, 2rem);
+      line-height: 1.15;
+      letter-spacing: -0.035em;
+    }
+
+    .language-switch {
+      display: flex;
+      flex: 0 0 auto;
+      align-items: center;
+      gap: 7px;
+      padding-top: 4px;
+      color: var(--muted);
+      font-size: 0.78rem;
+    }
+
+    .language-switch button {
+      min-width: 26px;
+      padding: 2px 0;
+      border: 0;
+      border-bottom: 1px solid transparent;
+      background: transparent;
+      color: inherit;
+    }
+
+    .language-switch button.active {
+      border-color: var(--accent);
+      color: var(--accent);
+      font-weight: 700;
+    }
+
+    .identity {
+      min-height: 54px;
+      margin-top: 20px;
+    }
+
+    .staff-name {
+      margin: 0;
+      font-size: 1.05rem;
+      font-weight: 700;
+    }
+
+    .location-name {
+      margin: 6px 0 0;
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+
+    .date-panel {
+      margin-top: 22px;
+    }
+
+    .quick-dates {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 9px;
+    }
+
+    .date-button,
+    .action-button {
+      min-height: 44px;
+      border: 1px solid var(--line);
+      border-radius: 13px;
+      background: var(--surface);
+      color: var(--text);
+      font-weight: 650;
+    }
+
+    .date-button.active {
+      border-color: var(--accent);
+      background: var(--accent);
+      color: #ffffff;
+    }
+
+    .date-picker-row {
+      position: relative;
+      margin-top: 9px;
+    }
+
+    .date-picker-label {
+      display: flex;
+      min-height: 44px;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 0 14px;
+      border: 1px solid var(--line);
+      border-radius: 13px;
+      background: var(--surface);
+      color: var(--muted);
+      font-size: 0.9rem;
+      font-weight: 600;
+    }
+
+    #date-picker {
+      width: 138px;
+      min-height: 36px;
+      padding: 0;
+      border: 0;
+      outline: 0;
+      background: transparent;
+      color: var(--text);
+      text-align: right;
+    }
+
+    .list-heading {
+      display: flex;
+      min-height: 28px;
+      align-items: center;
+      justify-content: space-between;
+      margin: 25px 2px 12px;
+    }
+
+    .selected-date {
+      margin: 0;
+      font-size: 0.9rem;
+      font-weight: 700;
+    }
+
+    .loading-label {
+      color: var(--muted);
+      font-size: 0.78rem;
+    }
+
+    .appointment-list {
+      display: grid;
+      gap: 12px;
+    }
+
+    .appointment-card {
+      padding: 18px;
+      border: 1px solid rgba(230, 233, 236, 0.82);
+      border-radius: 18px;
+      background: var(--surface);
+      box-shadow: var(--shadow);
+    }
+
+    .card-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .appointment-time {
+      margin: 0;
+      font-size: 1.35rem;
+      font-weight: 760;
+      letter-spacing: -0.025em;
+    }
+
+    .status-badge {
+      flex: 0 0 auto;
+      padding: 5px 9px;
+      border-radius: 999px;
+      background: #eef0f2;
+      color: #59636b;
+      font-size: 0.72rem;
+      font-weight: 750;
+    }
+
+    .status-pending {
+      background: #fff3d8;
+      color: #8a6413;
+    }
+
+    .status-confirmed {
+      background: var(--accent-soft);
+      color: var(--accent);
+    }
+
+    .status-completed {
+      background: #eceff1;
+      color: #56616a;
+    }
+
+    .status-cancelled {
+      background: #fbe9e9;
+      color: var(--danger);
+    }
+
+    .customer-name {
+      margin: 20px 0 0;
+      font-size: 1.06rem;
+      font-weight: 720;
+    }
+
+    .customer-phone {
+      margin: 4px 0 0;
+      color: var(--muted);
+      font-size: 0.88rem;
+      letter-spacing: 0.04em;
+    }
+
+    .service-row {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 14px;
+      margin-top: 17px;
+      padding-top: 14px;
+      border-top: 1px solid var(--line);
+    }
+
+    .service-name {
+      margin: 0;
+      font-size: 0.92rem;
+      font-weight: 650;
+    }
+
+    .duration {
+      flex: 0 0 auto;
+      margin: 0;
+      color: var(--muted);
+      font-size: 0.82rem;
+    }
+
+    .state-panel {
+      padding: 42px 24px;
+      border: 1px dashed #d9dde1;
+      border-radius: 18px;
+      background: rgba(255, 255, 255, 0.7);
+      text-align: center;
+    }
+
+    .state-panel p {
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.55;
+    }
+
+    .action-button {
+      margin-top: 18px;
+      padding: 0 22px;
+      border-color: var(--accent);
+      background: var(--accent);
+      color: #ffffff;
+    }
+
+    .skeleton {
+      min-height: 158px;
+      background:
+        linear-gradient(
+          100deg,
+          #ffffff 30%,
+          #f1f3f4 50%,
+          #ffffff 70%
+        );
+      background-size: 220% 100%;
+      animation: loading 1.25s ease-in-out infinite;
+    }
+
+    @keyframes loading {
+      to {
+        background-position-x: -220%;
+      }
+    }
+
+    @media (min-width: 600px) {
+      .app-shell {
+        padding-right: 24px;
+        padding-left: 24px;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .skeleton {
+        animation: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="app-shell">
+    <header>
+      <div class="top-row">
+        <h1 id="page-title">My Appointments</h1>
+        <nav
+          class="language-switch"
+          aria-label="Language"
+        >
+          <button id="language-en" type="button">EN</button>
+          <span aria-hidden="true">|</span>
+          <button id="language-zh" type="button">中文</button>
+        </nav>
+      </div>
+
+      <section class="identity" aria-live="polite">
+        <p id="staff-name" class="staff-name"></p>
+        <p id="location-name" class="location-name"></p>
+      </section>
+    </header>
+
+    <section class="date-panel" aria-label="Appointment date">
+      <div class="quick-dates">
+        <button
+          id="today-button"
+          class="date-button active"
+          type="button"
+        >
+          Today
+        </button>
+        <button
+          id="tomorrow-button"
+          class="date-button"
+          type="button"
+        >
+          Tomorrow
+        </button>
+      </div>
+
+      <div class="date-picker-row">
+        <label class="date-picker-label" for="date-picker">
+          <span id="date-picker-text">Select Date</span>
+          <input id="date-picker" type="date">
+        </label>
+      </div>
+    </section>
+
+    <section aria-live="polite" aria-busy="true" id="appointments-section">
+      <div class="list-heading">
+        <p id="selected-date" class="selected-date"></p>
+        <span id="loading-label" class="loading-label">Loading…</span>
+      </div>
+      <div id="appointment-list" class="appointment-list">
+        <div class="appointment-card skeleton"></div>
+        <div class="appointment-card skeleton"></div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const LANGUAGE_STORAGE_KEY =
+      'gg_beauty_staff_language';
+
+    const translations = {
+      en: {
+        pageTitle: 'My Appointments',
+        today: 'Today',
+        tomorrow: 'Tomorrow',
+        selectDate: 'Select Date',
+        loading: 'Loading…',
+        minutes: 'min',
+        noAppointmentsToday: 'No appointments today',
+        noAppointmentsDate: 'No appointments on this date',
+        sessionExpired: 'Session expired. Please log in again.',
+        logIn: 'Log In',
+        loadFailed: 'Failed to load. Please try again.',
+        retry: 'Retry',
+        unknownStatus: 'Unknown',
+        statuses: {
+          pending: 'Pending',
+          confirmed: 'Confirmed',
+          completed: 'Completed',
+          cancelled: 'Cancelled'
+        }
+      },
+      zh: {
+        pageTitle: '我的预约',
+        today: '今天',
+        tomorrow: '明天',
+        selectDate: '选择日期',
+        loading: '加载中…',
+        minutes: '分钟',
+        noAppointmentsToday: '今天没有预约',
+        noAppointmentsDate: '该日期没有预约',
+        sessionExpired: '登录已失效，请重新登录',
+        logIn: '重新登录',
+        loadFailed: '加载失败，请重试',
+        retry: '重新加载',
+        unknownStatus: '未知状态',
+        statuses: {
+          pending: '待确认',
+          confirmed: '已确认',
+          completed: '已完成',
+          cancelled: '已取消'
+        }
+      }
+    };
+
+    const getSavedLanguage = () => {
+      try {
+        const savedLanguage = localStorage.getItem(
+          LANGUAGE_STORAGE_KEY
+        );
+
+        if (savedLanguage === 'en' || savedLanguage === 'zh') {
+          return savedLanguage;
+        }
+      } catch (error) {
+        // Storage can be unavailable in private or restricted browser modes.
+      }
+
+      const browserLanguages = Array.isArray(navigator.languages)
+        ? navigator.languages
+        : [navigator.language];
+
+      return browserLanguages.some(language =>
+        typeof language === 'string' &&
+        language.toLowerCase().startsWith('zh')
+      )
+        ? 'zh'
+        : 'en';
+    };
+
+    const state = {
+      language: getSavedLanguage(),
+      profile: null,
+      appointments: [],
+      selectedDate: null,
+      todayDate: null,
+      selectionMode: 'today',
+      timezone: 'Asia/Singapore',
+      loading: true,
+      view: 'content'
+    };
+
+    const elements = {
+      pageTitle: document.getElementById('page-title'),
+      languageEn: document.getElementById('language-en'),
+      languageZh: document.getElementById('language-zh'),
+      staffName: document.getElementById('staff-name'),
+      locationName: document.getElementById('location-name'),
+      todayButton: document.getElementById('today-button'),
+      tomorrowButton: document.getElementById('tomorrow-button'),
+      datePickerText: document.getElementById('date-picker-text'),
+      datePicker: document.getElementById('date-picker'),
+      selectedDate: document.getElementById('selected-date'),
+      loadingLabel: document.getElementById('loading-label'),
+      appointmentsSection: document.getElementById('appointments-section'),
+      appointmentList: document.getElementById('appointment-list')
+    };
+
+    const currentText = () => translations[state.language];
+
+    const addDays = (dateString, numberOfDays) => {
+      const date = new Date(`${dateString}T00:00:00.000Z`);
+      date.setUTCDate(date.getUTCDate() + numberOfDays);
+      return date.toISOString().slice(0, 10);
+    };
+
+    const formatDate = dateString => {
+      if (!dateString) {
+        return '';
+      }
+
+      return new Intl.DateTimeFormat(
+        state.language === 'zh' ? 'zh-CN' : 'en-SG',
+        {
+          weekday: 'short',
+          day: 'numeric',
+          month: 'short',
+          year: 'numeric',
+          timeZone: 'UTC'
+        }
+      ).format(new Date(`${dateString}T00:00:00.000Z`));
+    };
+
+    const formatTime = timestamp =>
+      new Intl.DateTimeFormat(
+        state.language === 'zh' ? 'zh-CN' : 'en-SG',
+        {
+          hour: '2-digit',
+          minute: '2-digit',
+          hourCycle: 'h23',
+          timeZone: state.timezone
+        }
+      ).format(new Date(timestamp));
+
+    const createTextElement = (tagName, className, text) => {
+      const element = document.createElement(tagName);
+      element.className = className;
+      element.textContent = text;
+      return element;
+    };
+
+    const renderAppointmentCard = appointment => {
+      const card = document.createElement('article');
+      card.className = 'appointment-card';
+
+      const cardTop = document.createElement('div');
+      cardTop.className = 'card-top';
+
+      cardTop.appendChild(
+        createTextElement(
+          'p',
+          'appointment-time',
+          `${formatTime(appointment.startAt)} – ${formatTime(appointment.endAt)}`
+        )
+      );
+
+      const normalizedStatus =
+        typeof appointment.status === 'string'
+          ? appointment.status.toLowerCase()
+          : '';
+
+      const statusText =
+        currentText().statuses[normalizedStatus] ||
+        currentText().unknownStatus;
+
+      cardTop.appendChild(
+        createTextElement(
+          'span',
+          `status-badge status-${normalizedStatus}`,
+          statusText
+        )
+      );
+
+      card.appendChild(cardTop);
+      card.appendChild(
+        createTextElement(
+          'p',
+          'customer-name',
+          appointment.customerName || '—'
+        )
+      );
+      card.appendChild(
+        createTextElement(
+          'p',
+          'customer-phone',
+          appointment.customerPhone || '—'
+        )
+      );
+
+      const serviceRow = document.createElement('div');
+      serviceRow.className = 'service-row';
+      serviceRow.appendChild(
+        createTextElement(
+          'p',
+          'service-name',
+          appointment.serviceName || '—'
+        )
+      );
+      serviceRow.appendChild(
+        createTextElement(
+          'p',
+          'duration',
+          `${appointment.durationMinutes} ${currentText().minutes}`
+        )
+      );
+      card.appendChild(serviceRow);
+
+      return card;
+    };
+
+    const renderStatePanel = (message, buttonText, action) => {
+      const panel = document.createElement('div');
+      panel.className = 'state-panel';
+      panel.appendChild(createTextElement('p', '', message));
+
+      if (buttonText && action) {
+        const button = createTextElement(
+          'button',
+          'action-button',
+          buttonText
+        );
+        button.type = 'button';
+        button.addEventListener('click', action);
+        panel.appendChild(button);
+      }
+
+      elements.appointmentList.replaceChildren(panel);
+    };
+
+    const render = () => {
+      const text = currentText();
+
+      document.documentElement.lang = state.language === 'zh'
+        ? 'zh-CN'
+        : 'en';
+      document.title = text.pageTitle;
+      elements.pageTitle.textContent = text.pageTitle;
+      elements.todayButton.textContent = text.today;
+      elements.tomorrowButton.textContent = text.tomorrow;
+      elements.datePickerText.textContent = text.selectDate;
+      elements.languageEn.classList.toggle(
+        'active',
+        state.language === 'en'
+      );
+      elements.languageZh.classList.toggle(
+        'active',
+        state.language === 'zh'
+      );
+      elements.languageEn.setAttribute(
+        'aria-pressed',
+        String(state.language === 'en')
+      );
+      elements.languageZh.setAttribute(
+        'aria-pressed',
+        String(state.language === 'zh')
+      );
+
+      elements.staffName.textContent = state.profile
+        ? state.profile.name
+        : '';
+      elements.locationName.textContent = state.profile
+        ? `${state.profile.shopName} · ${state.profile.locationName}`
+        : '';
+      elements.selectedDate.textContent = formatDate(
+        state.selectedDate
+      );
+      elements.loadingLabel.textContent = state.loading
+        ? text.loading
+        : '';
+      elements.todayButton.classList.toggle(
+        'active',
+        state.selectionMode === 'today'
+      );
+      elements.tomorrowButton.classList.toggle(
+        'active',
+        state.selectionMode === 'tomorrow'
+      );
+      elements.datePicker.value =
+        state.selectionMode === 'custom' && state.selectedDate
+          ? state.selectedDate
+          : '';
+      elements.appointmentsSection.setAttribute(
+        'aria-busy',
+        String(state.loading)
+      );
+
+      if (state.loading) {
+        const skeletons = [1, 2].map(() => {
+          const skeleton = document.createElement('div');
+          skeleton.className = 'appointment-card skeleton';
+          return skeleton;
+        });
+        elements.appointmentList.replaceChildren(...skeletons);
+        return;
+      }
+
+      if (state.view === 'session') {
+        renderStatePanel(
+          text.sessionExpired,
+          text.logIn,
+          () => {
+            window.location.href = '/staff-login.html';
+          }
+        );
+        return;
+      }
+
+      if (state.view === 'error') {
+        renderStatePanel(
+          text.loadFailed,
+          text.retry,
+          loadPage
+        );
+        return;
+      }
+
+      if (state.appointments.length === 0) {
+        renderStatePanel(
+          state.selectionMode === 'today'
+            ? text.noAppointmentsToday
+            : text.noAppointmentsDate
+        );
+        return;
+      }
+
+      elements.appointmentList.replaceChildren(
+        ...state.appointments.map(renderAppointmentCard)
+      );
+    };
+
+    const fetchJson = async url => {
+      const response = await fetch(url, {
+        credentials: 'same-origin',
+        headers: {
+          Accept: 'application/json'
+        }
+      });
+
+      if (response.status === 401) {
+        const sessionError = new Error('session_expired');
+        sessionError.isSessionError = true;
+        throw sessionError;
+      }
+
+      if (!response.ok) {
+        throw new Error('request_failed');
+      }
+
+      const payload = await response.json();
+
+      if (!payload.success) {
+        throw new Error('request_failed');
+      }
+
+      return payload.data;
+    };
+
+    const loadAppointments = async date => {
+      state.loading = true;
+      state.view = 'content';
+      render();
+
+      try {
+        const url = date
+          ? `/api/staff/appointments?date=${encodeURIComponent(date)}`
+          : '/api/staff/appointments';
+
+        const data = await fetchJson(url);
+        state.selectedDate = data.date;
+        if (!date) {
+          state.todayDate = data.date;
+        }
+        state.timezone = data.timezone || 'Asia/Singapore';
+        state.appointments = Array.isArray(data.appointments)
+          ? data.appointments
+          : [];
+      } catch (error) {
+        state.appointments = [];
+        state.view = error.isSessionError
+          ? 'session'
+          : 'error';
+      } finally {
+        state.loading = false;
+        render();
+      }
+    };
+
+    const loadPage = async () => {
+      state.loading = true;
+      state.view = 'content';
+      render();
+
+      try {
+        const [profile, appointmentData] = await Promise.all([
+          fetchJson('/api/staff/me'),
+          fetchJson('/api/staff/appointments')
+        ]);
+
+        state.profile = profile;
+        state.selectedDate = appointmentData.date;
+        state.todayDate = appointmentData.date;
+        state.timezone =
+          appointmentData.timezone || 'Asia/Singapore';
+        state.appointments = Array.isArray(
+          appointmentData.appointments
+        )
+          ? appointmentData.appointments
+          : [];
+      } catch (error) {
+        state.appointments = [];
+        state.view = error.isSessionError
+          ? 'session'
+          : 'error';
+      } finally {
+        state.loading = false;
+        render();
+      }
+    };
+
+    const setLanguage = language => {
+      state.language = language;
+
+      try {
+        localStorage.setItem(
+          LANGUAGE_STORAGE_KEY,
+          language
+        );
+      } catch (error) {
+        // Language switching still works when storage is unavailable.
+      }
+
+      render();
+    };
+
+    elements.languageEn.addEventListener(
+      'click',
+      () => setLanguage('en')
+    );
+    elements.languageZh.addEventListener(
+      'click',
+      () => setLanguage('zh')
+    );
+
+    elements.todayButton.addEventListener('click', () => {
+      state.selectionMode = 'today';
+      loadAppointments(null);
+    });
+
+    elements.tomorrowButton.addEventListener('click', () => {
+      if (!state.todayDate) {
+        return;
+      }
+
+      state.selectionMode = 'tomorrow';
+      loadAppointments(addDays(state.todayDate, 1));
+    });
+
+    elements.datePicker.addEventListener('change', event => {
+      const selectedDate = event.target.value;
+
+      if (!selectedDate) {
+        return;
+      }
+
+      state.selectionMode = 'custom';
+      loadAppointments(selectedDate);
+    });
+
+    render();
+    loadPage();
+  </script>
+</body>
+</html>
