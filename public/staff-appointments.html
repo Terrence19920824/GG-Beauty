@@ -628,6 +628,141 @@
       font-weight: 700;
     }
 
+    .sheet-change-time {
+      width: 100%;
+      min-height: 46px;
+      margin-top: 24px;
+      border: 1px solid var(--accent);
+      border-radius: 13px;
+      background: var(--accent);
+      color: #ffffff;
+      font-weight: 700;
+    }
+
+    .sheet-change-time[hidden],
+    .move-time-panel[hidden] {
+      display: none;
+    }
+
+    .move-time-panel {
+      margin-top: 22px;
+      padding-top: 18px;
+      border-top: 1px solid var(--line);
+    }
+
+    .move-current-grid,
+    .move-input-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    .move-current-grid {
+      grid-template-columns: 1.4fr 1fr 1fr;
+    }
+
+    .move-field-label {
+      display: block;
+      margin-bottom: 6px;
+      color: var(--muted);
+      font-size: 0.72rem;
+      font-weight: 650;
+    }
+
+    .move-field-value {
+      margin: 0;
+      font-size: 0.86rem;
+      font-weight: 700;
+    }
+
+    .move-input-grid {
+      margin-top: 18px;
+    }
+
+    .move-input {
+      width: 100%;
+      min-height: 43px;
+      padding: 0 10px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--surface);
+      color: var(--text);
+    }
+
+    .move-preview {
+      margin: 16px 0 0;
+      padding: 11px 12px;
+      border-radius: 10px;
+      background: var(--background);
+      color: var(--muted);
+      font-size: 0.82rem;
+    }
+
+    .move-preview strong {
+      color: var(--text);
+    }
+
+    .move-confirmation {
+      min-height: 22px;
+      margin: 16px 0 0;
+      font-size: 0.9rem;
+      font-weight: 700;
+    }
+
+    .move-error {
+      min-height: 20px;
+      margin: 8px 0 0;
+      color: var(--danger);
+      font-size: 0.8rem;
+    }
+
+    .move-actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-top: 14px;
+    }
+
+    .move-action {
+      min-height: 44px;
+      border: 1px solid var(--line);
+      border-radius: 11px;
+      background: var(--surface);
+      color: var(--text);
+      font-weight: 700;
+    }
+
+    .move-action.primary {
+      border-color: var(--accent);
+      background: var(--accent);
+      color: #ffffff;
+    }
+
+    .move-action:disabled {
+      cursor: wait;
+      opacity: 0.62;
+    }
+
+    .toast {
+      position: fixed;
+      top: max(18px, env(safe-area-inset-top));
+      left: 50%;
+      z-index: 30;
+      max-width: calc(100% - 36px);
+      padding: 11px 16px;
+      transform: translateX(-50%);
+      border-radius: 999px;
+      background: #21332f;
+      color: #ffffff;
+      font-size: 0.82rem;
+      font-weight: 700;
+      box-shadow: var(--shadow);
+    }
+
+    .toast[hidden] {
+      display: none;
+    }
+
     @keyframes loading {
       to {
         background-position-x: -220%;
@@ -743,6 +878,8 @@
     </section>
   </main>
 
+  <div id="toast" class="toast" role="status" hidden></div>
+
   <div id="appointment-modal" class="modal-backdrop" hidden>
     <section
       class="appointment-sheet"
@@ -760,6 +897,54 @@
       <div class="sheet-detail">
         <p id="sheet-service" class="sheet-service"></p>
         <p id="sheet-duration" class="sheet-duration"></p>
+      </div>
+      <button
+        id="sheet-change-time"
+        class="sheet-change-time"
+        type="button"
+        hidden
+      >
+        Change Time
+      </button>
+      <div id="move-time-panel" class="move-time-panel" hidden>
+        <div class="move-current-grid">
+          <div>
+            <span id="current-date-label" class="move-field-label"></span>
+            <p id="current-date-value" class="move-field-value"></p>
+          </div>
+          <div>
+            <span id="current-start-label" class="move-field-label"></span>
+            <p id="current-start-value" class="move-field-value"></p>
+          </div>
+          <div>
+            <span id="current-end-label" class="move-field-label"></span>
+            <p id="current-end-value" class="move-field-value"></p>
+          </div>
+        </div>
+        <div class="move-input-grid">
+          <label>
+            <span id="new-date-label" class="move-field-label"></span>
+            <input id="move-date" class="move-input" type="date">
+          </label>
+          <label>
+            <span id="new-start-label" class="move-field-label"></span>
+            <input id="move-start-time" class="move-input" type="time">
+          </label>
+        </div>
+        <p class="move-preview">
+          <span id="new-end-label"></span>
+          <strong id="new-end-value"></strong>
+        </p>
+        <p id="move-confirmation" class="move-confirmation"></p>
+        <p id="move-error" class="move-error" aria-live="polite"></p>
+        <div class="move-actions">
+          <button id="move-cancel" class="move-action" type="button"></button>
+          <button
+            id="move-confirm"
+            class="move-action primary"
+            type="button"
+          ></button>
+        </div>
       </div>
       <button id="sheet-close" class="sheet-close" type="button">
         Close
@@ -796,6 +981,21 @@
         loadFailed: 'Failed to load. Please try again.',
         retry: 'Retry',
         close: 'Close',
+        changeTime: 'Change Time',
+        currentDate: 'Current date',
+        currentStart: 'Current start',
+        currentEnd: 'Current end',
+        newDate: 'New date',
+        newStart: 'New start',
+        newEnd: 'New end',
+        moveConfirmation: (start, end) =>
+          `Move appointment to ${start}–${end}?`,
+        confirm: 'Confirm',
+        cancel: 'Cancel',
+        appointmentMoved: 'Appointment moved',
+        timeUnavailable: 'Time unavailable',
+        notAllowed: 'Not allowed',
+        unableToMove: 'Unable to move appointment',
         unknownStatus: 'Unknown',
         statuses: {
           pending: 'Pending',
@@ -823,6 +1023,21 @@
         loadFailed: '加载失败，请重试',
         retry: '重新加载',
         close: '关闭',
+        changeTime: '修改时间',
+        currentDate: '当前日期',
+        currentStart: '当前开始时间',
+        currentEnd: '当前结束时间',
+        newDate: '新的日期',
+        newStart: '新的开始时间',
+        newEnd: '新的结束时间',
+        moveConfirmation: (start, end) =>
+          `移动预约到 ${start}–${end}？`,
+        confirm: '确认',
+        cancel: '取消',
+        appointmentMoved: '预约时间已修改',
+        timeUnavailable: '该时间不可用',
+        notAllowed: '无权限修改',
+        unableToMove: '无法修改预约时间',
         unknownStatus: '未知状态',
         statuses: {
           pending: '待确认',
@@ -881,7 +1096,9 @@
       displayMode: getSavedView(),
       timezone: 'Asia/Singapore',
       loading: true,
-      view: 'content'
+      view: 'content',
+      activeAppointment: null,
+      moveSubmitting: false
     };
 
     const elements = {
@@ -913,7 +1130,26 @@
       sheetPhone: document.getElementById('sheet-phone'),
       sheetService: document.getElementById('sheet-service'),
       sheetDuration: document.getElementById('sheet-duration'),
-      sheetClose: document.getElementById('sheet-close')
+      sheetChangeTime: document.getElementById('sheet-change-time'),
+      moveTimePanel: document.getElementById('move-time-panel'),
+      currentDateLabel: document.getElementById('current-date-label'),
+      currentDateValue: document.getElementById('current-date-value'),
+      currentStartLabel: document.getElementById('current-start-label'),
+      currentStartValue: document.getElementById('current-start-value'),
+      currentEndLabel: document.getElementById('current-end-label'),
+      currentEndValue: document.getElementById('current-end-value'),
+      newDateLabel: document.getElementById('new-date-label'),
+      newStartLabel: document.getElementById('new-start-label'),
+      newEndLabel: document.getElementById('new-end-label'),
+      newEndValue: document.getElementById('new-end-value'),
+      moveDate: document.getElementById('move-date'),
+      moveStartTime: document.getElementById('move-start-time'),
+      moveConfirmation: document.getElementById('move-confirmation'),
+      moveError: document.getElementById('move-error'),
+      moveCancel: document.getElementById('move-cancel'),
+      moveConfirm: document.getElementById('move-confirm'),
+      sheetClose: document.getElementById('sheet-close'),
+      toast: document.getElementById('toast')
     };
 
     const currentText = () => translations[state.language];
@@ -984,6 +1220,115 @@
       );
 
       return hour * 60 + minute;
+    };
+
+    const dateTimeInLocation = timestamp => {
+      const parts = new Intl.DateTimeFormat('en-CA', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hourCycle: 'h23',
+        timeZone: state.timezone
+      }).formatToParts(new Date(timestamp));
+      const value = type =>
+        parts.find(part => part.type === type).value;
+
+      return {
+        year: value('year'),
+        month: value('month'),
+        day: value('day'),
+        hour: value('hour'),
+        minute: value('minute'),
+        second: value('second'),
+        date: `${value('year')}-${value('month')}-${value('day')}`,
+        time: `${value('hour')}:${value('minute')}`
+      };
+    };
+
+    const buildZonedStartAt = (dateValue, timeValue) => {
+      const dateMatch = typeof dateValue === 'string'
+        ? dateValue.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+        : null;
+      const timeMatch = typeof timeValue === 'string'
+        ? timeValue.match(/^(\d{2}):(\d{2})$/)
+        : null;
+
+      if (!dateMatch || !timeMatch) {
+        return null;
+      }
+
+      const year = Number(dateMatch[1]);
+      const month = Number(dateMatch[2]);
+      const day = Number(dateMatch[3]);
+      const hour = Number(timeMatch[1]);
+      const minute = Number(timeMatch[2]);
+      const wallTime = Date.UTC(
+        year,
+        month - 1,
+        day,
+        hour,
+        minute,
+        0
+      );
+      const calendarCheck = new Date(
+        Date.UTC(year, month - 1, day)
+      );
+
+      if (
+        calendarCheck.getUTCFullYear() !== year ||
+        calendarCheck.getUTCMonth() !== month - 1 ||
+        calendarCheck.getUTCDate() !== day ||
+        hour > 23 ||
+        minute > 59
+      ) {
+        return null;
+      }
+
+      let instant = wallTime;
+
+      try {
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          const locationParts = dateTimeInLocation(instant);
+          const displayedTime = Date.UTC(
+            Number(locationParts.year),
+            Number(locationParts.month) - 1,
+            Number(locationParts.day),
+            Number(locationParts.hour),
+            Number(locationParts.minute),
+            Number(locationParts.second)
+          );
+          instant = wallTime - (displayedTime - instant);
+        }
+
+        const verified = dateTimeInLocation(instant);
+
+        if (
+          verified.date !== dateValue ||
+          verified.time !== timeValue ||
+          verified.second !== '00'
+        ) {
+          return null;
+        }
+      } catch (_error) {
+        return null;
+      }
+
+      const offsetMinutes = Math.round(
+        (wallTime - instant) / 60000
+      );
+      const offsetSign = offsetMinutes >= 0 ? '+' : '-';
+      const absoluteOffset = Math.abs(offsetMinutes);
+      const offsetHours = String(
+        Math.floor(absoluteOffset / 60)
+      ).padStart(2, '0');
+      const offsetRemainder = String(
+        absoluteOffset % 60
+      ).padStart(2, '0');
+
+      return `${dateValue}T${timeValue}:00${offsetSign}${offsetHours}:${offsetRemainder}`;
     };
 
     const normalizeStatus = status => {
@@ -1072,9 +1417,190 @@
       return card;
     };
 
+    let toastTimer;
+
+    const showToast = message => {
+      window.clearTimeout(toastTimer);
+      elements.toast.textContent = message;
+      elements.toast.hidden = false;
+      toastTimer = window.setTimeout(() => {
+        elements.toast.hidden = true;
+      }, 2600);
+    };
+
+    const canMoveAppointments = () =>
+      state.profile &&
+      state.profile.permissions &&
+      state.profile.permissions
+        .can_move_own_appointments === true;
+
+    const closeMoveTimePanel = () => {
+      elements.moveTimePanel.hidden = true;
+      elements.moveError.textContent = '';
+      elements.sheetChangeTime.hidden =
+        !canMoveAppointments();
+    };
+
     const closeAppointmentSheet = () => {
+      closeMoveTimePanel();
       elements.appointmentModal.hidden = true;
+      state.activeAppointment = null;
       document.body.style.overflow = '';
+    };
+
+    const updateMovePreview = () => {
+      const appointment = state.activeAppointment;
+      const newStartAt = buildZonedStartAt(
+        elements.moveDate.value,
+        elements.moveStartTime.value
+      );
+      const duration = appointment
+        ? new Date(appointment.endAt).getTime() -
+          new Date(appointment.startAt).getTime()
+        : 0;
+
+      elements.moveError.textContent = '';
+
+      if (!newStartAt || duration <= 0) {
+        elements.newEndValue.textContent = '—';
+        elements.moveConfirmation.textContent = '';
+        elements.moveConfirm.disabled = true;
+        return null;
+      }
+
+      const newEndAt = new Date(
+        new Date(newStartAt).getTime() + duration
+      );
+      const startText = formatTime(newStartAt);
+      const endText = formatTime(newEndAt);
+
+      elements.newEndValue.textContent = endText;
+      elements.moveConfirmation.textContent =
+        currentText().moveConfirmation(startText, endText);
+      elements.moveConfirm.disabled = state.moveSubmitting;
+
+      return newStartAt;
+    };
+
+    const openMoveTimePanel = () => {
+      if (
+        !canMoveAppointments() ||
+        !state.activeAppointment
+      ) {
+        return;
+      }
+
+      const appointment = state.activeAppointment;
+      const start = dateTimeInLocation(appointment.startAt);
+      const end = dateTimeInLocation(appointment.endAt);
+      const text = currentText();
+
+      elements.currentDateLabel.textContent = text.currentDate;
+      elements.currentStartLabel.textContent = text.currentStart;
+      elements.currentEndLabel.textContent = text.currentEnd;
+      elements.newDateLabel.textContent = text.newDate;
+      elements.newStartLabel.textContent = text.newStart;
+      elements.newEndLabel.textContent = `${text.newEnd}: `;
+      elements.moveCancel.textContent = text.cancel;
+      elements.moveConfirm.textContent = text.confirm;
+      elements.currentDateValue.textContent = start.date;
+      elements.currentStartValue.textContent = start.time;
+      elements.currentEndValue.textContent = end.time;
+      elements.moveDate.value = start.date;
+      elements.moveStartTime.value = start.time;
+      elements.moveError.textContent = '';
+      elements.sheetChangeTime.hidden = true;
+      elements.moveTimePanel.hidden = false;
+      updateMovePreview();
+      elements.moveStartTime.focus();
+    };
+
+    const submitAppointmentMove = async () => {
+      if (
+        state.moveSubmitting ||
+        !canMoveAppointments() ||
+        !state.activeAppointment
+      ) {
+        return;
+      }
+
+      const newStartAt = updateMovePreview();
+
+      if (!newStartAt) {
+        elements.moveError.textContent =
+          currentText().unableToMove;
+        return;
+      }
+
+      state.moveSubmitting = true;
+      elements.moveConfirm.disabled = true;
+      elements.moveError.textContent = '';
+
+      try {
+        const response = await fetch(
+          `/api/staff/appointments/${encodeURIComponent(state.activeAppointment.id)}/time`,
+          {
+            method: 'PATCH',
+            credentials: 'same-origin',
+            headers: {
+              Accept: 'application/json',
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ newStartAt })
+          }
+        );
+
+        if (response.status === 401) {
+          closeAppointmentSheet();
+          state.view = 'session';
+          state.loading = false;
+          render();
+          return;
+        }
+
+        if (response.status === 409) {
+          elements.moveError.textContent =
+            currentText().timeUnavailable;
+          return;
+        }
+
+        if (response.status === 403) {
+          elements.moveError.textContent =
+            currentText().notAllowed;
+          return;
+        }
+
+        if (!response.ok) {
+          elements.moveError.textContent =
+            currentText().unableToMove;
+          return;
+        }
+
+        const payload = await response.json();
+
+        if (!payload.success) {
+          elements.moveError.textContent =
+            currentText().unableToMove;
+          return;
+        }
+
+        const queryDate = state.selectionMode === 'today'
+          ? null
+          : state.selectedDate;
+
+        closeAppointmentSheet();
+        await loadAppointments(queryDate);
+        showToast(currentText().appointmentMoved);
+      } catch (_error) {
+        elements.moveError.textContent =
+          currentText().unableToMove;
+      } finally {
+        state.moveSubmitting = false;
+
+        if (!elements.moveTimePanel.hidden) {
+          updateMovePreview();
+        }
+      }
     };
 
     const openAppointmentSheet = appointment => {
@@ -1096,6 +1622,13 @@
         appointment.serviceName || '—';
       elements.sheetDuration.textContent =
         `${appointment.durationMinutes} ${currentText().minutes}`;
+      state.activeAppointment = appointment;
+      elements.moveTimePanel.hidden = true;
+      elements.moveError.textContent = '';
+      elements.sheetChangeTime.textContent =
+        currentText().changeTime;
+      elements.sheetChangeTime.hidden =
+        !canMoveAppointments();
       elements.sheetClose.textContent = currentText().close;
       elements.appointmentModal.hidden = false;
       document.body.style.overflow = 'hidden';
@@ -1591,6 +2124,26 @@
       loadAppointments(null);
     });
 
+    elements.sheetChangeTime.addEventListener(
+      'click',
+      openMoveTimePanel
+    );
+    elements.moveDate.addEventListener(
+      'change',
+      updateMovePreview
+    );
+    elements.moveStartTime.addEventListener(
+      'change',
+      updateMovePreview
+    );
+    elements.moveCancel.addEventListener(
+      'click',
+      closeMoveTimePanel
+    );
+    elements.moveConfirm.addEventListener(
+      'click',
+      submitAppointmentMove
+    );
     elements.sheetClose.addEventListener(
       'click',
       closeAppointmentSheet
@@ -1605,7 +2158,11 @@
         event.key === 'Escape' &&
         !elements.appointmentModal.hidden
       ) {
-        closeAppointmentSheet();
+        if (!elements.moveTimePanel.hidden) {
+          closeMoveTimePanel();
+        } else {
+          closeAppointmentSheet();
+        }
       }
     });
 
