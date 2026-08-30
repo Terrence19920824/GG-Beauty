@@ -56,7 +56,8 @@ const STAFF_PERMISSION_NAMES = [
   'can_view_service_notes',
   'can_view_own_sales',
   'can_view_own_commission',
-  'can_view_full_customer_phone'
+  'can_view_full_customer_phone',
+  'can_move_own_appointments'
 ];
 
 const DUMMY_STAFF_PASSWORD_HASH =
@@ -81,6 +82,118 @@ const safeStaffAuthErrorCode = error =>
   error && typeof error.code === 'string'
     ? error.code
     : 'unknown_error';
+
+const isUuid = value =>
+  typeof value === 'string' &&
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+    value
+  );
+
+const parseStrictIsoInstant = value => {
+  if (typeof value !== 'string') {
+    return null;
+  }
+
+  const match = value.match(
+    /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?(Z|([+-])(\d{2}):(\d{2}))$/
+  );
+
+  if (!match) {
+    return null;
+  }
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const hour = Number(match[4]);
+  const minute = Number(match[5]);
+  const second = Number(match[6]);
+  const offsetHour = match[10]
+    ? Number(match[10])
+    : 0;
+  const offsetMinute = match[11]
+    ? Number(match[11])
+    : 0;
+
+  const calendarDate = new Date(
+    Date.UTC(year, month - 1, day)
+  );
+
+  if (
+    year < 1000 ||
+    calendarDate.getUTCFullYear() !== year ||
+    calendarDate.getUTCMonth() !== month - 1 ||
+    calendarDate.getUTCDate() !== day ||
+    hour > 23 ||
+    minute > 59 ||
+    second > 59 ||
+    offsetHour > 14 ||
+    offsetMinute > 59 ||
+    (offsetHour === 14 && offsetMinute !== 0)
+  ) {
+    return null;
+  }
+
+  const parsed = new Date(value);
+
+  return Number.isNaN(parsed.getTime())
+    ? null
+    : parsed;
+};
+
+const isSameOriginRequest = request => {
+  const originHeader = request.headers.origin;
+  const hostHeader = request.headers.host;
+
+  if (
+    typeof originHeader !== 'string' ||
+    typeof hostHeader !== 'string' ||
+    hostHeader.length === 0
+  ) {
+    return false;
+  }
+
+  try {
+    const originUrl = new URL(originHeader);
+
+    if (
+      originUrl.origin !== originHeader ||
+      !['http:', 'https:'].includes(
+        originUrl.protocol
+      )
+    ) {
+      return false;
+    }
+
+    const requestHostUrl = new URL(
+      `${originUrl.protocol}//${hostHeader}`
+    );
+
+    if (
+      requestHostUrl.username ||
+      requestHostUrl.password ||
+      requestHostUrl.pathname !== '/' ||
+      requestHostUrl.search ||
+      requestHostUrl.hash ||
+      requestHostUrl.host !== originUrl.host
+    ) {
+      return false;
+    }
+
+    const hostname = originUrl.hostname
+      .toLowerCase();
+    const isLocalHost = [
+      'localhost',
+      '127.0.0.1',
+      '[::1]'
+    ].includes(hostname);
+
+    return isLocalHost ||
+      originUrl.protocol === 'https:';
+  } catch (_error) {
+    return false;
+  }
+};
 
 const staffLoginRateLimitKey = (
   shopIdentifier,
@@ -158,6 +271,22 @@ const rollbackStaffLogin = async client => {
     console.error(
       'Staff login rollback failed'
     );
+  }
+};
+
+const rollbackStaffAppointmentMove = async client => {
+  if (!client) {
+    return false;
+  }
+
+  try {
+    await client.query('ROLLBACK');
+    return true;
+  } catch (_rollbackError) {
+    console.error(
+      'Staff appointment move rollback failed'
+    );
+    return false;
   }
 };
 
@@ -285,7 +414,8 @@ const requireStaffAuth = async (
         sp.can_view_service_notes,
         sp.can_view_own_sales,
         sp.can_view_own_commission,
-        sp.can_view_full_customer_phone
+        sp.can_view_full_customer_phone,
+        sp.can_move_own_appointments
       FROM staff_sessions ss
       JOIN staff_accounts sa
         ON sa.id = ss.staff_account_id
@@ -1928,6 +2058,347 @@ app.get(
         success: false,
         message: '读取员工预约失败'
       });
+    }
+  }
+);
+
+
+app.patch(
+  '/api/staff/appointments/:appointmentId/time',
+  requireStaffAuth,
+  async (req, res) => {
+    if (
+      req.staffAuth.permissions
+        .can_move_own_appointments !== true
+    ) {
+      return res.status(403).json({
+        success: false,
+        message: '没有修改预约时间的权限'
+      });
+    }
+
+    if (!isSameOriginRequest(req)) {
+      return res.status(403).json({
+        success: false,
+        message: '请求来源不允许'
+      });
+    }
+
+    const appointmentId =
+      req.params.appointmentId;
+
+    if (!isUuid(appointmentId)) {
+      return res.status(400).json({
+        success: false,
+        message: '预约ID格式不正确'
+      });
+    }
+
+    const body =
+      req.body &&
+      typeof req.body === 'object' &&
+      !Array.isArray(req.body)
+        ? req.body
+        : null;
+
+    const bodyKeys = body
+      ? Object.keys(body)
+      : [];
+
+    if (
+      !body ||
+      bodyKeys.length !== 1 ||
+      bodyKeys[0] !== 'newStartAt'
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: '请求只能包含 newStartAt'
+      });
+    }
+
+    const newStartAt =
+      parseStrictIsoInstant(body.newStartAt);
+
+    if (!newStartAt) {
+      return res.status(400).json({
+        success: false,
+        message: 'newStartAt 必须是带时区的 ISO 8601 时间'
+      });
+    }
+
+    let client;
+    let transactionActive = false;
+    let transactionCommitted = false;
+    let discardClient = false;
+    let clientReleased = false;
+
+    const rollbackActiveTransaction = async () => {
+      if (
+        !client ||
+        !transactionActive ||
+        transactionCommitted
+      ) {
+        return;
+      }
+
+      const rollbackSucceeded =
+        await rollbackStaffAppointmentMove(client);
+
+      transactionActive = false;
+
+      if (!rollbackSucceeded) {
+        discardClient = true;
+      }
+    };
+
+    try {
+      client = await pool.connect();
+      await client.query('BEGIN');
+      transactionActive = true;
+
+      const appointmentResult = await client.query(
+        `
+        SELECT
+          id,
+          start_at,
+          end_at,
+          status,
+          override_conflict,
+          end_at > start_at AS duration_is_valid,
+          start_at = $5::TIMESTAMPTZ AS is_no_op,
+          $5::TIMESTAMPTZ +
+            (end_at - start_at) AS proposed_end_at
+        FROM appointments
+        WHERE id = $1
+          AND shop_id = $2
+          AND staff_id = $3
+          AND location_id = $4
+        FOR UPDATE
+        `,
+        [
+          appointmentId,
+          req.staffAuth.shopId,
+          req.staffAuth.staffId,
+          req.staffAuth.locationId,
+          newStartAt
+        ]
+      );
+
+      if (appointmentResult.rows.length === 0) {
+        await rollbackActiveTransaction();
+
+        return res.status(404).json({
+          success: false,
+          message: '找不到预约'
+        });
+      }
+
+      const appointment =
+        appointmentResult.rows[0];
+
+      if (
+        !['pending', 'confirmed'].includes(
+          appointment.status
+        )
+      ) {
+        await rollbackActiveTransaction();
+
+        return res.status(409).json({
+          success: false,
+          message: '当前预约状态不允许修改时间'
+        });
+      }
+
+      if (appointment.override_conflict === true) {
+        await rollbackActiveTransaction();
+
+        return res.status(409).json({
+          success: false,
+          message: '该预约不能由员工移动'
+        });
+      }
+
+      if (appointment.duration_is_valid !== true) {
+        await rollbackActiveTransaction();
+
+        return res.status(409).json({
+          success: false,
+          message: '预约原始时长无效，无法移动'
+        });
+      }
+
+      if (appointment.is_no_op === true) {
+        await client.query('COMMIT');
+        transactionActive = false;
+        transactionCommitted = true;
+
+        return res.json({
+          success: true,
+          data: {
+            id: appointment.id,
+            startAt: appointment.start_at,
+            endAt: appointment.end_at,
+            status: appointment.status
+          }
+        });
+      }
+
+      const conflictResult = await client.query(
+        `
+        SELECT id
+        FROM appointments
+        WHERE shop_id = $1
+          AND location_id = $2
+          AND staff_id = $3
+          AND id <> $4
+          AND status IN ('pending', 'confirmed')
+          AND override_conflict = FALSE
+          AND start_at < $6::TIMESTAMPTZ
+          AND end_at > $5::TIMESTAMPTZ
+        LIMIT 1
+        `,
+        [
+          req.staffAuth.shopId,
+          req.staffAuth.locationId,
+          req.staffAuth.staffId,
+          appointment.id,
+          newStartAt,
+          appointment.proposed_end_at
+        ]
+      );
+
+      if (conflictResult.rows.length > 0) {
+        await rollbackActiveTransaction();
+
+        return res.status(409).json({
+          success: false,
+          message: '新时间与现有预约冲突'
+        });
+      }
+
+      const updateResult = await client.query(
+        `
+        UPDATE appointments
+        SET
+          start_at = $5::TIMESTAMPTZ,
+          end_at = $6::TIMESTAMPTZ,
+          updated_at = NOW()
+        WHERE id = $1
+          AND shop_id = $2
+          AND staff_id = $3
+          AND location_id = $4
+          AND status IN ('pending', 'confirmed')
+          AND override_conflict = FALSE
+        RETURNING
+          id,
+          start_at,
+          end_at,
+          status
+        `,
+        [
+          appointment.id,
+          req.staffAuth.shopId,
+          req.staffAuth.staffId,
+          req.staffAuth.locationId,
+          newStartAt,
+          appointment.proposed_end_at
+        ]
+      );
+
+      if (updateResult.rows.length !== 1) {
+        const updateError =
+          new Error('Staff appointment update mismatch');
+        updateError.code =
+          'staff_appointment_update_mismatch';
+        throw updateError;
+      }
+
+      const updatedAppointment =
+        updateResult.rows[0];
+
+      await client.query(
+        `
+        INSERT INTO appointment_time_change_history (
+          shop_id,
+          location_id,
+          appointment_id,
+          staff_id,
+          actor_type,
+          actor_id,
+          old_start_at,
+          old_end_at,
+          new_start_at,
+          new_end_at,
+          reason,
+          source
+        )
+        VALUES (
+          $1,
+          $2,
+          $3,
+          $4,
+          'staff',
+          $4,
+          $5,
+          $6,
+          $7,
+          $8,
+          NULL,
+          'staff_time_picker'
+        )
+        `,
+        [
+          req.staffAuth.shopId,
+          req.staffAuth.locationId,
+          updatedAppointment.id,
+          req.staffAuth.staffId,
+          appointment.start_at,
+          appointment.end_at,
+          updatedAppointment.start_at,
+          updatedAppointment.end_at
+        ]
+      );
+
+      await client.query('COMMIT');
+      transactionActive = false;
+      transactionCommitted = true;
+
+      res.json({
+        success: true,
+        data: {
+          id: updatedAppointment.id,
+          startAt: updatedAppointment.start_at,
+          endAt: updatedAppointment.end_at,
+          status: updatedAppointment.status
+        }
+      });
+    } catch (error) {
+      await rollbackActiveTransaction();
+
+      const errorCode =
+        safeStaffAuthErrorCode(error);
+
+      if (errorCode === '23P01') {
+        return res.status(409).json({
+          success: false,
+          message: '新时间与现有预约冲突'
+        });
+      }
+
+      console.error(
+        'Move staff appointment error:',
+        errorCode
+      );
+
+      res.status(500).json({
+        success: false,
+        message: '修改预约时间失败'
+      });
+    } finally {
+      if (client && !clientReleased) {
+        clientReleased = true;
+        client.release(discardClient || undefined);
+      }
     }
   }
 );
