@@ -103,6 +103,13 @@
       margin-top: 20px;
     }
 
+    .identity-row {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
     .staff-name {
       margin: 0;
       font-size: 1.05rem;
@@ -113,6 +120,31 @@
       margin: 6px 0 0;
       color: var(--muted);
       font-size: 0.9rem;
+    }
+
+    .view-switch {
+      display: flex;
+      flex: 0 0 auto;
+      align-items: center;
+      gap: 7px;
+      padding-bottom: 2px;
+      color: var(--muted);
+      font-size: 0.78rem;
+    }
+
+    .view-switch button {
+      min-width: 28px;
+      padding: 3px 0;
+      border: 0;
+      border-bottom: 1px solid transparent;
+      background: transparent;
+      color: inherit;
+    }
+
+    .view-switch button.active {
+      border-color: var(--accent);
+      color: var(--accent);
+      font-weight: 750;
     }
 
     .date-panel {
@@ -144,6 +176,49 @@
     .date-picker-row {
       position: relative;
       margin-top: 9px;
+    }
+
+    .calendar-navigation {
+      display: none;
+      grid-template-columns: 44px 1fr 44px;
+      align-items: center;
+      gap: 8px;
+      margin-top: 14px;
+    }
+
+    .calendar-navigation.visible {
+      display: grid;
+    }
+
+    .calendar-nav-button {
+      width: 44px;
+      min-height: 44px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--surface);
+      color: var(--text);
+      font-size: 1.15rem;
+    }
+
+    .calendar-date-summary {
+      min-width: 0;
+      text-align: center;
+    }
+
+    .calendar-date-summary p {
+      margin: 0;
+      font-size: 0.96rem;
+      font-weight: 750;
+    }
+
+    .calendar-today-button {
+      margin-top: 3px;
+      padding: 2px 10px;
+      border: 0;
+      background: transparent;
+      color: var(--accent);
+      font-size: 0.76rem;
+      font-weight: 700;
     }
 
     .date-picker-label {
@@ -194,6 +269,148 @@
     .appointment-list {
       display: grid;
       gap: 12px;
+    }
+
+    .calendar-view {
+      position: relative;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: var(--surface);
+      box-shadow: var(--shadow);
+    }
+
+    .calendar-staff-header {
+      position: sticky;
+      top: 0;
+      z-index: 4;
+      min-height: 50px;
+      padding: 15px 14px 12px 66px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.96);
+      font-size: 0.84rem;
+      font-weight: 750;
+      backdrop-filter: blur(8px);
+    }
+
+    .calendar-scroll {
+      max-height: min(68vh, 760px);
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    .timeline {
+      --minute-height: 1.25px;
+      position: relative;
+      min-height: 900px;
+      margin-left: 58px;
+      border-left: 1px solid var(--line);
+    }
+
+    .time-line {
+      position: absolute;
+      right: 0;
+      left: 0;
+      height: 1px;
+      background: #edf0f2;
+      pointer-events: none;
+    }
+
+    .time-line.half-hour {
+      background: #f4f5f6;
+    }
+
+    .time-label {
+      position: absolute;
+      right: calc(100% + 9px);
+      width: 48px;
+      transform: translateY(-50%);
+      color: var(--muted);
+      font-size: 0.7rem;
+      font-variant-numeric: tabular-nums;
+      text-align: right;
+    }
+
+    .calendar-empty-note {
+      position: absolute;
+      top: 20px;
+      right: 12px;
+      left: 12px;
+      z-index: 1;
+      padding: 9px 12px;
+      border-radius: 10px;
+      background: rgba(245, 246, 248, 0.92);
+      color: var(--muted);
+      font-size: 0.78rem;
+      text-align: center;
+      pointer-events: none;
+    }
+
+    .calendar-appointment {
+      position: absolute;
+      right: 8px;
+      left: 8px;
+      z-index: 2;
+      min-height: 44px;
+      overflow: hidden;
+      padding: 8px 10px;
+      border: 0;
+      border-left: 3px solid #8c9aa5;
+      border-radius: 9px;
+      background: #eef1f3;
+      color: var(--text);
+      text-align: left;
+      box-shadow: 0 4px 12px rgba(31, 48, 58, 0.08);
+    }
+
+    .calendar-appointment.status-pending {
+      border-left-color: #c69a3a;
+      background: #fff5df;
+    }
+
+    .calendar-appointment.status-confirmed {
+      border-left-color: var(--accent);
+      background: #e5f3f1;
+    }
+
+    .calendar-appointment.status-completed {
+      border-left-color: #84919a;
+      background: #eceff1;
+    }
+
+    .calendar-appointment.status-cancelled {
+      border-left-color: #b86a6a;
+      background: #f9eaea;
+      opacity: 0.78;
+    }
+
+    .calendar-appointment-time,
+    .calendar-appointment-name,
+    .calendar-appointment-service,
+    .calendar-appointment-phone {
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .calendar-appointment-time {
+      font-size: 0.72rem;
+      font-weight: 800;
+    }
+
+    .calendar-appointment-name {
+      margin-top: 3px;
+      font-size: 0.82rem;
+      font-weight: 750;
+    }
+
+    .calendar-appointment-service,
+    .calendar-appointment-phone {
+      margin-top: 2px;
+      color: #56636b;
+      font-size: 0.7rem;
     }
 
     .appointment-card {
@@ -319,6 +536,98 @@
       animation: loading 1.25s ease-in-out infinite;
     }
 
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 20;
+      display: flex;
+      align-items: flex-end;
+      justify-content: center;
+      padding: 18px;
+      padding-bottom: max(18px, env(safe-area-inset-bottom));
+      background: rgba(16, 24, 28, 0.42);
+    }
+
+    .modal-backdrop[hidden] {
+      display: none;
+    }
+
+    .appointment-sheet {
+      width: min(100%, 520px);
+      padding: 22px;
+      border-radius: 22px;
+      background: var(--surface);
+      box-shadow: 0 24px 70px rgba(13, 23, 29, 0.24);
+    }
+
+    .sheet-handle {
+      width: 38px;
+      height: 4px;
+      margin: -8px auto 18px;
+      border-radius: 99px;
+      background: #d8dde0;
+    }
+
+    .sheet-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .sheet-time {
+      margin: 0;
+      font-size: 1.3rem;
+      font-weight: 780;
+    }
+
+    .sheet-customer {
+      margin: 22px 0 0;
+      font-size: 1.1rem;
+      font-weight: 750;
+    }
+
+    .sheet-phone {
+      margin: 5px 0 0;
+      color: var(--muted);
+      font-size: 0.88rem;
+    }
+
+    .sheet-detail {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      margin-top: 20px;
+      padding-top: 16px;
+      border-top: 1px solid var(--line);
+    }
+
+    .sheet-service,
+    .sheet-duration {
+      margin: 0;
+      font-size: 0.9rem;
+    }
+
+    .sheet-service {
+      font-weight: 680;
+    }
+
+    .sheet-duration {
+      flex: 0 0 auto;
+      color: var(--muted);
+    }
+
+    .sheet-close {
+      width: 100%;
+      min-height: 46px;
+      margin-top: 24px;
+      border: 1px solid var(--line);
+      border-radius: 13px;
+      background: var(--surface);
+      color: var(--text);
+      font-weight: 700;
+    }
+
     @keyframes loading {
       to {
         background-position-x: -220%;
@@ -354,9 +663,16 @@
         </nav>
       </div>
 
-      <section class="identity" aria-live="polite">
-        <p id="staff-name" class="staff-name"></p>
-        <p id="location-name" class="location-name"></p>
+      <section class="identity-row">
+        <div class="identity" aria-live="polite">
+          <p id="staff-name" class="staff-name"></p>
+          <p id="location-name" class="location-name"></p>
+        </div>
+        <nav class="view-switch" aria-label="View">
+          <button id="view-calendar" type="button">Calendar</button>
+          <span aria-hidden="true">|</span>
+          <button id="view-list" type="button">List</button>
+        </nav>
       </section>
     </header>
 
@@ -384,6 +700,35 @@
           <input id="date-picker" type="date">
         </label>
       </div>
+
+      <div id="calendar-navigation" class="calendar-navigation">
+        <button
+          id="previous-day"
+          class="calendar-nav-button"
+          type="button"
+          aria-label="Previous day"
+        >
+          ‹
+        </button>
+        <div class="calendar-date-summary">
+          <p id="calendar-date"></p>
+          <button
+            id="calendar-today"
+            class="calendar-today-button"
+            type="button"
+          >
+            Today
+          </button>
+        </div>
+        <button
+          id="next-day"
+          class="calendar-nav-button"
+          type="button"
+          aria-label="Next day"
+        >
+          ›
+        </button>
+      </div>
     </section>
 
     <section aria-live="polite" aria-busy="true" id="appointments-section">
@@ -398,9 +743,38 @@
     </section>
   </main>
 
+  <div id="appointment-modal" class="modal-backdrop" hidden>
+    <section
+      class="appointment-sheet"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="sheet-customer"
+    >
+      <div class="sheet-handle" aria-hidden="true"></div>
+      <div class="sheet-header">
+        <p id="sheet-time" class="sheet-time"></p>
+        <span id="sheet-status" class="status-badge"></span>
+      </div>
+      <p id="sheet-customer" class="sheet-customer"></p>
+      <p id="sheet-phone" class="sheet-phone"></p>
+      <div class="sheet-detail">
+        <p id="sheet-service" class="sheet-service"></p>
+        <p id="sheet-duration" class="sheet-duration"></p>
+      </div>
+      <button id="sheet-close" class="sheet-close" type="button">
+        Close
+      </button>
+    </section>
+  </div>
+
   <script>
     const LANGUAGE_STORAGE_KEY =
       'gg_beauty_staff_language';
+    const VIEW_STORAGE_KEY =
+      'gg_beauty_staff_appointments_view';
+    const CALENDAR_START_MINUTES = 9 * 60;
+    const CALENDAR_END_MINUTES = 21 * 60;
+    const CALENDAR_MINUTE_HEIGHT = 1.25;
 
     const translations = {
       en: {
@@ -408,6 +782,11 @@
         today: 'Today',
         tomorrow: 'Tomorrow',
         selectDate: 'Select Date',
+        list: 'List',
+        calendar: 'Calendar',
+        previousDay: 'Previous day',
+        nextDay: 'Next day',
+        noAppointments: 'No appointments',
         loading: 'Loading…',
         minutes: 'min',
         noAppointmentsToday: 'No appointments today',
@@ -416,6 +795,7 @@
         logIn: 'Log In',
         loadFailed: 'Failed to load. Please try again.',
         retry: 'Retry',
+        close: 'Close',
         unknownStatus: 'Unknown',
         statuses: {
           pending: 'Pending',
@@ -429,6 +809,11 @@
         today: '今天',
         tomorrow: '明天',
         selectDate: '选择日期',
+        list: '列表',
+        calendar: '日历',
+        previousDay: '前一天',
+        nextDay: '后一天',
+        noAppointments: '暂无预约',
         loading: '加载中…',
         minutes: '分钟',
         noAppointmentsToday: '今天没有预约',
@@ -437,6 +822,7 @@
         logIn: '重新登录',
         loadFailed: '加载失败，请重试',
         retry: '重新加载',
+        close: '关闭',
         unknownStatus: '未知状态',
         statuses: {
           pending: '待确认',
@@ -472,6 +858,19 @@
         : 'en';
     };
 
+    const getSavedView = () => {
+      try {
+        const savedView = localStorage.getItem(VIEW_STORAGE_KEY);
+        if (savedView === 'calendar' || savedView === 'list') {
+          return savedView;
+        }
+      } catch (error) {
+        // Use the product default when storage is unavailable.
+      }
+
+      return 'calendar';
+    };
+
     const state = {
       language: getSavedLanguage(),
       profile: null,
@@ -479,6 +878,7 @@
       selectedDate: null,
       todayDate: null,
       selectionMode: 'today',
+      displayMode: getSavedView(),
       timezone: 'Asia/Singapore',
       loading: true,
       view: 'content'
@@ -488,16 +888,32 @@
       pageTitle: document.getElementById('page-title'),
       languageEn: document.getElementById('language-en'),
       languageZh: document.getElementById('language-zh'),
+      viewList: document.getElementById('view-list'),
+      viewCalendar: document.getElementById('view-calendar'),
       staffName: document.getElementById('staff-name'),
       locationName: document.getElementById('location-name'),
       todayButton: document.getElementById('today-button'),
       tomorrowButton: document.getElementById('tomorrow-button'),
       datePickerText: document.getElementById('date-picker-text'),
       datePicker: document.getElementById('date-picker'),
+      calendarNavigation:
+        document.getElementById('calendar-navigation'),
+      previousDay: document.getElementById('previous-day'),
+      nextDay: document.getElementById('next-day'),
+      calendarDate: document.getElementById('calendar-date'),
+      calendarToday: document.getElementById('calendar-today'),
       selectedDate: document.getElementById('selected-date'),
       loadingLabel: document.getElementById('loading-label'),
       appointmentsSection: document.getElementById('appointments-section'),
-      appointmentList: document.getElementById('appointment-list')
+      appointmentList: document.getElementById('appointment-list'),
+      appointmentModal: document.getElementById('appointment-modal'),
+      sheetTime: document.getElementById('sheet-time'),
+      sheetStatus: document.getElementById('sheet-status'),
+      sheetCustomer: document.getElementById('sheet-customer'),
+      sheetPhone: document.getElementById('sheet-phone'),
+      sheetService: document.getElementById('sheet-service'),
+      sheetDuration: document.getElementById('sheet-duration'),
+      sheetClose: document.getElementById('sheet-close')
     };
 
     const currentText = () => translations[state.language];
@@ -536,6 +952,53 @@
         }
       ).format(new Date(timestamp));
 
+    const formatCalendarDate = dateString => {
+      if (!dateString) {
+        return '';
+      }
+
+      return new Intl.DateTimeFormat(
+        state.language === 'zh' ? 'zh-CN' : 'en-SG',
+        {
+          weekday: 'short',
+          day: 'numeric',
+          month: 'short',
+          timeZone: 'UTC'
+        }
+      ).format(new Date(`${dateString}T00:00:00.000Z`));
+    };
+
+    const minutesInLocation = timestamp => {
+      const parts = new Intl.DateTimeFormat('en-GB', {
+        hour: '2-digit',
+        minute: '2-digit',
+        hourCycle: 'h23',
+        timeZone: state.timezone
+      }).formatToParts(new Date(timestamp));
+
+      const hour = Number(
+        parts.find(part => part.type === 'hour').value
+      );
+      const minute = Number(
+        parts.find(part => part.type === 'minute').value
+      );
+
+      return hour * 60 + minute;
+    };
+
+    const normalizeStatus = status => {
+      const normalized = typeof status === 'string'
+        ? status.toLowerCase()
+        : '';
+
+      return Object.prototype.hasOwnProperty.call(
+        currentText().statuses,
+        normalized
+      )
+        ? normalized
+        : 'unknown';
+    };
+
     const createTextElement = (tagName, className, text) => {
       const element = document.createElement(tagName);
       element.className = className;
@@ -558,10 +1021,7 @@
         )
       );
 
-      const normalizedStatus =
-        typeof appointment.status === 'string'
-          ? appointment.status.toLowerCase()
-          : '';
+      const normalizedStatus = normalizeStatus(appointment.status);
 
       const statusText =
         currentText().statuses[normalizedStatus] ||
@@ -612,6 +1072,182 @@
       return card;
     };
 
+    const closeAppointmentSheet = () => {
+      elements.appointmentModal.hidden = true;
+      document.body.style.overflow = '';
+    };
+
+    const openAppointmentSheet = appointment => {
+      const normalizedStatus = normalizeStatus(appointment.status);
+      const statusText =
+        currentText().statuses[normalizedStatus] ||
+        currentText().unknownStatus;
+
+      elements.sheetTime.textContent =
+        `${formatTime(appointment.startAt)} – ${formatTime(appointment.endAt)}`;
+      elements.sheetStatus.className =
+        `status-badge status-${normalizedStatus}`;
+      elements.sheetStatus.textContent = statusText;
+      elements.sheetCustomer.textContent =
+        appointment.customerName || '—';
+      elements.sheetPhone.textContent =
+        appointment.customerPhone || '—';
+      elements.sheetService.textContent =
+        appointment.serviceName || '—';
+      elements.sheetDuration.textContent =
+        `${appointment.durationMinutes} ${currentText().minutes}`;
+      elements.sheetClose.textContent = currentText().close;
+      elements.appointmentModal.hidden = false;
+      document.body.style.overflow = 'hidden';
+      elements.sheetClose.focus();
+    };
+
+    const renderCalendar = () => {
+      const calendar = document.createElement('div');
+      calendar.className = 'calendar-view';
+
+      const staffHeader = createTextElement(
+        'div',
+        'calendar-staff-header',
+        state.profile ? state.profile.name : ''
+      );
+      calendar.appendChild(staffHeader);
+
+      const scroll = document.createElement('div');
+      scroll.className = 'calendar-scroll';
+      const timeline = document.createElement('div');
+      timeline.className = 'timeline';
+
+      for (
+        let minutes = CALENDAR_START_MINUTES;
+        minutes <= CALENDAR_END_MINUTES;
+        minutes += 30
+      ) {
+        const offset =
+          (minutes - CALENDAR_START_MINUTES) *
+          CALENDAR_MINUTE_HEIGHT;
+        const line = document.createElement('div');
+        line.className = minutes % 60 === 0
+          ? 'time-line'
+          : 'time-line half-hour';
+        line.style.top = `${offset}px`;
+
+        const hour = String(Math.floor(minutes / 60)).padStart(2, '0');
+        const minute = String(minutes % 60).padStart(2, '0');
+        const label = createTextElement(
+          'span',
+          'time-label',
+          `${hour}:${minute}`
+        );
+        line.appendChild(label);
+
+        timeline.appendChild(line);
+      }
+
+      let visibleAppointmentCount = 0;
+
+      state.appointments.forEach(appointment => {
+        const startMinutes = minutesInLocation(appointment.startAt);
+        const appointmentSpanMinutes = Math.max(
+          1,
+          (
+            new Date(appointment.endAt).getTime() -
+            new Date(appointment.startAt).getTime()
+          ) / 60000
+        );
+        const endMinutes = startMinutes + appointmentSpanMinutes;
+
+        if (
+          endMinutes <= CALENDAR_START_MINUTES ||
+          startMinutes >= CALENDAR_END_MINUTES
+        ) {
+          return;
+        }
+
+        visibleAppointmentCount += 1;
+
+        const visibleStart = Math.max(
+          startMinutes,
+          CALENDAR_START_MINUTES
+        );
+        const visibleEnd = Math.min(
+          endMinutes,
+          CALENDAR_END_MINUTES
+        );
+        const top =
+          (visibleStart - CALENDAR_START_MINUTES) *
+          CALENDAR_MINUTE_HEIGHT;
+        const height = Math.max(
+          44,
+          (visibleEnd - visibleStart) *
+            CALENDAR_MINUTE_HEIGHT - 3
+        );
+        const normalizedStatus = normalizeStatus(appointment.status);
+        const block = document.createElement('button');
+        block.type = 'button';
+        block.className =
+          `calendar-appointment status-${normalizedStatus}`;
+        block.style.top = `${top}px`;
+        block.style.height = `${height}px`;
+        block.setAttribute(
+          'aria-label',
+          `${formatTime(appointment.startAt)} – ${formatTime(appointment.endAt)}, ${appointment.customerName || ''}, ${appointment.serviceName || ''}`
+        );
+
+        block.appendChild(
+          createTextElement(
+            'span',
+            'calendar-appointment-time',
+            `${formatTime(appointment.startAt)} – ${formatTime(appointment.endAt)}`
+          )
+        );
+        block.appendChild(
+          createTextElement(
+            'span',
+            'calendar-appointment-name',
+            appointment.customerName || '—'
+          )
+        );
+        block.appendChild(
+          createTextElement(
+            'span',
+            'calendar-appointment-service',
+            appointment.serviceName || '—'
+          )
+        );
+
+        if (height >= 92 && appointment.customerPhone) {
+          block.appendChild(
+            createTextElement(
+              'span',
+              'calendar-appointment-phone',
+              appointment.customerPhone
+            )
+          );
+        }
+
+        block.addEventListener(
+          'click',
+          () => openAppointmentSheet(appointment)
+        );
+        timeline.appendChild(block);
+      });
+
+      if (visibleAppointmentCount === 0) {
+        timeline.appendChild(
+          createTextElement(
+            'div',
+            'calendar-empty-note',
+            currentText().noAppointments
+          )
+        );
+      }
+
+      scroll.appendChild(timeline);
+      calendar.appendChild(scroll);
+      elements.appointmentList.replaceChildren(calendar);
+    };
+
     const renderStatePanel = (message, buttonText, action) => {
       const panel = document.createElement('div');
       panel.className = 'state-panel';
@@ -642,6 +1278,17 @@
       elements.todayButton.textContent = text.today;
       elements.tomorrowButton.textContent = text.tomorrow;
       elements.datePickerText.textContent = text.selectDate;
+      elements.viewList.textContent = text.list;
+      elements.viewCalendar.textContent = text.calendar;
+      elements.calendarToday.textContent = text.today;
+      elements.previousDay.setAttribute(
+        'aria-label',
+        text.previousDay
+      );
+      elements.nextDay.setAttribute(
+        'aria-label',
+        text.nextDay
+      );
       elements.languageEn.classList.toggle(
         'active',
         state.language === 'en'
@@ -657,6 +1304,29 @@
       elements.languageZh.setAttribute(
         'aria-pressed',
         String(state.language === 'zh')
+      );
+      elements.viewList.classList.toggle(
+        'active',
+        state.displayMode === 'list'
+      );
+      elements.viewCalendar.classList.toggle(
+        'active',
+        state.displayMode === 'calendar'
+      );
+      elements.viewList.setAttribute(
+        'aria-pressed',
+        String(state.displayMode === 'list')
+      );
+      elements.viewCalendar.setAttribute(
+        'aria-pressed',
+        String(state.displayMode === 'calendar')
+      );
+      elements.calendarNavigation.classList.toggle(
+        'visible',
+        state.displayMode === 'calendar'
+      );
+      elements.calendarDate.textContent = formatCalendarDate(
+        state.selectedDate
       );
 
       elements.staffName.textContent = state.profile
@@ -715,6 +1385,11 @@
           text.retry,
           loadPage
         );
+        return;
+      }
+
+      if (state.displayMode === 'calendar') {
+        renderCalendar();
         return;
       }
 
@@ -836,6 +1511,21 @@
       render();
     };
 
+    const setDisplayMode = displayMode => {
+      state.displayMode = displayMode;
+
+      try {
+        localStorage.setItem(
+          VIEW_STORAGE_KEY,
+          displayMode
+        );
+      } catch (error) {
+        // The selected view still applies when storage is unavailable.
+      }
+
+      render();
+    };
+
     elements.languageEn.addEventListener(
       'click',
       () => setLanguage('en')
@@ -843,6 +1533,14 @@
     elements.languageZh.addEventListener(
       'click',
       () => setLanguage('zh')
+    );
+    elements.viewList.addEventListener(
+      'click',
+      () => setDisplayMode('list')
+    );
+    elements.viewCalendar.addEventListener(
+      'click',
+      () => setDisplayMode('calendar')
     );
 
     elements.todayButton.addEventListener('click', () => {
@@ -868,6 +1566,47 @@
 
       state.selectionMode = 'custom';
       loadAppointments(selectedDate);
+    });
+
+    elements.previousDay.addEventListener('click', () => {
+      if (!state.selectedDate) {
+        return;
+      }
+
+      state.selectionMode = 'custom';
+      loadAppointments(addDays(state.selectedDate, -1));
+    });
+
+    elements.nextDay.addEventListener('click', () => {
+      if (!state.selectedDate) {
+        return;
+      }
+
+      state.selectionMode = 'custom';
+      loadAppointments(addDays(state.selectedDate, 1));
+    });
+
+    elements.calendarToday.addEventListener('click', () => {
+      state.selectionMode = 'today';
+      loadAppointments(null);
+    });
+
+    elements.sheetClose.addEventListener(
+      'click',
+      closeAppointmentSheet
+    );
+    elements.appointmentModal.addEventListener('click', event => {
+      if (event.target === elements.appointmentModal) {
+        closeAppointmentSheet();
+      }
+    });
+    document.addEventListener('keydown', event => {
+      if (
+        event.key === 'Escape' &&
+        !elements.appointmentModal.hidden
+      ) {
+        closeAppointmentSheet();
+      }
     });
 
     render();
