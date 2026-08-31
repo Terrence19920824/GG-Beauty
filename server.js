@@ -15,6 +15,9 @@ const {
   moveAppointmentStructurePrecisely,
   syncAppointmentItemStatus
 } = require('./lib/appointment-multi-service');
+const {
+  createOwnerAuth
+} = require('./lib/owner-auth');
 
 const app = express();
 
@@ -491,6 +494,27 @@ const requireStaffAuth = async (
     });
   }
 };
+
+const {
+  login: ownerLogin,
+  logout: ownerLogout,
+  me: ownerMe,
+  requireOwnerAuth
+} = createOwnerAuth({
+  pool,
+  bcrypt,
+  crypto,
+  isSameOriginRequest,
+  safeErrorCode: safeStaffAuthErrorCode
+});
+
+app.post('/api/owner/login', ownerLogin);
+app.get(
+  '/api/owner/me',
+  requireOwnerAuth,
+  ownerMe
+);
+app.post('/api/owner/logout', ownerLogout);
 
 
 // ==================================================
