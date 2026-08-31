@@ -458,6 +458,16 @@ app.post('/api/new', (req, res) => {
 // ==================================================
 
 app.post('/api/new-db', async (req, res) => {
+  if (
+    process.env.BOOKING_WRITE_MAINTENANCE ===
+    'true'
+  ) {
+    return res.status(503).json({
+      error: 'Booking temporarily unavailable',
+      code: 'BOOKING_MAINTENANCE'
+    });
+  }
+
   const {
     shopSlug,
     service,
