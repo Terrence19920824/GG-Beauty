@@ -7,6 +7,14 @@ const path = require('path');
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const { Pool } = require('pg');
+const {
+  AppointmentMutationError,
+  runInTransaction,
+  createSingleServiceCompatibilityRows,
+  loadAndValidatePhaseAStructure,
+  moveAppointmentStructurePrecisely,
+  syncAppointmentItemStatus
+} = require('./lib/appointment-multi-service');
 
 const app = express();
 
@@ -943,269 +951,284 @@ app.post('/api/new-db', async (req, res) => {
     });
   }
 
-  const client = await pool.connect();
-
   try {
-    await client.query('BEGIN');
+    const appointment = await runInTransaction(
+      pool,
+      async client => {
+        // 1. 找店铺
+        const shopResult = await client.query(
+          `
+          SELECT id
+          FROM shops
+          WHERE slug = $1
+            AND status = 'active'
+          LIMIT 1
+          `,
+          [shopSlug]
+        );
 
-    // 1. 找店铺
-    const shopResult = await client.query(
-      `
-      SELECT id
-      FROM shops
-      WHERE slug = $1
-        AND status = 'active'
-      LIMIT 1
-      `,
-      [shopSlug]
+        if (shopResult.rows.length === 0) {
+          throw new AppointmentMutationError(
+            'shop_not_found',
+            400,
+            '找不到店铺'
+          );
+        }
+
+        const shopId = shopResult.rows[0].id;
+
+        // 2. 找营业地点
+        const locationResult = await client.query(
+          `
+          SELECT id
+          FROM locations
+          WHERE shop_id = $1
+            AND is_active = true
+          ORDER BY created_at ASC
+          LIMIT 1
+          `,
+          [shopId]
+        );
+
+        if (locationResult.rows.length === 0) {
+          throw new AppointmentMutationError(
+            'location_not_found',
+            400,
+            '找不到营业地点'
+          );
+        }
+
+        const locationId =
+          locationResult.rows[0].id;
+
+        // 3. 找服务项目，并取得可信快照来源
+        const serviceResult = await client.query(
+          `
+          SELECT
+            id,
+            name,
+            duration_minutes
+          FROM services
+          WHERE shop_id = $1
+            AND name = $2
+            AND is_active = true
+            AND bookable = true
+          LIMIT 1
+          `,
+          [shopId, service]
+        );
+
+        if (serviceResult.rows.length === 0) {
+          throw new AppointmentMutationError(
+            'service_not_found',
+            400,
+            '找不到服务项目'
+          );
+        }
+
+        const selectedService =
+          serviceResult.rows[0];
+        const durationMinutes =
+          selectedService.duration_minutes;
+
+        if (
+          !Number.isInteger(durationMinutes) ||
+          durationMinutes <= 0
+        ) {
+          throw new AppointmentMutationError(
+            'service_duration_invalid',
+            409,
+            '服务时长暂不可用'
+          );
+        }
+
+        // 4. 找员工
+        const staffResult = await client.query(
+          `
+          SELECT id
+          FROM staff
+          WHERE shop_id = $1
+            AND name = $2
+            AND is_active = true
+            AND bookable = true
+          LIMIT 1
+          `,
+          [shopId, staff]
+        );
+
+        if (staffResult.rows.length === 0) {
+          throw new AppointmentMutationError(
+            'staff_not_found',
+            400,
+            '找不到员工'
+          );
+        }
+
+        const staffId = staffResult.rows[0].id;
+
+        // 5. 找顾客，没有就创建
+        let customerResult = await client.query(
+          `
+          SELECT id
+          FROM customers
+          WHERE shop_id = $1
+            AND phone = $2
+          LIMIT 1
+          `,
+          [shopId, phone]
+        );
+
+        let customerId;
+
+        if (customerResult.rows.length > 0) {
+          customerId = customerResult.rows[0].id;
+        } else {
+          customerResult = await client.query(
+            `
+            INSERT INTO customers (
+              shop_id,
+              name,
+              phone,
+              email
+            )
+            VALUES ($1, $2, $3, $4)
+            RETURNING id
+            `,
+            [
+              shopId,
+              customerName,
+              phone,
+              email || null
+            ]
+          );
+
+          customerId = customerResult.rows[0].id;
+        }
+
+        // 6. 保持当前单项目时间规则
+        const startAt = new Date(
+          `${date}T${time}:00+08:00`
+        );
+        const endAt = new Date(
+          startAt.getTime() +
+          durationMinutes * 60 * 1000
+        );
+
+        // 7. 应用层友好防撞；数据库 exclusion 是最终并发保护
+        const conflictResult = await client.query(
+          `
+          SELECT id
+          FROM appointments
+          WHERE shop_id = $1
+            AND staff_id = $2
+            AND status <> 'cancelled'
+            AND start_at < $4
+            AND end_at > $3
+          LIMIT 1
+          `,
+          [shopId, staffId, startAt, endAt]
+        );
+
+        if (conflictResult.rows.length > 0) {
+          throw new AppointmentMutationError(
+            'appointment_collision',
+            409,
+            '该时间段已被预约，请选择其他时间'
+          );
+        }
+
+        // 8. 原子创建 parent + item + primary assignment
+        const appointmentResult = await client.query(
+          `
+          INSERT INTO appointments (
+            shop_id,
+            location_id,
+            customer_id,
+            service_id,
+            staff_id,
+            start_at,
+            end_at,
+            status,
+            booking_source
+          )
+          VALUES (
+            $1, $2, $3, $4, $5, $6, $7,
+            'pending',
+            'online'
+          )
+          RETURNING
+            id,
+            shop_id,
+            location_id,
+            customer_id,
+            service_id,
+            staff_id,
+            appointment_no,
+            start_at,
+            end_at,
+            status,
+            created_at
+          `,
+          [
+            shopId,
+            locationId,
+            customerId,
+            selectedService.id,
+            staffId,
+            startAt,
+            endAt
+          ]
+        );
+
+        const createdAppointment =
+          appointmentResult.rows[0];
+
+        await createSingleServiceCompatibilityRows(
+          client,
+          {
+            appointment: createdAppointment,
+            service: selectedService
+          }
+        );
+
+        return createdAppointment;
+      }
     );
-
-    if (shopResult.rows.length === 0) {
-      throw new Error('找不到店铺');
-    }
-
-    const shopId =
-      shopResult.rows[0].id;
-
-
-    // 2. 找营业地点
-    const locationResult = await client.query(
-      `
-      SELECT id
-      FROM locations
-      WHERE shop_id = $1
-        AND is_active = true
-      ORDER BY created_at ASC
-      LIMIT 1
-      `,
-      [shopId]
-    );
-
-    if (locationResult.rows.length === 0) {
-      throw new Error('找不到营业地点');
-    }
-
-    const locationId =
-      locationResult.rows[0].id;
-
-
-    // 3. 找服务项目
-    const serviceResult = await client.query(
-      `
-      SELECT
-        id,
-        duration_minutes
-      FROM services
-      WHERE shop_id = $1
-        AND name = $2
-        AND is_active = true
-        AND bookable = true
-      LIMIT 1
-      `,
-      [
-        shopId,
-        service
-      ]
-    );
-
-    if (serviceResult.rows.length === 0) {
-      throw new Error('找不到服务项目');
-    }
-
-    const serviceId =
-      serviceResult.rows[0].id;
-
-    const durationMinutes =
-      serviceResult.rows[0].duration_minutes;
-
-
-    // 4. 找员工
-    const staffResult = await client.query(
-      `
-      SELECT id
-      FROM staff
-      WHERE shop_id = $1
-        AND name = $2
-        AND is_active = true
-        AND bookable = true
-      LIMIT 1
-      `,
-      [
-        shopId,
-        staff
-      ]
-    );
-
-    if (staffResult.rows.length === 0) {
-      throw new Error('找不到员工');
-    }
-
-    const staffId =
-      staffResult.rows[0].id;
-
-
-    // 5. 找顾客，没有就创建
-    let customerResult = await client.query(
-      `
-      SELECT id
-      FROM customers
-      WHERE shop_id = $1
-        AND phone = $2
-      LIMIT 1
-      `,
-      [
-        shopId,
-        phone
-      ]
-    );
-
-    let customerId;
-
-    if (customerResult.rows.length > 0) {
-      customerId =
-        customerResult.rows[0].id;
-
-    } else {
-      customerResult = await client.query(
-        `
-        INSERT INTO customers (
-          shop_id,
-          name,
-          phone,
-          email
-        )
-        VALUES (
-          $1,
-          $2,
-          $3,
-          $4
-        )
-        RETURNING id
-        `,
-        [
-          shopId,
-          customerName,
-          phone,
-          email || null
-        ]
-      );
-
-      customerId =
-        customerResult.rows[0].id;
-    }
-
-
-    // 6. 计算开始和结束时间
-    const startAt =
-      new Date(
-        `${date}T${time}:00+08:00`
-      );
-
-    const endAt =
-      new Date(
-        startAt.getTime() +
-        durationMinutes * 60 * 1000
-      );
-
-
-    // 7. 防撞单
-    const conflictResult = await client.query(
-      `
-      SELECT id
-      FROM appointments
-      WHERE shop_id = $1
-        AND staff_id = $2
-        AND status <> 'cancelled'
-        AND start_at < $4
-        AND end_at > $3
-      LIMIT 1
-      `,
-      [
-        shopId,
-        staffId,
-        startAt,
-        endAt
-      ]
-    );
-
-    if (conflictResult.rows.length > 0) {
-      await client.query('ROLLBACK');
-
-      return res.status(409).json({
-        success: false,
-        message: '该时间段已被预约，请选择其他时间'
-      });
-    }
-
-
-    // 8. 写入正式预约
-    const appointmentResult = await client.query(
-      `
-      INSERT INTO appointments (
-        shop_id,
-        location_id,
-        customer_id,
-        service_id,
-        staff_id,
-        start_at,
-        end_at,
-        status,
-        booking_source
-      )
-      VALUES (
-        $1,
-        $2,
-        $3,
-        $4,
-        $5,
-        $6,
-        $7,
-        'pending',
-        'online'
-      )
-      RETURNING
-        id,
-        appointment_no,
-        start_at,
-        end_at,
-        status,
-        created_at
-      `,
-      [
-        shopId,
-        locationId,
-        customerId,
-        serviceId,
-        staffId,
-        startAt,
-        endAt
-      ]
-    );
-
-    await client.query('COMMIT');
 
     res.json({
       success: true,
       message: '预约成功',
-      data: appointmentResult.rows[0]
+      data: {
+        id: appointment.id,
+        appointment_no: appointment.appointment_no,
+        start_at: appointment.start_at,
+        end_at: appointment.end_at,
+        status: appointment.status,
+        created_at: appointment.created_at
+      }
     });
-
   } catch (error) {
-    await client.query('ROLLBACK');
-
     console.error(
       'Create appointment error:',
-      error
+      safeStaffAuthErrorCode(error)
     );
 
-    res.status(500).json({
-      success: false,
-      message:
-        error.message || '预约失败'
-    });
+    const isCollision = error.code === '23P01';
+    const status = isCollision
+      ? 409
+      : error instanceof AppointmentMutationError
+        ? error.status
+        : 500;
+    const message = isCollision
+      ? '该时间段已被预约，请选择其他时间'
+      : error instanceof AppointmentMutationError
+        ? error.publicMessage
+        : '预约失败';
 
-  } finally {
-    client.release();
+    res.status(status).json({
+      success: false,
+      message
+    });
   }
 });
 
@@ -2160,14 +2183,16 @@ app.patch(
         `
         SELECT
           id,
+          shop_id,
+          location_id,
+          service_id,
+          staff_id,
           start_at,
           end_at,
           status,
           override_conflict,
           end_at > start_at AS duration_is_valid,
-          start_at = $5::TIMESTAMPTZ AS is_no_op,
-          $5::TIMESTAMPTZ +
-            (end_at - start_at) AS proposed_end_at
+          start_at = $5::TIMESTAMPTZ AS is_no_op
         FROM appointments
         WHERE id = $1
           AND shop_id = $2
@@ -2227,6 +2252,12 @@ app.patch(
         });
       }
 
+      const phaseAStructure =
+        await loadAndValidatePhaseAStructure(
+          client,
+          appointment
+        );
+
       if (appointment.is_no_op === true) {
         await client.query('COMMIT');
         transactionActive = false;
@@ -2245,16 +2276,29 @@ app.patch(
 
       const conflictResult = await client.query(
         `
-        SELECT id
-        FROM appointments
-        WHERE shop_id = $1
-          AND location_id = $2
-          AND staff_id = $3
-          AND id <> $4
-          AND status IN ('pending', 'confirmed')
-          AND override_conflict = FALSE
-          AND start_at < $6::TIMESTAMPTZ
-          AND end_at > $5::TIMESTAMPTZ
+        WITH proposed_time AS (
+          SELECT
+            id,
+            $5::TIMESTAMPTZ AS new_start_at,
+            $5::TIMESTAMPTZ +
+              (end_at - start_at) AS new_end_at
+          FROM appointments
+          WHERE id = $4
+            AND shop_id = $1
+            AND location_id = $2
+            AND staff_id = $3
+        )
+        SELECT existing.id
+        FROM appointments existing
+        CROSS JOIN proposed_time proposed
+        WHERE existing.shop_id = $1
+          AND existing.location_id = $2
+          AND existing.staff_id = $3
+          AND existing.id <> proposed.id
+          AND existing.status IN ('pending', 'confirmed')
+          AND existing.override_conflict = FALSE
+          AND existing.start_at < proposed.new_end_at
+          AND existing.end_at > proposed.new_start_at
         LIMIT 1
         `,
         [
@@ -2262,8 +2306,7 @@ app.patch(
           req.staffAuth.locationId,
           req.staffAuth.staffId,
           appointment.id,
-          newStartAt,
-          appointment.proposed_end_at
+          newStartAt
         ]
       );
 
@@ -2276,87 +2319,19 @@ app.patch(
         });
       }
 
-      const updateResult = await client.query(
-        `
-        UPDATE appointments
-        SET
-          start_at = $5::TIMESTAMPTZ,
-          end_at = $6::TIMESTAMPTZ,
-          updated_at = NOW()
-        WHERE id = $1
-          AND shop_id = $2
-          AND staff_id = $3
-          AND location_id = $4
-          AND status IN ('pending', 'confirmed')
-          AND override_conflict = FALSE
-        RETURNING
-          id,
-          start_at,
-          end_at,
-          status
-        `,
-        [
-          appointment.id,
-          req.staffAuth.shopId,
-          req.staffAuth.staffId,
-          req.staffAuth.locationId,
-          newStartAt,
-          appointment.proposed_end_at
-        ]
-      );
-
-      if (updateResult.rows.length !== 1) {
-        const updateError =
-          new Error('Staff appointment update mismatch');
-        updateError.code =
-          'staff_appointment_update_mismatch';
-        throw updateError;
-      }
-
       const updatedAppointment =
-        updateResult.rows[0];
-
-      await client.query(
-        `
-        INSERT INTO appointment_time_change_history (
-          shop_id,
-          location_id,
-          appointment_id,
-          staff_id,
-          actor_type,
-          actor_id,
-          old_start_at,
-          old_end_at,
-          new_start_at,
-          new_end_at,
-          reason,
-          source
-        )
-        VALUES (
-          $1,
-          $2,
-          $3,
-          $4,
-          'staff',
-          $4,
-          $5,
-          $6,
-          $7,
-          $8,
-          NULL,
-          'staff_time_picker'
-        )
-        `,
-        [
-          req.staffAuth.shopId,
-          req.staffAuth.locationId,
-          updatedAppointment.id,
-          req.staffAuth.staffId,
-          appointment.start_at,
-          appointment.end_at,
-          updatedAppointment.start_at,
-          updatedAppointment.end_at
-        ]
+        await moveAppointmentStructurePrecisely(
+          client,
+          {
+            appointment,
+            newStartAt,
+            expectedItemCount:
+              phaseAStructure.itemCount,
+            expectedAssignmentCount:
+              phaseAStructure.assignmentCount,
+            actorStaffId:
+              req.staffAuth.staffId
+          }
       );
 
       await client.query('COMMIT');
@@ -2382,6 +2357,16 @@ app.patch(
         return res.status(409).json({
           success: false,
           message: '新时间与现有预约冲突'
+        });
+      }
+
+      if (
+        error instanceof AppointmentMutationError &&
+        [400, 403, 404, 409].includes(error.status)
+      ) {
+        return res.status(error.status).json({
+          success: false,
+          message: error.publicMessage
         });
       }
 
@@ -2492,6 +2477,24 @@ app.post(
       });
     }
 
+    // The current global-password admin login does not establish a
+    // server-trusted shop identity. Keep this database mutation
+    // fail-closed until admin authentication is tenant-bound.
+    const adminIdentity = adminSession[req.ip];
+    const trustedAdminShopId =
+      adminIdentity &&
+      typeof adminIdentity === 'object' &&
+      isUuid(adminIdentity.shopId)
+        ? adminIdentity.shopId
+        : null;
+
+    if (!trustedAdminShopId) {
+      return res.status(403).json({
+        success: false,
+        message: '无权执行此操作'
+      });
+    }
+
     const {
       id,
       status
@@ -2501,7 +2504,8 @@ app.post(
       'pending',
       'confirmed',
       'cancelled',
-      'completed'
+      'completed',
+      'no_show'
     ];
 
     if (!id || !status) {
@@ -2521,68 +2525,131 @@ app.post(
     }
 
     try {
-      const result = await pool.query(
-        `
-        UPDATE appointments
-        SET
-          status = $1,
+      const updatedAppointment =
+        await runInTransaction(
+          pool,
+          async client => {
+            const appointmentResult =
+              await client.query(
+                `
+                SELECT
+                  id,
+                  shop_id,
+                  location_id,
+                  service_id,
+                  staff_id,
+                  start_at,
+                  end_at,
+                  status
+                FROM appointments
+                WHERE id = $1
+                  AND shop_id = $2
+                FOR UPDATE
+                `,
+                [id, trustedAdminShopId]
+              );
 
-          cancelled_at =
-            CASE
-              WHEN $1 = 'cancelled'
-              THEN NOW()
-              ELSE cancelled_at
-            END,
+            if (appointmentResult.rows.length === 0) {
+              throw new AppointmentMutationError(
+                'appointment_not_found',
+                404,
+                '未找到该预约'
+              );
+            }
 
-          service_completed_at =
-            CASE
-              WHEN $1 = 'completed'
-              THEN NOW()
-              ELSE service_completed_at
-            END,
+            const appointment =
+              appointmentResult.rows[0];
+            const phaseAStructure =
+              await loadAndValidatePhaseAStructure(
+                client,
+                appointment
+              );
 
-          updated_at = NOW()
+            const result = await client.query(
+              `
+              UPDATE appointments
+              SET
+                status = $1,
+                cancelled_at =
+                  CASE
+                    WHEN $1 = 'cancelled'
+                    THEN NOW()
+                    ELSE cancelled_at
+                  END,
+                service_completed_at =
+                  CASE
+                    WHEN $1 = 'completed'
+                    THEN NOW()
+                    ELSE service_completed_at
+                  END,
+                updated_at = NOW()
+              WHERE id = $2
+                AND shop_id = $3
+                AND location_id = $4
+              RETURNING
+                id,
+                status,
+                start_at,
+                end_at,
+                updated_at
+              `,
+              [
+                status,
+                appointment.id,
+                appointment.shop_id,
+                appointment.location_id
+              ]
+            );
 
-        WHERE id = $2
+            if (result.rows.length !== 1) {
+              throw new AppointmentMutationError(
+                'appointment_status_update_mismatch',
+                500,
+                '更新预约状态失败'
+              );
+            }
 
-        RETURNING
-          id,
-          status,
-          start_at,
-          end_at,
-          updated_at
-        `,
-        [
-          status,
-          id
-        ]
-      );
+            await syncAppointmentItemStatus(
+              client,
+              {
+                appointment,
+                status,
+                expectedItemCount:
+                  phaseAStructure.itemCount
+              }
+            );
 
-      if (result.rows.length === 0) {
-        return res.status(404).json({
-          success: false,
-          message: '未找到该预约'
-        });
-      }
+            return result.rows[0];
+          }
+        );
 
       res.json({
         success: true,
-        message:
-          '预约状态更新成功',
-        data:
-          result.rows[0]
+        message: '预约状态更新成功',
+        data: updatedAppointment
       });
-
     } catch (error) {
       console.error(
         'Update appointment status DB error:',
-        error
+        safeStaffAuthErrorCode(error)
       );
 
-      res.status(500).json({
+      const responseStatus =
+        safeStaffAuthErrorCode(error) === '23P01'
+          ? 409
+          : error instanceof AppointmentMutationError
+          ? error.status
+          : 500;
+      const responseMessage =
+        safeStaffAuthErrorCode(error) === '23P01'
+          ? '新状态与现有预约冲突'
+          : error instanceof AppointmentMutationError
+          ? error.publicMessage
+          : '更新预约状态失败';
+
+      res.status(responseStatus).json({
         success: false,
-        message:
-          '更新预约状态失败'
+        message: responseMessage
       });
     }
   }
