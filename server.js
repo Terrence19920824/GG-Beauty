@@ -32,6 +32,11 @@ const pool = new Pool({
   }
 });
 
+// Server-owned dependencies. Client input can never replace these trusted
+// objects; tests may inject isolated doubles without opening a real database.
+app.locals.bookingPool = pool;
+app.locals.bookingValidator = validateStaffBookability;
+
 // ==================================================
 // 中间件
 // ==================================================
@@ -875,8 +880,8 @@ app.post('/api/new', (req, res) => {
     !staff ||
     !customerName ||
     !phone ||
-    !date ||
-    !time
+    !isValidCalendarDate(date) ||
+    !isValidClockTime(time)
   ) {
     return res.status(400).json({
       success: false,
@@ -967,7 +972,7 @@ app.post('/api/new-db', async (req, res) => {
 
   try {
     const appointment = await runInTransaction(
-      pool,
+      req.app.locals.bookingPool,
       async client => {
         // 1. 找店铺
         const shopResult = await client.query(
@@ -1025,8 +1030,6 @@ app.post('/api/new-db', async (req, res) => {
           FROM services
           WHERE shop_id = $1
             AND name = $2
-            AND is_active = true
-            AND bookable = true
           LIMIT 1
           `,
           [shopId, service]
@@ -1063,8 +1066,6 @@ app.post('/api/new-db', async (req, res) => {
           FROM staff
           WHERE shop_id = $1
             AND name = $2
-            AND is_active = true
-            AND bookable = true
           LIMIT 1
           `,
           [shopId, staff]
@@ -1080,7 +1081,66 @@ app.post('/api/new-db', async (req, res) => {
 
         const staffId = staffResult.rows[0].id;
 
-        // 5. 找顾客，没有就创建
+        // 5. PostgreSQL derives the authoritative interval from the
+        // server-selected location timezone and service duration.
+        const intervalResult = await client.query(
+          `
+          WITH interval_scope AS (
+            SELECT
+              ($3::DATE + $4::TIME)
+                AT TIME ZONE location.timezone AS start_at
+            FROM locations AS location
+            WHERE location.id = $1::UUID
+              AND location.shop_id = $2::UUID
+              AND location.is_active = TRUE
+          )
+          SELECT
+            TO_CHAR(
+              start_at AT TIME ZONE 'UTC',
+              'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'
+            ) AS start_at,
+            TO_CHAR(
+              (
+                start_at +
+                $5::INTEGER * INTERVAL '1 minute'
+              ) AT TIME ZONE 'UTC',
+              'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'
+            ) AS end_at
+          FROM interval_scope
+          `,
+          [
+            locationId,
+            shopId,
+            date,
+            time,
+            durationMinutes
+          ]
+        );
+
+        if (intervalResult.rows.length !== 1) {
+          throw new AppointmentMutationError(
+            'booking_scope_invalid',
+            400,
+            '预约资料无效'
+          );
+        }
+
+        const startAt =
+          intervalResult.rows[0].start_at;
+        const endAt =
+          intervalResult.rows[0].end_at;
+
+        await req.app.locals.bookingValidator({
+          dbClient: client,
+          shopId,
+          locationId,
+          staffId,
+          serviceId: selectedService.id,
+          requestedStartAt: startAt,
+          requestedEndAt: endAt
+        });
+
+        // 6. Validator passed before any customer or appointment write.
         let customerResult = await client.query(
           `
           SELECT id
@@ -1119,39 +1179,8 @@ app.post('/api/new-db', async (req, res) => {
           customerId = customerResult.rows[0].id;
         }
 
-        // 6. 保持当前单项目时间规则
-        const startAt = new Date(
-          `${date}T${time}:00+08:00`
-        );
-        const endAt = new Date(
-          startAt.getTime() +
-          durationMinutes * 60 * 1000
-        );
-
-        // 7. 应用层友好防撞；数据库 exclusion 是最终并发保护
-        const conflictResult = await client.query(
-          `
-          SELECT id
-          FROM appointments
-          WHERE shop_id = $1
-            AND staff_id = $2
-            AND status <> 'cancelled'
-            AND start_at < $4
-            AND end_at > $3
-          LIMIT 1
-          `,
-          [shopId, staffId, startAt, endAt]
-        );
-
-        if (conflictResult.rows.length > 0) {
-          throw new AppointmentMutationError(
-            'appointment_collision',
-            409,
-            '该时间段已被预约，请选择其他时间'
-          );
-        }
-
-        // 8. 原子创建 parent + item + primary assignment
+        // 7. 原子创建 parent + item + primary assignment. The parent DB
+        // exclusion constraint remains the final concurrency guard.
         const appointmentResult = await client.query(
           `
           INSERT INTO appointments (
@@ -1228,21 +1257,34 @@ app.post('/api/new-db', async (req, res) => {
     );
 
     const isCollision = error.code === '23P01';
+    const isExpectedBookabilityFailure =
+      error instanceof StaffBookabilityError &&
+      UNAVAILABLE_SLOT_ERROR_CODES.has(error.code);
     const status = isCollision
       ? 409
+      : isExpectedBookabilityFailure
+        ? 409
       : error instanceof AppointmentMutationError
         ? error.status
         : 500;
     const message = isCollision
       ? '该时间段已被预约，请选择其他时间'
+      : isExpectedBookabilityFailure
+        ? '该时间暂不可预约'
       : error instanceof AppointmentMutationError
         ? error.publicMessage
         : '预约失败';
 
-    res.status(status).json({
+    const response = {
       success: false,
       message
-    });
+    };
+
+    if (isExpectedBookabilityFailure) {
+      response.code = 'BOOKING_NOT_AVAILABLE';
+    }
+
+    res.status(status).json(response);
   }
 });
 
@@ -1340,6 +1382,10 @@ const isValidCalendarDate = value => {
     parsed.getUTCDate() === day
   );
 };
+
+const isValidClockTime = value =>
+  typeof value === 'string' &&
+  /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value);
 
 const filterBookableCandidateSlots = async ({
   dbClient,
