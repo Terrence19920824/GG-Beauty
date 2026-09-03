@@ -2740,37 +2740,17 @@ app.post(
 
 app.post(
   '/api/admin/update-status-db',
+  requireOwnerAuth,
+  requireOwnerRole(['owner', 'manager', 'admin']),
   async (req, res) => {
-
-    if (!adminSession[req.ip]) {
-      return res.status(401).json({
-        success: false,
-        message: '请先登录'
-      });
-    }
-
-    // The current global-password admin login does not establish a
-    // server-trusted shop identity. Keep this database mutation
-    // fail-closed until admin authentication is tenant-bound.
-    const adminIdentity = adminSession[req.ip];
-    const trustedAdminShopId =
-      adminIdentity &&
-      typeof adminIdentity === 'object' &&
-      isUuid(adminIdentity.shopId)
-        ? adminIdentity.shopId
-        : null;
-
-    if (!trustedAdminShopId) {
-      return res.status(403).json({
-        success: false,
-        message: '无权执行此操作'
-      });
-    }
-
-    const {
-      id,
-      status
-    } = req.body;
+    const trustedShopId = req.ownerAuth.shopId;
+    const body =
+      req.body && typeof req.body === 'object'
+        ? req.body
+        : {};
+    const appointmentId =
+      body.appointmentId || body.id;
+    const status = body.status;
 
     const allowedStatuses = [
       'pending',
@@ -2780,10 +2760,24 @@ app.post(
       'no_show'
     ];
 
-    if (!id || !status) {
+    if (!appointmentId || !status) {
       return res.status(400).json({
         success: false,
         message: '缺少预约ID或状态'
+      });
+    }
+
+    if (
+      !isUuid(appointmentId) ||
+      (
+        body.appointmentId &&
+        body.id &&
+        body.appointmentId !== body.id
+      )
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: '预约ID不正确'
       });
     }
 
@@ -2799,8 +2793,12 @@ app.post(
     try {
       const updatedAppointment =
         await runInTransaction(
-          pool,
+          app.locals.ownerAuthPool,
           async client => {
+            await client.query(
+              "SET LOCAL lock_timeout = '5s'"
+            );
+
             const appointmentResult =
               await client.query(
                 `
@@ -2812,13 +2810,16 @@ app.post(
                   staff_id,
                   start_at,
                   end_at,
-                  status
+                  status,
+                  cancelled_at,
+                  service_completed_at,
+                  updated_at
                 FROM appointments
                 WHERE id = $1
                   AND shop_id = $2
                 FOR UPDATE
                 `,
-                [id, trustedAdminShopId]
+                [appointmentId, trustedShopId]
               );
 
             if (appointmentResult.rows.length === 0) {
@@ -2836,6 +2837,49 @@ app.post(
                 client,
                 appointment
               );
+
+            const allowedTransitions = {
+              pending: ['confirmed', 'cancelled'],
+              confirmed: [
+                'completed',
+                'cancelled',
+                'no_show'
+              ],
+              completed: [],
+              cancelled: [],
+              no_show: []
+            };
+
+            if (
+              !Object.prototype.hasOwnProperty.call(
+                allowedTransitions,
+                appointment.status
+              )
+            ) {
+              throw new AppointmentMutationError(
+                'unsupported_current_status',
+                409,
+                '当前预约状态不可修改'
+              );
+            }
+
+            if (appointment.status === status) {
+              return {
+                id: appointment.id,
+                status: appointment.status,
+                start_at: appointment.start_at,
+                end_at: appointment.end_at,
+                updated_at: appointment.updated_at
+              };
+            }
+
+            if (!allowedTransitions[appointment.status].includes(status)) {
+              throw new AppointmentMutationError(
+                'appointment_status_transition_invalid',
+                409,
+                '不允许进行该预约状态变更'
+              );
+            }
 
             const result = await client.query(
               `
@@ -2907,7 +2951,9 @@ app.post(
       );
 
       const responseStatus =
-        safeStaffAuthErrorCode(error) === '23P01'
+        ['23P01', '55P03'].includes(
+          safeStaffAuthErrorCode(error)
+        )
           ? 409
           : error instanceof AppointmentMutationError
           ? error.status
@@ -2915,6 +2961,8 @@ app.post(
       const responseMessage =
         safeStaffAuthErrorCode(error) === '23P01'
           ? '新状态与现有预约冲突'
+          : safeStaffAuthErrorCode(error) === '55P03'
+          ? '预约正在被修改，请稍后重试'
           : error instanceof AppointmentMutationError
           ? error.publicMessage
           : '更新预约状态失败';

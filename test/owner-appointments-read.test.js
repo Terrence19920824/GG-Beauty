@@ -264,7 +264,7 @@ test('legacy admin IP session cannot access migrated route', async () => {
   });
 });
 
-test('legacy admin database mutation remains fail-closed before DB access', async () => {
+test('legacy admin session cannot access owner-authenticated database mutation', async () => {
   const fixture = makePool();
   installPool(fixture);
   await withServer(async baseUrl => {
@@ -281,7 +281,7 @@ test('legacy admin database mutation remains fail-closed before DB access', asyn
         status: 'confirmed'
       })
     });
-    assert.equal(response.status, 403);
+    assert.equal(response.status, 401);
   });
   assert.equal(fixture.state.clientQueries.length, 0);
 });
