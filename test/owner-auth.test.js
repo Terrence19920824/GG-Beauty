@@ -162,7 +162,7 @@ for (const label of ['inactive membership', 'inactive shop']) {
     const fixture = makeFixture({ membershipRows: [] });
     const res = response();
     await fixture.auth.login(request(validBody), res);
-    assert.equal(res.statusCode, 403);
+    assert.equal(res.statusCode, 401);
     assert.equal(fixture.state.queries.some(q => /INSERT INTO owner_sessions/.test(q.sql)), false);
   });
 }
