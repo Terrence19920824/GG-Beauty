@@ -182,13 +182,37 @@
     <h2>GG-Beauty 老板登录</h2>
 
     <input
-      id="adminPassword"
-      type="password"
-      placeholder="请输入管理员密码"
+      id="ownerLoginIdentifier"
+      type="text"
+      autocomplete="username"
+      placeholder="请输入登录账号"
       style="
         width: 100%;
         padding: 14px;
-        margin: 18px 0 12px;
+        margin: 18px 0 0;
+      "
+    >
+
+    <input
+      id="adminPassword"
+      type="password"
+      autocomplete="current-password"
+      placeholder="请输入密码"
+      style="
+        width: 100%;
+        padding: 14px;
+        margin: 12px 0 0;
+      "
+    >
+
+    <input
+      id="ownerShopSlug"
+      type="text"
+      placeholder="店铺标识（如有多家店）"
+      style="
+        width: 100%;
+        padding: 14px;
+        margin: 12px 0;
       "
     >
 
@@ -212,7 +236,7 @@
     ></div>
   </div>
 </div>
-<div class="container">
+<div class="container" id="adminContent" hidden>
 
   <div class="header">
     <div>
@@ -220,12 +244,20 @@
       <p>Appointment Dashboard · 预约管理后台</p>
     </div>
 
-    <button
-      class="refresh-btn"
-      onclick="loadAppointments()"
-    >
-      刷新预约
-    </button>
+    <div>
+      <button
+        class="refresh-btn"
+        onclick="loadAppointments()"
+      >
+        刷新预约
+      </button>
+      <button
+        class="refresh-btn"
+        onclick="ownerLogout()"
+      >
+        退出登录
+      </button>
+    </div>
   </div>
 
   <div class="summary">
@@ -263,26 +295,96 @@
 const content =
   document.getElementById('content');
 
+const loginOverlay =
+  document.getElementById('loginOverlay');
+
+const adminContent =
+  document.getElementById('adminContent');
+
+function showLogin(message = '') {
+  adminContent.hidden = true;
+  loginOverlay.style.display = 'flex';
+
+  document
+    .getElementById('loginMessage')
+    .textContent = message;
+
+  document
+    .getElementById('adminPassword')
+    .value = '';
+
+  document.getElementById('totalCount').textContent = '0';
+  document.getElementById('pendingCount').textContent = '0';
+  document.getElementById('todayCount').textContent = '0';
+
+  content.className = 'loading';
+  content.textContent = '请先登录后查看预约';
+}
+
+function showAdmin() {
+  loginOverlay.style.display = 'none';
+  adminContent.hidden = false;
+}
+
+async function initializeAdmin() {
+  try {
+    const response = await fetch('/api/owner/me', {
+      credentials: 'same-origin'
+    });
+
+    if (response.status === 401) {
+      showLogin();
+      return;
+    }
+
+    if (!response.ok) {
+      showLogin('无法验证登录状态，请稍后重试');
+      return;
+    }
+
+    showAdmin();
+    await loadAppointments();
+  } catch (_error) {
+    showLogin('无法验证登录状态，请稍后重试');
+  }
+}
+
 async function adminLogin() {
+  const loginIdentifier = document
+    .getElementById('ownerLoginIdentifier')
+    .value
+    .trim();
   const password = document.getElementById('adminPassword').value;
+  const shopSlug = document
+    .getElementById('ownerShopSlug')
+    .value
+    .trim();
   const message = document.getElementById('loginMessage');
 
-  if (!password) {
-    message.textContent = '请输入管理员密码';
+  if (!loginIdentifier || !password) {
+    message.textContent = '请输入登录账号和密码';
     return;
   }
 
   message.textContent = '正在登录...';
 
   try {
-    const response = await fetch('/api/admin/login', {
+    const loginBody = {
+      loginIdentifier,
+      password
+    };
+
+    if (shopSlug) {
+      loginBody.shopSlug = shopSlug;
+    }
+
+    const response = await fetch('/api/owner/login', {
       method: 'POST',
+      credentials: 'same-origin',
       headers: {
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({
-        password: password
-      })
+      body: JSON.stringify(loginBody)
     });
 
     const result = await response.json();
@@ -294,12 +396,29 @@ async function adminLogin() {
 
     message.textContent = '';
 
-    document.getElementById('loginOverlay').style.display = 'none';
+    showAdmin();
 
     await loadAppointments();
 
   } catch (error) {
     message.textContent = '登录失败，请重试';
+  }
+}
+
+async function ownerLogout() {
+  try {
+    const response = await fetch('/api/owner/logout', {
+      method: 'POST',
+      credentials: 'same-origin'
+    });
+
+    if (!response.ok) {
+      throw new Error('退出登录失败');
+    }
+
+    showLogin('已退出登录');
+  } catch (_error) {
+    alert('退出登录失败，请稍后重试');
   }
 }
 // 格式化新加坡时间
@@ -365,24 +484,15 @@ async function loadAppointments() {
   try {
 
     const response =
-      await fetch('/api/appointments-db');
+      await fetch('/api/appointments-db', {
+        credentials: 'same-origin'
+      });
 
     const result =
       await response.json();
 
     if (response.status === 401) {
-      document
-        .getElementById('loginOverlay')
-        .style.display = 'flex';
-
-      document
-        .getElementById('loginMessage')
-        .textContent =
-        result.message || '请先登录';
-
-      content.className = 'loading';
-      content.textContent =
-        '请先登录后查看预约';
+      showLogin(result.message || '请先登录');
 
       return;
     }
@@ -566,16 +676,22 @@ async function updateAppointmentStatus(id, status) {
   try {
     const response = await fetch('/api/admin/update-status-db', {
       method: 'POST',
+      credentials: 'same-origin',
       headers: {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        id: id,
+        appointmentId: id,
         status: status
       })
     });
 
     const result = await response.json();
+
+    if (response.status === 401) {
+      showLogin(result.message || '请先登录');
+      return;
+    }
 
     if (!response.ok || !result.success) {
       throw new Error(result.message || '操作失败');
@@ -587,6 +703,11 @@ async function updateAppointmentStatus(id, status) {
     alert(error.message || '操作失败');
   }
 }
+
+document.addEventListener(
+  'DOMContentLoaded',
+  initializeAdmin
+);
 
 </script>
 
