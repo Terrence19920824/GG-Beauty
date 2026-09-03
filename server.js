@@ -39,6 +39,7 @@ const pool = new Pool({
 // objects; tests may inject isolated doubles without opening a real database.
 app.locals.bookingPool = pool;
 app.locals.bookingValidator = validateStaffBookability;
+app.locals.ownerAuthPool = pool;
 
 // ==================================================
 // 中间件
@@ -510,7 +511,12 @@ const {
   me: ownerMe,
   requireOwnerAuth
 } = createOwnerAuth({
-  pool,
+  pool: {
+    query: (...args) =>
+      app.locals.ownerAuthPool.query(...args),
+    connect: (...args) =>
+      app.locals.ownerAuthPool.connect(...args)
+  },
   bcrypt,
   crypto,
   isSameOriginRequest,
@@ -520,6 +526,21 @@ const {
 app.post('/api/owner/login', ownerLogin);
 app.get('/api/owner/me', requireOwnerAuth, ownerMe);
 app.post('/api/owner/logout', ownerLogout);
+
+const requireOwnerRole = allowedRoles =>
+  (req, res, next) => {
+    if (
+      !req.ownerAuth ||
+      !allowedRoles.includes(req.ownerAuth.role)
+    ) {
+      return res.status(403).json({
+        success: false,
+        message: '无权访问此资源'
+      });
+    }
+
+    next();
+  };
 
 
 // ==================================================
@@ -553,16 +574,51 @@ app.get('/api/db-test', async (req, res) => {
 // 从数据库读取真实预约
 // ==================================================
 
-app.get('/api/appointments-db', async (req, res) => {
-  if (!adminSession[req.ip]) {
-    return res.status(401).json({
+app.get(
+  '/api/appointments-db',
+  requireOwnerAuth,
+  requireOwnerRole(['owner', 'manager', 'admin']),
+  async (req, res) => {
+  const trustedShopId = req.ownerAuth.shopId;
+  const requestedLocationId =
+    typeof req.query.locationId === 'string'
+      ? req.query.locationId.trim()
+      : '';
+
+  if (requestedLocationId && !isUuid(requestedLocationId)) {
+    return res.status(404).json({
       success: false,
-      message: '请先登录'
+      message: '未找到请求的地点'
     });
   }
 
+  let client;
+
   try {
-    const result = await pool.query(`
+    client = await app.locals.ownerAuthPool.connect();
+
+    if (requestedLocationId) {
+      const locationResult = await client.query(
+        `
+        SELECT id
+        FROM locations
+        WHERE id = $1
+          AND shop_id = $2
+          AND is_active = TRUE
+        LIMIT 1
+        `,
+        [requestedLocationId, trustedShopId]
+      );
+
+      if (locationResult.rows.length !== 1) {
+        return res.status(404).json({
+          success: false,
+          message: '未找到请求的地点'
+        });
+      }
+    }
+
+    const result = await client.query(`
       SELECT
         a.id,
         a.appointment_no,
@@ -586,15 +642,31 @@ app.get('/api/appointments-db', async (req, res) => {
 
       JOIN customers c
         ON c.id = a.customer_id
+       AND c.shop_id = a.shop_id
 
       JOIN services s
         ON s.id = a.service_id
+       AND s.shop_id = a.shop_id
 
       JOIN staff st
         ON st.id = a.staff_id
+       AND st.shop_id = a.shop_id
+
+      JOIN locations l
+        ON l.id = a.location_id
+       AND l.shop_id = a.shop_id
+
+      WHERE a.shop_id = $1
+        AND (
+          $2::UUID IS NULL
+          OR a.location_id = $2::UUID
+        )
 
       ORDER BY a.start_at DESC
-    `);
+    `, [
+      trustedShopId,
+      requestedLocationId || null
+    ]);
 
     res.json({
       success: true,
@@ -604,13 +676,17 @@ app.get('/api/appointments-db', async (req, res) => {
   } catch (error) {
     console.error(
       'Read appointments error:',
-      error
+      safeStaffAuthErrorCode(error)
     );
 
     res.status(500).json({
       success: false,
       message: '读取数据库预约失败'
     });
+  } finally {
+    if (client) {
+      client.release();
+    }
   }
 });
 
