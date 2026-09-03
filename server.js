@@ -15,6 +15,10 @@ const {
   moveAppointmentStructurePrecisely,
   syncAppointmentItemStatus
 } = require('./lib/appointment-multi-service');
+const {
+  StaffBookabilityError,
+  validateStaffBookability
+} = require('./lib/staff-bookability-validator');
 
 const app = express();
 
@@ -1303,6 +1307,85 @@ app.get('/api/available-times', (req, res) => {
 // 从 Supabase PostgreSQL 查询
 // ==================================================
 
+const UNAVAILABLE_SLOT_ERROR_CODES = new Set([
+  'STAFF_NOT_BOOKABLE',
+  'SERVICE_NOT_BOOKABLE',
+  'STAFF_SERVICE_NOT_ALLOWED',
+  'STAFF_LOCATION_NOT_ASSIGNED',
+  'NO_WORKING_HOURS',
+  'OUTSIDE_WORKING_HOURS',
+  'STAFF_ON_LEAVE',
+  'SCHEDULE_OVERRIDE_PENDING',
+  'SCHEDULE_CONFIGURATION_INVALID',
+  'APPOINTMENT_COLLISION'
+]);
+
+const isValidCalendarDate = value => {
+  if (
+    typeof value !== 'string' ||
+    !/^\d{4}-\d{2}-\d{2}$/.test(value)
+  ) {
+    return false;
+  }
+
+  const [year, month, day] =
+    value.split('-').map(Number);
+  const parsed = new Date(
+    Date.UTC(year, month - 1, day)
+  );
+
+  return (
+    parsed.getUTCFullYear() === year &&
+    parsed.getUTCMonth() === month - 1 &&
+    parsed.getUTCDate() === day
+  );
+};
+
+const filterBookableCandidateSlots = async ({
+  dbClient,
+  candidates,
+  shopId,
+  locationId,
+  staffId,
+  serviceId,
+  validator = validateStaffBookability
+}) => {
+  const availableTimes = [];
+
+  for (const candidate of candidates) {
+    // Mirror the final database exclusion predicate. It is intentionally
+    // staff-wide, so availability never advertises a slot the DB will reject.
+    if (candidate.has_database_guard_collision === true) {
+      continue;
+    }
+
+    try {
+      await validator({
+        dbClient,
+        shopId,
+        locationId,
+        staffId,
+        serviceId,
+        requestedStartAt: candidate.start_at,
+        requestedEndAt: candidate.end_at
+      });
+
+      availableTimes.push(candidate.time);
+    } catch (error) {
+      if (
+        error instanceof StaffBookabilityError &&
+        UNAVAILABLE_SLOT_ERROR_CODES.has(error.code)
+      ) {
+        continue;
+      }
+
+      throw error;
+    }
+  }
+
+  return availableTimes;
+};
+
 app.get(
   '/api/available-times-db',
   async (req, res) => {
@@ -1315,10 +1398,13 @@ app.get(
     } = req.query;
 
     if (
+      typeof shopSlug !== 'string' ||
+      typeof staff !== 'string' ||
+      typeof service !== 'string' ||
       !shopSlug ||
-      !date ||
       !staff ||
-      !service
+      !service ||
+      !isValidCalendarDate(date)
     ) {
       return res.status(400).json({
         success: false,
@@ -1327,10 +1413,13 @@ app.get(
       });
     }
 
+    let client;
+
     try {
+      client = await pool.connect();
 
       // 1. 找店铺
-      const shopResult = await pool.query(
+      const shopResult = await client.query(
         `
         SELECT id
         FROM shops
@@ -1344,7 +1433,7 @@ app.get(
       if (shopResult.rows.length === 0) {
         return res.status(404).json({
           success: false,
-          message: '找不到店铺'
+          message: '找不到预约选项'
         });
       }
 
@@ -1352,15 +1441,35 @@ app.get(
         shopResult.rows[0].id;
 
 
-      // 2. 找员工
-      const staffResult = await pool.query(
+      // 2. 使用与预约创建相同的 server-side location 选择规则
+      const locationResult = await client.query(
+        `
+        SELECT id
+        FROM locations
+        WHERE shop_id = $1
+          AND is_active = TRUE
+        ORDER BY created_at ASC
+        LIMIT 1
+        `,
+        [shopId]
+      );
+
+      if (locationResult.rows.length === 0) {
+        return res.status(404).json({
+          success: false,
+          message: '找不到预约选项'
+        });
+      }
+
+      const locationId = locationResult.rows[0].id;
+
+      // 3. Tenant-scoped lookup only; bookability is decided by the validator.
+      const staffResult = await client.query(
         `
         SELECT id
         FROM staff
         WHERE shop_id = $1
           AND name = $2
-          AND is_active = true
-          AND bookable = true
         LIMIT 1
         `,
         [
@@ -1372,7 +1481,7 @@ app.get(
       if (staffResult.rows.length === 0) {
         return res.status(404).json({
           success: false,
-          message: '找不到员工'
+          message: '找不到预约选项'
         });
       }
 
@@ -1380,8 +1489,8 @@ app.get(
         staffResult.rows[0].id;
 
 
-      // 3. 找服务项目
-      const serviceResult = await pool.query(
+      // 4. Duration comes only from the tenant-scoped service row.
+      const serviceResult = await client.query(
         `
         SELECT
           id,
@@ -1389,8 +1498,6 @@ app.get(
         FROM services
         WHERE shop_id = $1
           AND name = $2
-          AND is_active = true
-          AND bookable = true
         LIMIT 1
         `,
         [
@@ -1402,7 +1509,7 @@ app.get(
       if (serviceResult.rows.length === 0) {
         return res.status(404).json({
           success: false,
-          message: '找不到服务项目'
+          message: '找不到预约选项'
         });
       }
 
@@ -1410,7 +1517,7 @@ app.get(
         serviceResult.rows[0].duration_minutes;
 
 
-      // 4. 基础时间
+      // 5. 保留现有 30-minute candidate grid.
       const allTimes = [
         '10:00', '10:30',
         '11:00', '11:30',
@@ -1426,76 +1533,75 @@ app.get(
       ];
 
 
-      // 5. 查询当天已有预约
-      const dayStart =
-        new Date(
-          `${date}T00:00:00+08:00`
-        );
-
-      const dayEnd =
-        new Date(
-          `${date}T23:59:59+08:00`
-        );
-
-      const bookingResult = await pool.query(
+      // 6. PostgreSQL uses the authoritative location timezone to build
+      // candidate instants and mirrors the DB exclusion constraint globally
+      // for this trusted staff id.
+      const candidateResult = await client.query(
         `
+        WITH scoped_location AS (
+          SELECT timezone
+          FROM locations
+          WHERE id = $6::UUID
+            AND shop_id = $5::UUID
+            AND is_active = TRUE
+        ),
+        candidate AS (
+          SELECT
+            candidate_time.time,
+            (
+              $1::DATE + candidate_time.time::TIME
+            ) AT TIME ZONE location.timezone AS start_at
+          FROM scoped_location AS location
+          CROSS JOIN UNNEST($2::TEXT[])
+            WITH ORDINALITY AS candidate_time(time, position)
+        ),
+        bounded_candidate AS (
+          SELECT
+            time,
+            start_at,
+            start_at + $3::INTEGER * INTERVAL '1 minute' AS end_at
+          FROM candidate
+        )
         SELECT
-          start_at,
-          end_at
-        FROM appointments
-        WHERE shop_id = $1
-          AND staff_id = $2
-          AND status <> 'cancelled'
-          AND start_at < $4
-          AND end_at > $3
-        ORDER BY start_at ASC
+          time,
+          TO_CHAR(
+            start_at AT TIME ZONE 'UTC',
+            'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'
+          ) AS start_at,
+          TO_CHAR(
+            end_at AT TIME ZONE 'UTC',
+            'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'
+          ) AS end_at,
+          EXISTS (
+            SELECT 1
+            FROM appointments AS appointment
+            WHERE appointment.staff_id = $4::UUID
+              AND appointment.status IN ('pending', 'confirmed')
+              AND appointment.override_conflict = FALSE
+              AND appointment.start_at < bounded_candidate.end_at
+              AND appointment.end_at > bounded_candidate.start_at
+          ) AS has_database_guard_collision
+        FROM bounded_candidate
+        ORDER BY start_at
         `,
         [
-          shopId,
+          date,
+          allTimes,
+          durationMinutes,
           staffId,
-          dayStart,
-          dayEnd
+          shopId,
+          locationId
         ]
       );
 
-
-      // 6. 根据服务时长过滤冲突时间
       const availableTimes =
-        allTimes.filter(time => {
-
-          const slotStart =
-            new Date(
-              `${date}T${time}:00+08:00`
-            );
-
-          const slotEnd =
-            new Date(
-              slotStart.getTime() +
-              durationMinutes * 60 * 1000
-            );
-
-          const hasConflict =
-            bookingResult.rows.some(
-              booking => {
-
-                const bookedStart =
-                  new Date(
-                    booking.start_at
-                  );
-
-                const bookedEnd =
-                  new Date(
-                    booking.end_at
-                  );
-
-                return (
-                  slotStart < bookedEnd &&
-                  slotEnd > bookedStart
-                );
-              }
-            );
-
-          return !hasConflict;
+        await filterBookableCandidateSlots({
+          dbClient: client,
+          candidates: candidateResult.rows,
+          shopId,
+          locationId,
+          staffId,
+          serviceId: serviceResult.rows[0].id
         });
 
 
@@ -1507,14 +1613,28 @@ app.get(
     } catch (error) {
       console.error(
         'Available times DB error:',
-        error
+        safeStaffAuthErrorCode(error)
       );
+
+      if (
+        error instanceof StaffBookabilityError &&
+        error.code === 'BOOKABILITY_SCOPE_INVALID'
+      ) {
+        return res.status(404).json({
+          success: false,
+          message: '找不到预约选项'
+        });
+      }
 
       res.status(500).json({
         success: false,
         message:
           '获取可预约时间失败'
       });
+    } finally {
+      if (client) {
+        client.release();
+      }
     }
   }
 );
@@ -2673,16 +2793,23 @@ app.post(
 const PORT =
   process.env.PORT || 3000;
 
-app.listen(PORT, () => {
-  console.log(
-    `✅ GG-Beauty 服务器运行在端口 ${PORT}`
-  );
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(
+      `✅ GG-Beauty 服务器运行在端口 ${PORT}`
+    );
 
-  console.log(
-    `📋 访问地址: http://localhost:${PORT}`
-  );
+    console.log(
+      `📋 访问地址: http://localhost:${PORT}`
+    );
 
-  console.log(
-    `📊 当前预约数: ${bookings.length}`
-  );
-});
+    console.log(
+      `📊 当前预约数: ${bookings.length}`
+    );
+  });
+}
+
+module.exports = {
+  app,
+  filterBookableCandidateSlots
+};
