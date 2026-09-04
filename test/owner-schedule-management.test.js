@@ -56,7 +56,7 @@ const makePool = ({ role = 'owner', validSession = true, scopeValid = true, futu
     if (/^SELECT id FROM staff WHERE/.test(q)) return { rows: params[0] === ID.staffA && params[1] === ID.shopA ? [{ id: ID.staffA }] : [] };
     if (/^SELECT override\.id/.test(q)) return { rows: state.overrides.map(o => ({ ...o, location_name: 'Main', timezone: 'Asia/Singapore' })) };
     if (/^INSERT INTO staff_schedule_overrides/.test(q)) {
-      const row = { id: ID.override, location_id: params[1], schedule_date: params[3], override_type: params[4], start_time: params[5], end_time: params[6], reason: params[7], approval_status: 'approved', is_active: true, created_at: '2030-01-01', updated_at: '2030-01-01' };
+      const row = { id: ID.override, location_id: params[1], schedule_date: params[3], override_type: params[4], start_time: params[5], end_time: params[6], reason: params[7], created_by: params[8], approval_status: 'approved', is_active: true, created_at: '2030-01-01', updated_at: '2030-01-01' };
       state.overrides.push(row); return { rows: rowMismatch ? [] : [row] };
     }
     if (/^SELECT override\.\*, location\.timezone/.test(q)) {
@@ -95,6 +95,11 @@ for (const role of ['owner', 'manager']) {
     assert.equal((await run(f, `/api/owner/staff/${ID.staffA}/schedule`, { method: 'PUT', body: weekly() })).status, 200);
     const created = await run(f, `/api/owner/staff/${ID.staffA}/schedule-overrides`, { method: 'POST', body: override('day_off') });
     assert.equal(created.status, 201); assert.equal((await created.json()).data.approval_status, 'approved');
+    assert.equal(f.state.overrides[0].created_by, ID.account);
+    assert.notEqual(f.state.overrides[0].created_by, null);
+    const insert = f.state.queries.find(query => /^INSERT INTO staff_schedule_overrides/.test(query.sql));
+    assert.equal(insert.params[0], ID.shopA);
+    assert.equal(insert.params[8], ID.account);
     const patched = await run(f, `/api/owner/staff/${ID.staffA}/schedule-overrides/${ID.override}`, { method: 'PATCH', body: { isActive: false } });
     assert.equal(patched.status, 200);
   });
@@ -166,7 +171,7 @@ for (const body of invalidWeekly) test('invalid weekly input returns 400 before 
 test('staff bookable=false may still configure schedule', async () => { const f = makePool({ staffBookable: false }); assert.equal((await run(f, `/api/owner/staff/${ID.staffA}/schedule`, { method: 'PUT', body: weekly() })).status, 200); });
 
 for (const typeBody of [override('day_off'), override('leave'), override('leave', { startTime: '12:00', endTime: '14:00' }), override('custom_hours', { startTime: '11:00', endTime: '16:00' })]) {
-  test(`${typeBody.overrideType} canonical override succeeds`, async () => { const f = makePool(); const r = await run(f, `/api/owner/staff/${ID.staffA}/schedule-overrides`, { method: 'POST', body: typeBody }); assert.equal(r.status, 201); assert.equal(f.state.overrides[0].approval_status, 'approved'); });
+  test(`${typeBody.overrideType} canonical override succeeds`, async () => { const f = makePool(); const r = await run(f, `/api/owner/staff/${ID.staffA}/schedule-overrides`, { method: 'POST', body: typeBody }); assert.equal(r.status, 201); assert.equal(f.state.overrides[0].approval_status, 'approved'); assert.equal(f.state.overrides[0].created_by, ID.account); });
 }
 
 const invalidOverrides = [override('working', { startTime: '10:00', endTime: '18:00' }), override('day_off', { startTime: '10:00' }), override('leave', { startTime: '20:00', endTime: '10:00' }), override('custom_hours', { startTime: '10:00', endTime: '10:00' }), { ...override('day_off'), scheduleDate: '2030-02-30' }, { ...override('day_off'), shop_id: ID.shopB }];

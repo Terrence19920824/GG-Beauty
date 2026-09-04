@@ -613,4 +613,3 @@ test('database errors return safe 500 and release connections', async () => {
   }
   assert.equal(fixture.state.releases, 1);
 });
-
