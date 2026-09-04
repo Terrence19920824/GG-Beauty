@@ -542,6 +542,370 @@ const requireOwnerRole = allowedRoles =>
     next();
   };
 
+const OWNER_SERVICE_FIELDS = new Set([
+  'category',
+  'name',
+  'description',
+  'price',
+  'durationMinutes',
+  'bookable',
+  'isActive',
+  'sortOrder'
+]);
+
+const OWNER_SERVICE_LIMITS = {
+  name: 200,
+  category: 100,
+  description: 2000,
+  price: 1000000000,
+  durationMinutes: 1440,
+  sortOrder: 1000000000
+};
+
+const ownerServiceValidationError = message => ({
+  success: false,
+  message
+});
+
+const validateOwnerServiceFields = (body, { partial }) => {
+  if (
+    !body ||
+    typeof body !== 'object' ||
+    Array.isArray(body)
+  ) {
+    return { error: '服务资料格式不正确' };
+  }
+
+  const keys = Object.keys(body);
+  const unknownField = keys.find(
+    key => !OWNER_SERVICE_FIELDS.has(key)
+  );
+
+  if (unknownField) {
+    return { error: '包含不支持的服务字段' };
+  }
+
+  if (partial && keys.length === 0) {
+    return { error: '没有可更新的服务字段' };
+  }
+
+  if (!partial && !keys.includes('name')) {
+    return { error: '服务名称不能为空' };
+  }
+
+  const values = {};
+
+  if (keys.includes('name')) {
+    if (typeof body.name !== 'string') {
+      return { error: '服务名称格式不正确' };
+    }
+
+    values.name = body.name.trim();
+
+    if (
+      !values.name ||
+      values.name.length > OWNER_SERVICE_LIMITS.name
+    ) {
+      return { error: '服务名称长度不正确' };
+    }
+  }
+
+  for (const field of ['category', 'description']) {
+    if (!keys.includes(field)) {
+      continue;
+    }
+
+    if (body[field] === null) {
+      values[field] = null;
+      continue;
+    }
+
+    if (typeof body[field] !== 'string') {
+      return { error: `${field} 格式不正确` };
+    }
+
+    const trimmed = body[field].trim();
+    const maxLength = OWNER_SERVICE_LIMITS[field];
+
+    if (trimmed.length > maxLength) {
+      return { error: `${field} 长度不正确` };
+    }
+
+    values[field] = trimmed || null;
+  }
+
+  if (keys.includes('price')) {
+    if (
+      typeof body.price !== 'number' ||
+      !Number.isFinite(body.price) ||
+      body.price < 0 ||
+      body.price > OWNER_SERVICE_LIMITS.price
+    ) {
+      return { error: '服务价格不正确' };
+    }
+
+    values.price = body.price;
+  }
+
+  if (keys.includes('durationMinutes')) {
+    if (
+      !Number.isInteger(body.durationMinutes) ||
+      body.durationMinutes <= 0 ||
+      body.durationMinutes >
+        OWNER_SERVICE_LIMITS.durationMinutes
+    ) {
+      return { error: '服务时长不正确' };
+    }
+
+    values.durationMinutes = body.durationMinutes;
+  }
+
+  for (const field of ['bookable', 'isActive']) {
+    if (
+      keys.includes(field) &&
+      typeof body[field] !== 'boolean'
+    ) {
+      return { error: `${field} 格式不正确` };
+    }
+
+    if (keys.includes(field)) {
+      values[field] = body[field];
+    }
+  }
+
+  if (keys.includes('sortOrder')) {
+    if (
+      !Number.isInteger(body.sortOrder) ||
+      body.sortOrder < 0 ||
+      body.sortOrder > OWNER_SERVICE_LIMITS.sortOrder
+    ) {
+      return { error: '服务排序值不正确' };
+    }
+
+    values.sortOrder = body.sortOrder;
+  }
+
+  return { values };
+};
+
+const OWNER_SERVICE_RETURNING_SQL = `
+  id,
+  category,
+  name,
+  description,
+  price,
+  duration_minutes,
+  bookable,
+  is_active,
+  sort_order,
+  created_at,
+  updated_at
+`;
+
+app.get(
+  '/api/owner/services',
+  requireOwnerAuth,
+  requireOwnerRole(['owner', 'manager', 'admin']),
+  async (req, res) => {
+    let client;
+
+    try {
+      client = await app.locals.ownerAuthPool.connect();
+      const result = await client.query(
+        `
+        SELECT ${OWNER_SERVICE_RETURNING_SQL}
+        FROM services
+        WHERE shop_id = $1
+        ORDER BY sort_order ASC, name ASC
+        `,
+        [req.ownerAuth.shopId]
+      );
+
+      res.json({ success: true, data: result.rows });
+    } catch (error) {
+      console.error(
+        'Read owner services error:',
+        safeStaffAuthErrorCode(error)
+      );
+      res.status(500).json({
+        success: false,
+        message: '读取服务资料失败'
+      });
+    } finally {
+      if (client) {
+        client.release();
+      }
+    }
+  }
+);
+
+app.post(
+  '/api/owner/services',
+  requireOwnerAuth,
+  requireOwnerRole(['owner', 'manager']),
+  async (req, res) => {
+    const validation = validateOwnerServiceFields(
+      req.body,
+      { partial: false }
+    );
+
+    if (validation.error) {
+      return res.status(400).json(
+        ownerServiceValidationError(validation.error)
+      );
+    }
+
+    const values = validation.values;
+    let client;
+
+    try {
+      client = await app.locals.ownerAuthPool.connect();
+      const result = await client.query(
+        `
+        INSERT INTO services (
+          shop_id,
+          category,
+          name,
+          description,
+          price,
+          duration_minutes,
+          bookable,
+          is_active,
+          sort_order
+        ) VALUES (
+          $1, $2, $3, $4, $5, $6, $7, $8, $9
+        )
+        RETURNING ${OWNER_SERVICE_RETURNING_SQL}
+        `,
+        [
+          req.ownerAuth.shopId,
+          values.category ?? null,
+          values.name,
+          values.description ?? null,
+          values.price ?? 0,
+          values.durationMinutes ?? 60,
+          values.bookable ?? true,
+          values.isActive ?? true,
+          values.sortOrder ?? 0
+        ]
+      );
+
+      if (result.rows.length !== 1) {
+        throw new Error('owner_service_insert_rowcount');
+      }
+
+      res.status(201).json({
+        success: true,
+        data: result.rows[0]
+      });
+    } catch (error) {
+      console.error(
+        'Create owner service error:',
+        safeStaffAuthErrorCode(error)
+      );
+      res.status(500).json({
+        success: false,
+        message: '创建服务失败'
+      });
+    } finally {
+      if (client) {
+        client.release();
+      }
+    }
+  }
+);
+
+app.patch(
+  '/api/owner/services/:serviceId',
+  requireOwnerAuth,
+  requireOwnerRole(['owner', 'manager']),
+  async (req, res) => {
+    if (!isUuid(req.params.serviceId)) {
+      return res.status(400).json(
+        ownerServiceValidationError('服务ID不正确')
+      );
+    }
+
+    const validation = validateOwnerServiceFields(
+      req.body,
+      { partial: true }
+    );
+
+    if (validation.error) {
+      return res.status(400).json(
+        ownerServiceValidationError(validation.error)
+      );
+    }
+
+    const columnByField = {
+      category: 'category',
+      name: 'name',
+      description: 'description',
+      price: 'price',
+      durationMinutes: 'duration_minutes',
+      bookable: 'bookable',
+      isActive: 'is_active',
+      sortOrder: 'sort_order'
+    };
+    const entries = Object.entries(validation.values);
+    const parameters = entries.map(([, value]) => value);
+    const assignments = entries.map(
+      ([field], index) =>
+        `${columnByField[field]} = $${index + 1}`
+    );
+    const serviceIdParameter = parameters.length + 1;
+    const shopIdParameter = parameters.length + 2;
+    parameters.push(
+      req.params.serviceId,
+      req.ownerAuth.shopId
+    );
+
+    let client;
+
+    try {
+      client = await app.locals.ownerAuthPool.connect();
+      const result = await client.query(
+        `
+        UPDATE services
+        SET
+          ${assignments.join(',\n          ')},
+          updated_at = NOW()
+        WHERE id = $${serviceIdParameter}
+          AND shop_id = $${shopIdParameter}
+        RETURNING ${OWNER_SERVICE_RETURNING_SQL}
+        `,
+        parameters
+      );
+
+      if (result.rows.length === 0) {
+        return res.status(404).json({
+          success: false,
+          message: '未找到该服务'
+        });
+      }
+
+      if (result.rows.length !== 1) {
+        throw new Error('owner_service_update_rowcount');
+      }
+
+      res.json({ success: true, data: result.rows[0] });
+    } catch (error) {
+      console.error(
+        'Update owner service error:',
+        safeStaffAuthErrorCode(error)
+      );
+      res.status(500).json({
+        success: false,
+        message: '更新服务失败'
+      });
+    } finally {
+      if (client) {
+        client.release();
+      }
+    }
+  }
+);
+
 
 // ==================================================
 // 数据库连接测试
