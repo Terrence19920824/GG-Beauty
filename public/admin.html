@@ -52,6 +52,188 @@
       font-size: 15px;
     }
 
+    button:disabled {
+      cursor: not-allowed;
+      opacity: 0.55;
+    }
+
+    .main-nav {
+      display: flex;
+      gap: 8px;
+      overflow-x: auto;
+      margin-bottom: 20px;
+      padding-bottom: 4px;
+    }
+
+    .nav-btn,
+    .secondary-btn,
+    .primary-btn,
+    .danger-soft-btn {
+      border: 1px solid #ddd;
+      background: white;
+      color: #222;
+      padding: 11px 16px;
+      border-radius: 10px;
+      cursor: pointer;
+      font-size: 15px;
+      white-space: nowrap;
+    }
+
+    .nav-btn.active,
+    .primary-btn {
+      background: #111;
+      color: white;
+      border-color: #111;
+    }
+
+    .nav-btn[disabled] {
+      background: #eee;
+    }
+
+    .view[hidden],
+    .panel[hidden] {
+      display: none;
+    }
+
+    .toolbar,
+    .form-actions,
+    .section-heading {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-bottom: 16px;
+    }
+
+    .toolbar h2,
+    .section-heading h3 {
+      margin: 0;
+    }
+
+    .management-grid {
+      display: grid;
+      grid-template-columns: minmax(280px, 0.8fr) minmax(420px, 1.4fr);
+      gap: 16px;
+    }
+
+    .list-card {
+      border: 1px solid #eee;
+      border-radius: 12px;
+      padding: 14px;
+      margin-bottom: 10px;
+      cursor: pointer;
+    }
+
+    .list-card.selected {
+      border-color: #111;
+      box-shadow: 0 0 0 1px #111;
+    }
+
+    .list-card h3 {
+      margin: 0 0 8px;
+    }
+
+    .muted,
+    .hint {
+      color: #777;
+      font-size: 13px;
+    }
+
+    .pill {
+      display: inline-block;
+      padding: 4px 8px;
+      margin: 3px 4px 0 0;
+      border-radius: 999px;
+      background: #f0f0f0;
+      font-size: 12px;
+    }
+
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .field {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .field.full {
+      grid-column: 1 / -1;
+    }
+
+    .field input,
+    .field textarea,
+    .field select {
+      width: 100%;
+      padding: 11px;
+      border: 1px solid #ccc;
+      border-radius: 9px;
+      font: inherit;
+    }
+
+    .check-row,
+    .schedule-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 11px 4px;
+      border-bottom: 1px solid #eee;
+    }
+
+    .check-row label {
+      flex: 1;
+    }
+
+    .schedule-row .weekday {
+      width: 52px;
+      font-weight: 600;
+    }
+
+    .schedule-row input[type="time"] {
+      min-width: 110px;
+      padding: 8px;
+    }
+
+    .tabs {
+      display: flex;
+      gap: 6px;
+      overflow-x: auto;
+      margin: 18px 0 14px;
+    }
+
+    .tab-btn {
+      border: 0;
+      border-bottom: 2px solid transparent;
+      background: transparent;
+      padding: 10px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    .tab-btn.active {
+      border-color: #111;
+      font-weight: 700;
+    }
+
+    .notice {
+      border-radius: 10px;
+      background: #fff8df;
+      color: #735c00;
+      padding: 10px 12px;
+      margin: 10px 0;
+      font-size: 14px;
+    }
+
+    .save-status {
+      min-height: 20px;
+      color: #087443;
+      font-size: 14px;
+    }
+
     .summary {
       display: grid;
       grid-template-columns: repeat(3, 1fr);
@@ -159,6 +341,15 @@
         align-items: flex-start;
         flex-direction: column;
       }
+
+      .management-grid,
+      .form-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .field.full {
+        grid-column: auto;
+      }
     }
   </style>
 </head>
@@ -260,6 +451,17 @@
     </div>
   </div>
 
+  <nav class="main-nav" aria-label="老板后台导航">
+    <button id="nav-calendar" class="nav-btn active" onclick="ownerSelfService.showView('calendar')">日历</button>
+    <button id="nav-staff" class="nav-btn" onclick="ownerSelfService.showView('staff')">员工</button>
+    <button id="nav-services" class="nav-btn" onclick="ownerSelfService.showView('services')">服务</button>
+    <button class="nav-btn" disabled title="即将推出">顾客</button>
+    <button class="nav-btn" disabled title="即将推出">收银</button>
+    <button class="nav-btn" disabled title="即将推出">更多</button>
+  </nav>
+
+  <section id="calendarView" class="view">
+
   <div class="summary">
 
     <div class="summary-card">
@@ -287,8 +489,47 @@
 
   </div>
 
+  </section>
+
+  <section id="servicesView" class="view" hidden>
+    <div class="toolbar">
+      <div><h2>服务项目</h2><div class="muted">管理价格、时长与顾客预约状态</div></div>
+      <button id="addServiceButton" class="primary-btn" onclick="ownerSelfService.openServiceForm()">新增服务</button>
+    </div>
+    <div class="card">
+      <div id="servicesMessage" class="save-status"></div>
+      <div id="servicesList" class="loading">正在读取服务...</div>
+    </div>
+    <div id="serviceFormPanel" class="card panel" hidden style="margin-top:16px">
+      <div class="section-heading"><h3 id="serviceFormTitle">新增服务</h3></div>
+      <div class="form-grid">
+        <label class="field"><span>服务名称</span><input id="serviceName" maxlength="200"></label>
+        <label class="field"><span>分类</span><input id="serviceCategory" maxlength="100"></label>
+        <label class="field full"><span>说明</span><textarea id="serviceDescription" maxlength="2000"></textarea></label>
+        <label class="field"><span>价格（S$）</span><input id="servicePrice" type="number" min="0" step="0.01"></label>
+        <label class="field"><span>服务时长（分钟）</span><input id="serviceDuration" type="number" min="1" max="1440"></label>
+        <label class="field"><span>排序</span><input id="serviceSortOrder" type="number" min="0"></label>
+        <label class="check-row"><input id="serviceBookable" type="checkbox">允许顾客预约</label>
+        <label class="check-row"><input id="serviceActive" type="checkbox">启用项目</label>
+      </div>
+      <div class="form-actions"><button class="secondary-btn" onclick="ownerSelfService.closeServiceForm()">取消</button><button id="saveServiceButton" class="primary-btn" onclick="ownerSelfService.saveService()">保存</button></div>
+    </div>
+  </section>
+
+  <section id="staffView" class="view" hidden>
+    <div class="toolbar">
+      <div><h2>员工</h2><div class="muted">管理员工资料、服务能力与排班</div></div>
+      <button id="addStaffButton" class="primary-btn" onclick="ownerSelfService.openStaffForm()">新增员工</button>
+    </div>
+    <div class="management-grid">
+      <div class="card"><div id="staffMessage" class="save-status"></div><div id="staffList" class="loading">正在读取员工...</div></div>
+      <div id="staffDetail" class="card"><div class="empty">请选择一位员工</div></div>
+    </div>
+  </section>
+
 </div>
 
+<script src="/admin-self-service.js"></script>
 
 <script>
 
@@ -319,6 +560,10 @@ function showLogin(message = '') {
 
   content.className = 'loading';
   content.textContent = '请先登录后查看预约';
+
+  if (globalThis.ownerSelfService) {
+    globalThis.ownerSelfService.reset();
+  }
 }
 
 function showAdmin() {
@@ -340,6 +585,12 @@ async function initializeAdmin() {
     if (!response.ok) {
       showLogin('无法验证登录状态，请稍后重试');
       return;
+    }
+
+    const result = await response.json();
+
+    if (globalThis.ownerSelfService) {
+      globalThis.ownerSelfService.setProfile(result.data || {});
     }
 
     showAdmin();
@@ -395,6 +646,10 @@ async function adminLogin() {
     }
 
     message.textContent = '';
+
+    if (globalThis.ownerSelfService) {
+      globalThis.ownerSelfService.setProfile(result.data || {});
+    }
 
     showAdmin();
 
