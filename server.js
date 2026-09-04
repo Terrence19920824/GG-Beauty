@@ -28,6 +28,9 @@ const {
 const {
   createOwnerStaffCapabilityManagement
 } = require('./lib/owner-staff-capability-management');
+const {
+  createOwnerScheduleManagement
+} = require('./lib/owner-schedule-management');
 
 const app = express();
 
@@ -617,6 +620,19 @@ app.put(
   requireOwnerRole(['owner', 'manager']),
   ownerStaffCapabilityManagement.replaceStaffServices
 );
+
+const ownerScheduleManagement = createOwnerScheduleManagement({
+  pool: { connect: (...args) => app.locals.ownerAuthPool.connect(...args) },
+  isUuid,
+  runInTransaction,
+  safeErrorCode: safeStaffAuthErrorCode
+});
+
+app.get('/api/owner/staff/:staffId/schedule', requireOwnerAuth, requireOwnerRole(['owner', 'manager', 'admin']), ownerScheduleManagement.getWeekly);
+app.put('/api/owner/staff/:staffId/schedule', requireOwnerAuth, requireOwnerRole(['owner', 'manager']), ownerScheduleManagement.putWeekly);
+app.get('/api/owner/staff/:staffId/schedule-overrides', requireOwnerAuth, requireOwnerRole(['owner', 'manager', 'admin']), ownerScheduleManagement.getOverrides);
+app.post('/api/owner/staff/:staffId/schedule-overrides', requireOwnerAuth, requireOwnerRole(['owner', 'manager']), ownerScheduleManagement.postOverride);
+app.patch('/api/owner/staff/:staffId/schedule-overrides/:overrideId', requireOwnerAuth, requireOwnerRole(['owner', 'manager']), ownerScheduleManagement.patchOverride);
 
 const OWNER_SERVICE_FIELDS = new Set([
   'category',
