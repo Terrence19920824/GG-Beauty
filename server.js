@@ -25,6 +25,9 @@ const {
 const {
   createOwnerStaffManagement
 } = require('./lib/owner-staff-management');
+const {
+  createOwnerStaffCapabilityManagement
+} = require('./lib/owner-staff-capability-management');
 
 const app = express();
 
@@ -588,6 +591,31 @@ app.put(
   requireOwnerAuth,
   requireOwnerRole(['owner', 'manager']),
   ownerStaffManagement.replaceStaffLocations
+);
+
+const ownerStaffCapabilityManagement =
+  createOwnerStaffCapabilityManagement({
+    pool: {
+      connect: (...args) =>
+        app.locals.ownerAuthPool.connect(...args)
+    },
+    isUuid,
+    runInTransaction,
+    safeErrorCode: safeStaffAuthErrorCode
+  });
+
+app.get(
+  '/api/owner/staff/:staffId/services',
+  requireOwnerAuth,
+  requireOwnerRole(['owner', 'manager', 'admin']),
+  ownerStaffCapabilityManagement.listStaffServices
+);
+
+app.put(
+  '/api/owner/staff/:staffId/services',
+  requireOwnerAuth,
+  requireOwnerRole(['owner', 'manager']),
+  ownerStaffCapabilityManagement.replaceStaffServices
 );
 
 const OWNER_SERVICE_FIELDS = new Set([
