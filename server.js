@@ -31,6 +31,9 @@ const {
 const {
   createOwnerScheduleManagement
 } = require('./lib/owner-schedule-management');
+const {
+  normalizeLocale
+} = require('./public/service-locale');
 
 const app = express();
 
@@ -638,7 +641,12 @@ const OWNER_SERVICE_FIELDS = new Set([
   'category',
   'name',
   'description',
+  'nameZh',
+  'nameEn',
+  'descriptionZh',
+  'descriptionEn',
   'price',
+  'priceIsFrom',
   'durationMinutes',
   'bookable',
   'isActive',
@@ -682,10 +690,45 @@ const validateOwnerServiceFields = (body, { partial }) => {
   }
 
   if (!partial && !keys.includes('name')) {
-    return { error: '服务名称不能为空' };
+    if (!keys.includes('nameEn') && !keys.includes('nameZh')) {
+      return { error: '服务名称不能为空' };
+    }
   }
 
   const values = {};
+
+  for (const [field, limit] of [
+    ['nameZh', OWNER_SERVICE_LIMITS.name],
+    ['nameEn', OWNER_SERVICE_LIMITS.name],
+    ['descriptionZh', OWNER_SERVICE_LIMITS.description],
+    ['descriptionEn', OWNER_SERVICE_LIMITS.description]
+  ]) {
+    if (!keys.includes(field)) continue;
+    if (typeof body[field] !== 'string') {
+      return { error: `${field} 格式不正确` };
+    }
+    const trimmed = body[field].trim();
+    if (!trimmed || trimmed.length > limit) {
+      return { error: `${field} 长度不正确` };
+    }
+    values[field] = trimmed;
+  }
+
+  if (
+    keys.includes('descriptionEn') &&
+    !keys.includes('nameEn') &&
+    !partial
+  ) {
+    return { error: 'English Name 不能为空' };
+  }
+
+  if (
+    keys.includes('descriptionZh') &&
+    !keys.includes('nameZh') &&
+    !partial
+  ) {
+    return { error: '中文名称不能为空' };
+  }
 
   if (keys.includes('name')) {
     if (typeof body.name !== 'string') {
@@ -752,7 +795,7 @@ const validateOwnerServiceFields = (body, { partial }) => {
     values.durationMinutes = body.durationMinutes;
   }
 
-  for (const field of ['bookable', 'isActive']) {
+  for (const field of ['bookable', 'isActive', 'priceIsFrom']) {
     if (
       keys.includes(field) &&
       typeof body[field] !== 'boolean'
@@ -781,18 +824,92 @@ const validateOwnerServiceFields = (body, { partial }) => {
 };
 
 const OWNER_SERVICE_RETURNING_SQL = `
-  id,
-  category,
-  name,
-  description,
-  price,
-  duration_minutes,
-  bookable,
-  is_active,
-  sort_order,
-  created_at,
-  updated_at
+  service.id,
+  service.category,
+  service.name,
+  service.description,
+  service.name AS "canonicalName",
+  service.description AS "canonicalDescription",
+  service.price,
+  service.price_is_from AS "priceIsFrom",
+  service.price_is_from,
+  service.duration_minutes AS "durationMinutes",
+  service.duration_minutes,
+  service.bookable,
+  service.is_active AS "isActive",
+  service.is_active,
+  service.sort_order AS "sortOrder",
+  service.sort_order,
+  service.created_at AS "createdAt",
+  service.updated_at AS "updatedAt",
+  translation_zh.name AS "nameZh",
+  translation_en.name AS "nameEn",
+  translation_zh.description AS "descriptionZh",
+  translation_en.description AS "descriptionEn"
 `;
+
+const OWNER_SERVICE_SELECT_SQL = `
+  SELECT ${OWNER_SERVICE_RETURNING_SQL}
+  FROM services AS service
+  LEFT JOIN service_translations AS translation_zh
+    ON translation_zh.shop_id = service.shop_id
+   AND translation_zh.service_id = service.id
+   AND translation_zh.locale = 'zh-CN'
+  LEFT JOIN service_translations AS translation_en
+    ON translation_en.shop_id = service.shop_id
+   AND translation_en.service_id = service.id
+   AND translation_en.locale = 'en'
+`;
+
+const selectOwnerService = async (client, shopId, serviceId) => {
+  const result = await client.query(
+    `${OWNER_SERVICE_SELECT_SQL}
+     WHERE service.shop_id = $1
+       AND ($2::UUID IS NULL OR service.id = $2::UUID)
+     ORDER BY service.sort_order ASC, service.name ASC`,
+    [shopId, serviceId || null]
+  );
+  return result.rows;
+};
+
+const upsertOwnerServiceTranslation = async (
+  client,
+  { shopId, serviceId, locale, name, description, partial }
+) => {
+  const existing = await client.query(
+    `SELECT name, description
+     FROM service_translations
+     WHERE shop_id = $1 AND service_id = $2 AND locale = $3
+     FOR UPDATE`,
+    [shopId, serviceId, locale]
+  );
+  const current = existing.rows[0];
+  const nextName = name === undefined ? current?.name : name;
+  const nextDescription = description === undefined
+    ? current?.description ?? null
+    : description;
+
+  if (!nextName) {
+    if (partial && name === undefined && description === undefined) return;
+    throw new AppointmentMutationError(
+      'translation_name_required',
+      400,
+      locale === 'zh-CN' ? '中文名称不能为空' : 'English Name 不能为空'
+    );
+  }
+
+  await client.query(
+    `INSERT INTO service_translations (
+       shop_id, service_id, locale, name, description
+     ) VALUES ($1, $2, $3, $4, $5)
+     ON CONFLICT (shop_id, service_id, locale)
+     DO UPDATE SET
+       name = EXCLUDED.name,
+       description = EXCLUDED.description,
+       updated_at = NOW()`,
+    [shopId, serviceId, locale, nextName, nextDescription]
+  );
+};
 
 app.get(
   '/api/owner/services',
@@ -803,17 +920,12 @@ app.get(
 
     try {
       client = await app.locals.ownerAuthPool.connect();
-      const result = await client.query(
-        `
-        SELECT ${OWNER_SERVICE_RETURNING_SQL}
-        FROM services
-        WHERE shop_id = $1
-        ORDER BY sort_order ASC, name ASC
-        `,
-        [req.ownerAuth.shopId]
+      const rows = await selectOwnerService(
+        client,
+        req.ownerAuth.shopId
       );
 
-      res.json({ success: true, data: result.rows });
+      res.json({ success: true, data: rows });
     } catch (error) {
       console.error(
         'Read owner services error:',
@@ -848,61 +960,70 @@ app.post(
     }
 
     const values = validation.values;
-    let client;
-
     try {
-      client = await app.locals.ownerAuthPool.connect();
-      const result = await client.query(
-        `
-        INSERT INTO services (
-          shop_id,
-          category,
-          name,
-          description,
-          price,
-          duration_minutes,
-          bookable,
-          is_active,
-          sort_order
-        ) VALUES (
-          $1, $2, $3, $4, $5, $6, $7, $8, $9
-        )
-        RETURNING ${OWNER_SERVICE_RETURNING_SQL}
-        `,
-        [
-          req.ownerAuth.shopId,
-          values.category ?? null,
-          values.name,
-          values.description ?? null,
-          values.price ?? 0,
-          values.durationMinutes ?? 60,
-          values.bookable ?? true,
-          values.isActive ?? true,
-          values.sortOrder ?? 0
-        ]
+      const created = await runInTransaction(
+        app.locals.ownerAuthPool,
+        async client => {
+          const canonicalName = values.name || values.nameEn || values.nameZh;
+          const result = await client.query(
+            `INSERT INTO services (
+               shop_id, category, name, description, price,
+               price_is_from, duration_minutes, bookable, is_active, sort_order
+             ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+             RETURNING id`,
+            [
+              req.ownerAuth.shopId,
+              values.category ?? null,
+              canonicalName,
+              values.description ?? null,
+              values.price ?? 0,
+              values.priceIsFrom ?? false,
+              values.durationMinutes ?? 60,
+              values.bookable ?? true,
+              values.isActive ?? true,
+              values.sortOrder ?? 0
+            ]
+          );
+          if (result.rows.length !== 1) {
+            throw new Error('owner_service_insert_rowcount');
+          }
+          const serviceId = result.rows[0].id;
+          for (const [locale, nameField, descriptionField] of [
+            ['zh-CN', 'nameZh', 'descriptionZh'],
+            ['en', 'nameEn', 'descriptionEn']
+          ]) {
+            if (values[nameField] !== undefined || values[descriptionField] !== undefined) {
+              await upsertOwnerServiceTranslation(client, {
+                shopId: req.ownerAuth.shopId,
+                serviceId,
+                locale,
+                name: values[nameField],
+                description: values[descriptionField],
+                partial: false
+              });
+            }
+          }
+          const rows = await selectOwnerService(client, req.ownerAuth.shopId, serviceId);
+          if (rows.length !== 1) throw new Error('owner_service_select_rowcount');
+          return rows[0];
+        }
       );
-
-      if (result.rows.length !== 1) {
-        throw new Error('owner_service_insert_rowcount');
-      }
 
       res.status(201).json({
         success: true,
-        data: result.rows[0]
+        data: created
       });
     } catch (error) {
       console.error(
         'Create owner service error:',
         safeStaffAuthErrorCode(error)
       );
-      res.status(500).json({
+      res.status(error instanceof AppointmentMutationError ? error.status : 500).json({
         success: false,
-        message: '创建服务失败'
+        message: error instanceof AppointmentMutationError
+          ? error.publicMessage
+          : '创建服务失败'
       });
-    } finally {
-      if (client) {
-        client.release();
-      }
     }
   }
 );
@@ -929,17 +1050,23 @@ app.patch(
       );
     }
 
+    const values = validation.values;
     const columnByField = {
       category: 'category',
       name: 'name',
       description: 'description',
       price: 'price',
+      priceIsFrom: 'price_is_from',
       durationMinutes: 'duration_minutes',
       bookable: 'bookable',
       isActive: 'is_active',
       sortOrder: 'sort_order'
     };
-    const entries = Object.entries(validation.values);
+    const translationFields = new Set([
+      'nameZh', 'nameEn', 'descriptionZh', 'descriptionEn'
+    ]);
+    const entries = Object.entries(validation.values)
+      .filter(([field]) => !translationFields.has(field));
     const parameters = entries.map(([, value]) => value);
     const assignments = entries.map(
       ([field], index) =>
@@ -952,48 +1079,72 @@ app.patch(
       req.ownerAuth.shopId
     );
 
-    let client;
-
     try {
-      client = await app.locals.ownerAuthPool.connect();
-      const result = await client.query(
-        `
-        UPDATE services
-        SET
-          ${assignments.join(',\n          ')},
-          updated_at = NOW()
-        WHERE id = $${serviceIdParameter}
-          AND shop_id = $${shopIdParameter}
-        RETURNING ${OWNER_SERVICE_RETURNING_SQL}
-        `,
-        parameters
+      const updated = await runInTransaction(
+        app.locals.ownerAuthPool,
+        async client => {
+          const locked = await client.query(
+            `SELECT id FROM services
+             WHERE id = $1 AND shop_id = $2
+             FOR UPDATE`,
+            [req.params.serviceId, req.ownerAuth.shopId]
+          );
+          if (locked.rows.length !== 1) {
+            throw new AppointmentMutationError(
+              'service_not_found', 404, '未找到该服务'
+            );
+          }
+
+          if (assignments.length) {
+            const result = await client.query(
+              `UPDATE services
+               SET ${assignments.join(', ')}, updated_at = NOW()
+               WHERE id = $${serviceIdParameter}
+                 AND shop_id = $${shopIdParameter}
+               RETURNING id`,
+              parameters
+            );
+            if (result.rows.length !== 1) {
+              throw new Error('owner_service_update_rowcount');
+            }
+          }
+
+          for (const [locale, nameField, descriptionField] of [
+            ['zh-CN', 'nameZh', 'descriptionZh'],
+            ['en', 'nameEn', 'descriptionEn']
+          ]) {
+            if (values[nameField] !== undefined || values[descriptionField] !== undefined) {
+              await upsertOwnerServiceTranslation(client, {
+                shopId: req.ownerAuth.shopId,
+                serviceId: req.params.serviceId,
+                locale,
+                name: values[nameField],
+                description: values[descriptionField],
+                partial: true
+              });
+            }
+          }
+
+          const rows = await selectOwnerService(
+            client, req.ownerAuth.shopId, req.params.serviceId
+          );
+          if (rows.length !== 1) throw new Error('owner_service_select_rowcount');
+          return rows[0];
+        }
       );
 
-      if (result.rows.length === 0) {
-        return res.status(404).json({
-          success: false,
-          message: '未找到该服务'
-        });
-      }
-
-      if (result.rows.length !== 1) {
-        throw new Error('owner_service_update_rowcount');
-      }
-
-      res.json({ success: true, data: result.rows[0] });
+      res.json({ success: true, data: updated });
     } catch (error) {
       console.error(
         'Update owner service error:',
         safeStaffAuthErrorCode(error)
       );
-      res.status(500).json({
+      res.status(error instanceof AppointmentMutationError ? error.status : 500).json({
         success: false,
-        message: '更新服务失败'
+        message: error instanceof AppointmentMutationError
+          ? error.publicMessage
+          : '更新服务失败'
       });
-    } finally {
-      if (client) {
-        client.release();
-      }
     }
   }
 );
@@ -1022,6 +1173,64 @@ app.get('/api/db-test', async (req, res) => {
       success: false,
       message: 'Database connection failed'
     });
+  }
+});
+
+// Public, tenant-scoped service catalogue. Locale affects display fields only.
+app.get('/api/services-db', async (req, res) => {
+  const shopSlug = typeof req.query.shopSlug === 'string'
+    ? req.query.shopSlug.trim()
+    : '';
+  const locale = normalizeLocale(req.query.locale);
+
+  if (!shopSlug) {
+    return res.status(400).json({
+      success: false,
+      message: '缺少店铺资料'
+    });
+  }
+
+  let client;
+  try {
+    client = await req.app.locals.bookingPool.connect();
+    const result = await client.query(
+      `SELECT
+         service.id,
+         service.category,
+         service.price,
+         service.price_is_from AS "priceIsFrom",
+         service.duration_minutes AS "durationMinutes",
+         COALESCE(requested.name, english.name, chinese.name, service.name) AS name,
+         COALESCE(requested.description, english.description, chinese.description, service.description) AS description,
+         $2::TEXT AS locale
+       FROM shops AS shop
+       JOIN services AS service
+         ON service.shop_id = shop.id
+        AND service.is_active = TRUE
+        AND service.bookable = TRUE
+       LEFT JOIN service_translations AS requested
+         ON requested.shop_id = service.shop_id
+        AND requested.service_id = service.id
+        AND requested.locale = $2
+       LEFT JOIN service_translations AS english
+         ON english.shop_id = service.shop_id
+        AND english.service_id = service.id
+        AND english.locale = 'en'
+       LEFT JOIN service_translations AS chinese
+         ON chinese.shop_id = service.shop_id
+        AND chinese.service_id = service.id
+        AND chinese.locale = 'zh-CN'
+       WHERE shop.slug = $1
+         AND shop.status = 'active'
+       ORDER BY service.sort_order ASC, service.name ASC`,
+      [shopSlug, locale]
+    );
+    return res.json({ success: true, data: result.rows });
+  } catch (error) {
+    console.error('Read public services error:', safeStaffAuthErrorCode(error));
+    return res.status(500).json({ success: false, message: '读取服务失败' });
+  } finally {
+    if (client) client.release();
   }
 });
 
@@ -1498,7 +1707,9 @@ app.post('/api/new-db', async (req, res) => {
 
   const {
     shopSlug,
+    serviceId,
     service,
+    locale: requestedLocale,
     staff,
     customerName,
     phone,
@@ -1509,7 +1720,7 @@ app.post('/api/new-db', async (req, res) => {
 
   if (
     !shopSlug ||
-    !service ||
+    (!serviceId && !service) ||
     !staff ||
     !customerName ||
     !phone ||
@@ -1521,6 +1732,15 @@ app.post('/api/new-db', async (req, res) => {
       message: '请完整填写所有必填信息'
     });
   }
+
+  if (serviceId !== undefined && !isUuid(serviceId)) {
+    return res.status(400).json({
+      success: false,
+      message: '服务项目无效'
+    });
+  }
+
+  const serviceLocale = normalizeLocale(requestedLocale);
 
   try {
     const appointment = await runInTransaction(
@@ -1576,15 +1796,33 @@ app.post('/api/new-db', async (req, res) => {
         const serviceResult = await client.query(
           `
           SELECT
-            id,
-            name,
-            duration_minutes
-          FROM services
-          WHERE shop_id = $1
-            AND name = $2
+            service.id,
+            service.name,
+            service.duration_minutes,
+            service.price,
+            COALESCE(requested.name, english.name, chinese.name, service.name) AS localized_name,
+            COALESCE(requested.description, english.description, chinese.description, service.description) AS localized_description
+          FROM services AS service
+          LEFT JOIN service_translations AS requested
+            ON requested.shop_id = service.shop_id
+           AND requested.service_id = service.id
+           AND requested.locale = $4
+          LEFT JOIN service_translations AS english
+            ON english.shop_id = service.shop_id
+           AND english.service_id = service.id
+           AND english.locale = 'en'
+          LEFT JOIN service_translations AS chinese
+            ON chinese.shop_id = service.shop_id
+           AND chinese.service_id = service.id
+           AND chinese.locale = 'zh-CN'
+          WHERE service.shop_id = $1
+            AND (
+              ($2::UUID IS NOT NULL AND service.id = $2::UUID)
+              OR ($2::UUID IS NULL AND service.name = $3)
+            )
           LIMIT 1
           `,
-          [shopId, service]
+          [shopId, serviceId || null, service || null, serviceLocale]
         );
 
         if (serviceResult.rows.length === 0) {
@@ -1782,7 +2020,11 @@ app.post('/api/new-db', async (req, res) => {
           client,
           {
             appointment: createdAppointment,
-            service: selectedService
+            service: {
+              ...selectedService,
+              name: selectedService.localized_name
+            },
+            serviceLocale
           }
         );
 
@@ -1992,16 +2234,16 @@ app.get(
       shopSlug,
       date,
       staff,
+      serviceId,
       service
     } = req.query;
 
     if (
       typeof shopSlug !== 'string' ||
       typeof staff !== 'string' ||
-      typeof service !== 'string' ||
       !shopSlug ||
       !staff ||
-      !service ||
+      (!serviceId && (typeof service !== 'string' || !service)) ||
       !isValidCalendarDate(date)
     ) {
       return res.status(400).json({
@@ -2011,10 +2253,17 @@ app.get(
       });
     }
 
+    if (serviceId !== undefined && !isUuid(serviceId)) {
+      return res.status(400).json({
+        success: false,
+        message: '服务项目无效'
+      });
+    }
+
     let client;
 
     try {
-      client = await pool.connect();
+      client = await req.app.locals.bookingPool.connect();
 
       // 1. 找店铺
       const shopResult = await client.query(
@@ -2095,12 +2344,16 @@ app.get(
           duration_minutes
         FROM services
         WHERE shop_id = $1
-          AND name = $2
+          AND (
+            ($2::UUID IS NOT NULL AND id = $2::UUID)
+            OR ($2::UUID IS NULL AND name = $3)
+          )
         LIMIT 1
         `,
         [
           shopId,
-          service
+          serviceId || null,
+          service || null
         ]
       );
 

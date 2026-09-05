@@ -31,17 +31,21 @@ const body = {
   endAt: '2099-01-01T00:00:00Z'
 };
 
-const responseForSql = sql => {
+const responseForSql = (sql, params = []) => {
   if (/^(BEGIN|COMMIT|ROLLBACK)$/i.test(sql.trim())) return { rows: [] };
   if (/FROM shops/.test(sql)) return { rows: [{ id: ID.shop }] };
   if (/FROM locations\s/.test(sql) && !/WITH interval_scope/.test(sql)) {
     return { rows: [{ id: ID.location }] };
   }
   if (/FROM services/.test(sql)) {
+    if (params[1] == null && params[2] && params[2] !== 'Test Service') {
+      return { rows: [] };
+    }
     return {
       rows: [{
         id: ID.service,
         name: 'Test Service',
+        localized_name: params[3] === 'zh-CN' ? '测试服务' : 'Test Service',
         duration_minutes: 60
       }]
     };
@@ -100,7 +104,7 @@ const makePool = failOnSql => {
         ? failOnSql(normalized)
         : null;
       if (failure) throw failure;
-      return responseForSql(sql);
+      return responseForSql(sql, params);
     },
     release: discard => {
       state.released += 1;
@@ -235,8 +239,61 @@ test('valid booking atomically writes customer, parent, item, assignment', async
   );
   assert.equal(parentWrite.params[5], '2030-01-07T02:00:00.000000Z');
   assert.equal(parentWrite.params[6], '2030-01-07T03:00:00.000000Z');
+  const itemWrite = fixture.state.queries.find(
+    ({ sql }) => /^INSERT INTO appointment_items/i.test(sql)
+  );
+  assert.equal(itemWrite.params[4], 'Test Service');
+  assert.equal(itemWrite.params[5], 'en');
   assert.equal(fixture.state.queries.at(-1).sql, 'COMMIT');
   assert.equal(fixture.state.released, 1);
+});
+
+test('serviceId booking uses localized snapshot name and normalized locale', async () => {
+  delete process.env.BOOKING_WRITE_MAINTENANCE;
+  const fixture = makePool();
+  installDependencies(fixture.pool, async input => {
+    assert.equal(input.serviceId, ID.service);
+  });
+  await withServer(async baseUrl => {
+    const response = await postBooking(baseUrl, {
+      ...body,
+      service: '不应作为身份的显示名称',
+      serviceId: ID.service,
+      locale: 'zh-SG'
+    });
+    assert.equal(response.status, 200);
+  });
+  const lookup = fixture.state.queries.find(({ sql }) => /FROM services AS service/.test(sql));
+  assert.deepEqual(lookup.params, [ID.shop, ID.service, '不应作为身份的显示名称', 'zh-CN']);
+  assert.match(lookup.sql, /\$2::UUID IS NOT NULL AND service\.id = \$2::UUID/);
+  const itemWrite = fixture.state.queries.find(({ sql }) => /^INSERT INTO appointment_items/i.test(sql));
+  assert.equal(itemWrite.params[4], '测试服务');
+  assert.equal(itemWrite.params[5], 'zh-CN');
+});
+
+test('legacy canonical service name remains compatible only without serviceId', async () => {
+  delete process.env.BOOKING_WRITE_MAINTENANCE;
+  const fixture = makePool();
+  installDependencies(fixture.pool, async () => {});
+  await withServer(async baseUrl => {
+    const response = await postBooking(baseUrl, body);
+    assert.equal(response.status, 200);
+  });
+  const lookup = fixture.state.queries.find(({ sql }) => /FROM services AS service/.test(sql));
+  assert.deepEqual(lookup.params, [ID.shop, null, 'Test Service', 'en']);
+  assert.match(lookup.sql, /\$2::UUID IS NULL AND service\.name = \$3/);
+});
+
+test('localized display name is rejected as legacy booking identity', async () => {
+  delete process.env.BOOKING_WRITE_MAINTENANCE;
+  const fixture = makePool();
+  installDependencies(fixture.pool, async () => {});
+  await withServer(async baseUrl => {
+    const response = await postBooking(baseUrl, { ...body, service: '测试服务' });
+    assert.equal(response.status, 400);
+  });
+  assert.equal(sqlWrites(fixture.state).length, 0);
+  assert.equal(fixture.state.queries.at(-1).sql, 'ROLLBACK');
 });
 
 test('unexpected validator error rolls back and returns safe 500', async () => {

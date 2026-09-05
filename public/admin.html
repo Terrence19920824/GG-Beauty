@@ -431,6 +431,8 @@
 
   <div class="header">
     <div>
+      <button id="adminLanguageZh" class="refresh-btn" type="button" onclick="ownerSelfService.setLocale('zh-CN')">中文</button>
+      <button id="adminLanguageEn" class="refresh-btn" type="button" onclick="ownerSelfService.setLocale('en')">EN</button>
       <h1>GG-Beauty 老板端</h1>
       <p>Appointment Dashboard · 预约管理后台</p>
     </div>
@@ -452,9 +454,9 @@
   </div>
 
   <nav class="main-nav" aria-label="老板后台导航">
-    <button id="nav-calendar" class="nav-btn active" onclick="ownerSelfService.showView('calendar')">日历</button>
-    <button id="nav-staff" class="nav-btn" onclick="ownerSelfService.showView('staff')">员工</button>
-    <button id="nav-services" class="nav-btn" onclick="ownerSelfService.showView('services')">服务</button>
+    <button id="nav-calendar" class="nav-btn active" data-i18n="calendar" onclick="ownerSelfService.showView('calendar')">日历</button>
+    <button id="nav-staff" class="nav-btn" data-i18n="staff" onclick="ownerSelfService.showView('staff')">员工</button>
+    <button id="nav-services" class="nav-btn" data-i18n="services" onclick="ownerSelfService.showView('services')">服务</button>
     <button class="nav-btn" disabled title="即将推出">顾客</button>
     <button class="nav-btn" disabled title="即将推出">收银</button>
     <button class="nav-btn" disabled title="即将推出">更多</button>
@@ -493,7 +495,7 @@
 
   <section id="servicesView" class="view" hidden>
     <div class="toolbar">
-      <div><h2>服务项目</h2><div class="muted">管理价格、时长与顾客预约状态</div></div>
+      <div><h2 data-i18n="serviceManagement">服务项目</h2><div class="muted" data-i18n="serviceHelp">管理价格、时长与顾客预约状态</div></div>
       <button id="addServiceButton" class="primary-btn" onclick="ownerSelfService.openServiceForm()">新增服务</button>
     </div>
     <div class="card">
@@ -503,14 +505,17 @@
     <div id="serviceFormPanel" class="card panel" hidden style="margin-top:16px">
       <div class="section-heading"><h3 id="serviceFormTitle">新增服务</h3></div>
       <div class="form-grid">
-        <label class="field"><span>服务名称</span><input id="serviceName" maxlength="200"></label>
+        <label class="field"><span>中文名称</span><input id="serviceNameZh" maxlength="200"></label>
+        <label class="field"><span>English Name</span><input id="serviceNameEn" maxlength="200"></label>
         <label class="field"><span>分类</span><input id="serviceCategory" maxlength="100"></label>
-        <label class="field full"><span>说明</span><textarea id="serviceDescription" maxlength="2000"></textarea></label>
+        <label class="field full"><span>中文说明</span><textarea id="serviceDescriptionZh" maxlength="2000"></textarea></label>
+        <label class="field full"><span>English Description</span><textarea id="serviceDescriptionEn" maxlength="2000"></textarea></label>
         <label class="field"><span>价格（S$）</span><input id="servicePrice" type="number" min="0" step="0.01"></label>
         <label class="field"><span>服务时长（分钟）</span><input id="serviceDuration" type="number" min="1" max="1440"></label>
         <label class="field"><span>排序</span><input id="serviceSortOrder" type="number" min="0"></label>
         <label class="check-row"><input id="serviceBookable" type="checkbox">允许顾客预约</label>
         <label class="check-row"><input id="serviceActive" type="checkbox">启用项目</label>
+        <label class="check-row"><input id="servicePriceIsFrom" type="checkbox">起价 / From</label>
       </div>
       <div class="form-actions"><button class="secondary-btn" onclick="ownerSelfService.closeServiceForm()">取消</button><button id="saveServiceButton" class="primary-btn" onclick="ownerSelfService.saveService()">保存</button></div>
     </div>
@@ -529,6 +534,7 @@
 
 </div>
 
+<script src="/service-locale.js"></script>
 <script src="/admin-self-service.js"></script>
 
 <script>

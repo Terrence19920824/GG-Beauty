@@ -54,6 +54,7 @@ const makePool = ({
       [ID.serviceA]: { ...serviceA, shop_id: ID.shopA },
       [ID.serviceB]: { ...serviceB, shop_id: ID.shopB }
     },
+    translations: {},
     poolQueries: [],
     clientQueries: [],
     releases: 0,
@@ -76,11 +77,45 @@ const makePool = ({
         state.appointmentWrites += 1;
       }
 
+      if (/^(BEGIN|COMMIT|ROLLBACK)$/.test(normalized)) {
+        return { rows: [] };
+      }
+
+      if (/^SELECT id FROM services/.test(normalized)) {
+        const current = state.services[params[0]];
+        return {
+          rows: current && current.shop_id === params[1]
+            ? [{ id: current.id }]
+            : []
+        };
+      }
+
+      if (/^SELECT name, description\s+FROM service_translations/.test(normalized)) {
+        const translation = state.translations[`${params[0]}:${params[1]}:${params[2]}`];
+        return { rows: translation ? [{ ...translation }] : [] };
+      }
+
+      if (/^INSERT INTO service_translations/.test(normalized)) {
+        state.translations[`${params[0]}:${params[1]}:${params[2]}`] = {
+          name: params[3], description: params[4]
+        };
+        return { rows: [] };
+      }
+
       if (/^SELECT[\s\S]+FROM services/.test(normalized)) {
         return {
           rows: Object.values(state.services)
             .filter(item => item.shop_id === params[0])
-            .map(({ shop_id: _shopId, ...item }) => item)
+            .filter(item => !params[1] || item.id === params[1])
+            .map(({ shop_id: _shopId, ...item }) => ({
+              ...item,
+              canonicalName: item.name,
+              canonicalDescription: item.description,
+              nameZh: state.translations[`${params[0]}:${item.id}:zh-CN`]?.name || null,
+              nameEn: state.translations[`${params[0]}:${item.id}:en`]?.name || null,
+              descriptionZh: state.translations[`${params[0]}:${item.id}:zh-CN`]?.description || null,
+              descriptionEn: state.translations[`${params[0]}:${item.id}:en`]?.description || null
+            }))
         };
       }
 
@@ -92,10 +127,11 @@ const makePool = ({
           name: params[2],
           description: params[3],
           price: String(params[4]),
-          duration_minutes: params[5],
-          bookable: params[6],
-          is_active: params[7],
-          sort_order: params[8],
+          price_is_from: params[5],
+          duration_minutes: params[6],
+          bookable: params[7],
+          is_active: params[8],
+          sort_order: params[9],
           created_at: '2030-01-02T00:00:00Z',
           updated_at: '2030-01-02T00:00:00Z',
           shop_id: params[0]
@@ -122,6 +158,7 @@ const makePool = ({
           name: 'name',
           description: 'description',
           price: 'price',
+          price_is_from: 'price_is_from',
           duration_minutes: 'duration_minutes',
           bookable: 'bookable',
           is_active: 'is_active',
@@ -129,7 +166,7 @@ const makePool = ({
         };
 
         for (const match of setClause.matchAll(
-          /(category|name|description|price|duration_minutes|bookable|is_active|sort_order) = \$(\d+)/g
+          /(category|name|description|price|price_is_from|duration_minutes|bookable|is_active|sort_order) = \$(\d+)/g
         )) {
           current[fieldMap[match[1]]] =
             params[Number(match[2]) - 1];
@@ -251,6 +288,7 @@ for (const role of ['owner', 'manager']) {
       item => /^INSERT INTO services/.test(item.sql)
     );
     assert.equal(insert.params[0], ID.shopA);
+    assert.equal(insert.params[5], false);
 
     const updated = await run(
       fixture,
@@ -301,8 +339,8 @@ test('GET tenant injection cannot change authenticated tenant', async () => {
   const payload = await response.json();
   assert.deepEqual(payload.data.map(item => item.id), [ID.serviceA]);
   const query = fixture.state.clientQueries[0];
-  assert.match(query.sql, /WHERE shop_id = \$1/);
-  assert.deepEqual(query.params, [ID.shopA]);
+  assert.match(query.sql, /WHERE service\.shop_id = \$1/);
+  assert.deepEqual(query.params, [ID.shopA, null]);
 });
 
 test('POST tenant injection is rejected and cannot create for another shop', async () => {
@@ -325,7 +363,7 @@ test('POST forged tenant header cannot change inserted shop', async () => {
     headers: { 'x-shop-id': ID.shopB, 'x-tenant-id': ID.shopB }
   });
   assert.equal(response.status, 201);
-  const insert = fixture.state.clientQueries[0];
+  const insert = fixture.state.clientQueries.find(item => /^INSERT INTO services/.test(item.sql));
   assert.equal(insert.params[0], ID.shopA);
   assert.equal(insert.params.includes(ID.shopB), false);
 });
@@ -356,7 +394,7 @@ test('cross-tenant PATCH returns 404 and leaves target unchanged', async () => {
   );
   assert.equal(response.status, 404);
   assert.deepEqual(fixture.state.services[ID.serviceB], before);
-  const query = fixture.state.clientQueries[0];
+  const query = fixture.state.clientQueries.find(item => /^SELECT id FROM services/.test(item.sql));
   assert.match(query.sql, /WHERE id = \$\d+/);
   assert.match(query.sql, /AND shop_id = \$\d+/);
   assert.equal(query.params.at(-1), ID.shopA);
@@ -374,7 +412,7 @@ test('PATCH forged tenant header cannot change update scope', async () => {
     }
   );
   assert.equal(response.status, 200);
-  const query = fixture.state.clientQueries[0];
+  const query = fixture.state.clientQueries.find(item => /^UPDATE services/.test(item.sql));
   assert.equal(query.params.at(-1), ID.shopA);
   assert.equal(query.params.includes(ID.shopB), false);
 });
@@ -470,3 +508,67 @@ test('service mutations neither hard-delete nor modify appointment snapshots', a
   assert.doesNotMatch(sql, /DELETE FROM services/i);
   assert.doesNotMatch(sql, /appointment_items/i);
 });
+
+test('owner creates bilingual service and price-from in one transaction', async () => {
+  const fixture = makePool();
+  const response = await run(fixture, '/api/owner/services', {
+    method: 'POST',
+    body: {
+      name: 'Digital Perm',
+      nameZh: '热烫',
+      nameEn: 'Digital Perm',
+      descriptionZh: '长效卷发',
+      descriptionEn: 'Long-lasting curls',
+      price: 168,
+      priceIsFrom: true,
+      durationMinutes: 150
+    }
+  });
+  assert.equal(response.status, 201);
+  const payload = await response.json();
+  assert.equal(payload.data.nameZh, '热烫');
+  assert.equal(payload.data.nameEn, 'Digital Perm');
+  const writes = fixture.state.clientQueries.filter(item => /^INSERT INTO service_translations/.test(item.sql));
+  assert.equal(writes.length, 2);
+  assert.ok(writes.every(item => item.params[0] === ID.shopA));
+  assert.equal(fixture.state.clientQueries[0].sql, 'BEGIN');
+  assert.equal(fixture.state.clientQueries.at(-1).sql, 'COMMIT');
+});
+
+test('PATCH updates one language and preserves the other translation', async () => {
+  const fixture = makePool();
+  fixture.state.translations[`${ID.shopA}:${ID.serviceA}:zh-CN`] = { name: '剪发', description: '中文说明' };
+  fixture.state.translations[`${ID.shopA}:${ID.serviceA}:en`] = { name: 'Cut', description: 'English description' };
+  const response = await run(fixture, `/api/owner/services/${ID.serviceA}`, {
+    method: 'PATCH', body: { nameZh: '精致剪发' }
+  });
+  assert.equal(response.status, 200);
+  assert.equal(fixture.state.translations[`${ID.shopA}:${ID.serviceA}:zh-CN`].name, '精致剪发');
+  assert.equal(fixture.state.translations[`${ID.shopA}:${ID.serviceA}:en`].name, 'Cut');
+});
+
+test('PATCH updates English and preserves the Chinese translation', async () => {
+  const fixture = makePool();
+  fixture.state.translations[`${ID.shopA}:${ID.serviceA}:zh-CN`] = { name: '剪发', description: '中文说明' };
+  fixture.state.translations[`${ID.shopA}:${ID.serviceA}:en`] = { name: 'Cut', description: 'English description' };
+  const response = await run(fixture, `/api/owner/services/${ID.serviceA}`, {
+    method: 'PATCH', body: { nameEn: 'Haircut' }
+  });
+  assert.equal(response.status, 200);
+  assert.equal(fixture.state.translations[`${ID.shopA}:${ID.serviceA}:en`].name, 'Haircut');
+  assert.equal(fixture.state.translations[`${ID.shopA}:${ID.serviceA}:zh-CN`].name, '剪发');
+});
+
+for (const body of [
+  { name: 'Valid', nameZh: '   ' },
+  { name: 'Valid', nameEn: '' },
+  { name: 'Valid', descriptionZh: '说明' },
+  { name: 'Valid', locale: 'th' }
+]) {
+  test('invalid or incomplete translation input fails closed', async () => {
+    const fixture = makePool();
+    const response = await run(fixture, '/api/owner/services', { method: 'POST', body });
+    assert.equal(response.status, 400);
+    assert.equal(fixture.state.clientQueries.length, 0);
+  });
+}

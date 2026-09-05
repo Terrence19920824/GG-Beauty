@@ -2,6 +2,7 @@
   'use strict';
 
   const state = {
+    locale: 'en',
     profile: null,
     services: [],
     staff: [],
@@ -29,6 +30,43 @@
   const apiValue = (object, camel, snake) => object?.[camel] ?? object?.[snake];
   const dateValue = input => input ? String(input).slice(0, 10) : '';
   const timeValue = input => input == null ? '' : String(input).slice(0, 5);
+  const localeApi = global.ggServiceLocale || {
+    STORAGE_KEY: 'gg_beauty_locale',
+    normalizeLocale: locale => typeof locale === 'string' && locale.toLowerCase().startsWith('zh') ? 'zh-CN' : 'en',
+    browserLocale: navigatorLike => {
+      const languages = Array.isArray(navigatorLike?.languages) ? navigatorLike.languages : [navigatorLike?.language];
+      return languages.some(language => typeof language === 'string' && language.toLowerCase().startsWith('zh')) ? 'zh-CN' : 'en';
+    }
+  };
+  const uiText = {
+    'zh-CN': { calendar: '日历', staff: '员工', services: '服务', serviceManagement: '服务项目', serviceHelp: '管理价格、时长与顾客预约状态' },
+    en: { calendar: 'Calendar', staff: 'Staff', services: 'Services', serviceManagement: 'Services', serviceHelp: 'Manage pricing, duration and online booking' }
+  };
+
+  function initialLocale() {
+    try {
+      const saved = global.localStorage?.getItem(localeApi.STORAGE_KEY);
+      if (saved === 'zh-CN' || saved === 'en') return saved;
+    } catch (_error) {}
+    return localeApi.browserLocale(global.navigator || {});
+  }
+
+  function setLocale(locale) {
+    state.locale = localeApi.normalizeLocale(locale);
+    try { global.localStorage?.setItem(localeApi.STORAGE_KEY, state.locale); } catch (_error) {}
+    if (document.documentElement) document.documentElement.lang = state.locale;
+    const text = uiText[state.locale];
+    if (typeof document.querySelectorAll === 'function') {
+      document.querySelectorAll('[data-i18n]').forEach(element => {
+        element.textContent = text[element.dataset.i18n] || element.textContent;
+      });
+    }
+    const zh = byId('adminLanguageZh');
+    const en = byId('adminLanguageEn');
+    if (zh) zh.disabled = state.locale === 'zh-CN';
+    if (en) en.disabled = state.locale === 'en';
+    if (state.services.length) renderServices();
+  }
 
   const businessMessage = (result, fallback) => ({
     STAFF_HAS_FUTURE_APPOINTMENTS: '该员工已有未来预约，暂时不能停用。',
@@ -129,7 +167,14 @@
     const actions = canWrite();
     list.innerHTML = `<div class="service-table"><table><thead><tr><th>分类</th><th>服务名称</th><th>价格</th><th>时长</th><th>可预约</th><th>状态</th>${actions ? '<th>操作</th>' : ''}</tr></thead><tbody>${state.services.map(service => {
       const id = escapeHtml(service.id);
-      return `<tr><td>${escapeHtml(service.category || '未分类')}</td><td>${escapeHtml(service.name)}</td><td>S$ ${Number(service.price || 0).toFixed(2)}</td><td>${escapeHtml(apiValue(service, 'durationMinutes', 'duration_minutes'))} 分钟</td><td>${service.bookable ? '开启' : '关闭'}</td><td>${apiValue(service, 'isActive', 'is_active') ? '启用' : '停用'}</td>${actions ? `<td><button class="secondary-btn" onclick="ownerSelfService.openServiceForm('${id}')">编辑</button></td>` : ''}</tr>`;
+      const bilingualName = [service.nameZh, service.nameEn, service.canonicalName || service.name]
+        .filter(Boolean)
+        .filter((name, index, names) => names.indexOf(name) === index)
+        .slice(0, 2)
+        .join(' / ');
+      const isFrom = apiValue(service, 'priceIsFrom', 'price_is_from') === true;
+      const price = `${state.locale === 'en' && isFrom ? 'From ' : ''}S$ ${Number(service.price || 0).toFixed(2)}${state.locale === 'zh-CN' && isFrom ? ' 起' : ''}`;
+      return `<tr><td>${escapeHtml(service.category || '未分类')}</td><td>${escapeHtml(bilingualName)}</td><td>${price}</td><td>${escapeHtml(apiValue(service, 'durationMinutes', 'duration_minutes'))} ${state.locale === 'zh-CN' ? '分钟' : 'min'}</td><td>${service.bookable ? '开启' : '关闭'}</td><td>${apiValue(service, 'isActive', 'is_active') ? '启用' : '停用'}</td>${actions ? `<td><button class="secondary-btn" onclick="ownerSelfService.openServiceForm('${id}')">编辑</button></td>` : ''}</tr>`;
     }).join('')}</tbody></table></div>`;
   }
 
@@ -138,14 +183,17 @@
     const service = serviceId ? state.services.find(item => item.id === serviceId) : null;
     state.editingServiceId = service?.id || null;
     byId('serviceFormTitle').textContent = service ? '编辑服务' : '新增服务';
-    byId('serviceName').value = service?.name || '';
+    byId('serviceNameZh').value = service?.nameZh || '';
+    byId('serviceNameEn').value = service?.nameEn || service?.canonicalName || service?.name || '';
     byId('serviceCategory').value = service?.category || '';
-    byId('serviceDescription').value = service?.description || '';
+    byId('serviceDescriptionZh').value = service?.descriptionZh || '';
+    byId('serviceDescriptionEn').value = service?.descriptionEn || service?.canonicalDescription || service?.description || '';
     byId('servicePrice').value = service?.price ?? '';
     byId('serviceDuration').value = apiValue(service, 'durationMinutes', 'duration_minutes') ?? 60;
     byId('serviceSortOrder').value = apiValue(service, 'sortOrder', 'sort_order') ?? 0;
     byId('serviceBookable').checked = service?.bookable ?? false;
     byId('serviceActive').checked = apiValue(service, 'isActive', 'is_active') ?? true;
+    byId('servicePriceIsFrom').checked = apiValue(service, 'priceIsFrom', 'price_is_from') ?? false;
     byId('serviceFormPanel').hidden = false;
   }
 
@@ -156,16 +204,24 @@
 
   async function saveService() {
     if (!canWrite()) return;
+    const nameZh = value('serviceNameZh').trim();
+    const nameEn = value('serviceNameEn').trim();
+    const descriptionZh = value('serviceDescriptionZh').trim();
+    const descriptionEn = value('serviceDescriptionEn').trim();
     const body = {
-      name: value('serviceName').trim(),
+      name: nameEn || nameZh,
       category: value('serviceCategory').trim() || null,
-      description: value('serviceDescription').trim() || null,
       price: Number(value('servicePrice')),
+      priceIsFrom: checked('servicePriceIsFrom'),
       durationMinutes: Number(value('serviceDuration')),
       bookable: checked('serviceBookable'),
       isActive: checked('serviceActive'),
       sortOrder: Number(value('serviceSortOrder'))
     };
+    if (nameZh) body.nameZh = nameZh;
+    if (nameEn) body.nameEn = nameEn;
+    if (descriptionZh) body.descriptionZh = descriptionZh;
+    if (descriptionEn) body.descriptionEn = descriptionEn;
     setBusy('saveServiceButton', true);
     setMessage('servicesMessage', '');
     try {
@@ -384,5 +440,6 @@
     } catch (error) { if (!error.sessionExpired) setMessage('staffMessage', error.message, true); }
   }
 
-  global.ownerSelfService = { setProfile, reset, showView, loadServices, openServiceForm, closeServiceForm, saveService, loadStaff, openStaffForm, saveStaff, selectStaff, openStaffTab, toggleCapability, saveCapability, toggleLocation, saveLocations, changeScheduleLocation, saveSchedule, updateOverrideFields, saveOverride, deactivateOverride, _state: state, _request: request };
+  global.ownerSelfService = { setLocale, setProfile, reset, showView, loadServices, openServiceForm, closeServiceForm, saveService, loadStaff, openStaffForm, saveStaff, selectStaff, openStaffTab, toggleCapability, saveCapability, toggleLocation, saveLocations, changeScheduleLocation, saveSchedule, updateOverrideFields, saveOverride, deactivateOverride, _state: state, _request: request };
+  setLocale(initialLocale());
 })(globalThis);

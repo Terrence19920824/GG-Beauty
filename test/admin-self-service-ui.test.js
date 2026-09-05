@@ -24,7 +24,8 @@ function page(replies = []) {
   const elements = new Map();
   const ids = [
     'addServiceButton', 'addStaffButton', 'servicesList', 'servicesMessage', 'serviceFormPanel', 'serviceFormTitle',
-    'serviceName', 'serviceCategory', 'serviceDescription', 'servicePrice', 'serviceDuration', 'serviceSortOrder',
+    'serviceNameZh', 'serviceNameEn', 'serviceCategory', 'serviceDescriptionZh', 'serviceDescriptionEn', 'servicePrice', 'serviceDuration', 'serviceSortOrder',
+    'servicePriceIsFrom', 'adminLanguageZh', 'adminLanguageEn',
     'serviceBookable', 'serviceActive', 'saveServiceButton', 'staffList', 'staffMessage', 'staffDetail', 'staffSettings',
     'staffName', 'staffCode', 'staffPhone', 'staffEmail', 'staffBookable', 'staffActive', 'staffSaveStatus', 'saveStaffButton',
     'staffTabContent', 'capabilityStatus', 'saveCapabilityButton', 'locationStatus', 'saveLocationsButton',
@@ -74,14 +75,15 @@ test('service list loads safe management fields and has no delete action', async
 test('owner creates service with business fields only', async () => {
   const p = page([response(201, { success: true, data: { id: 's1' } }), response(200, { success: true, data: [] })]);
   p.api.setProfile(owner); p.api.openServiceForm();
-  Object.assign(p.elements.get('serviceName'), { value: '剪发' });
+  Object.assign(p.elements.get('serviceNameZh'), { value: '剪发' });
+  Object.assign(p.elements.get('serviceNameEn'), { value: 'Haircut' });
   Object.assign(p.elements.get('serviceCategory'), { value: '头发' });
   Object.assign(p.elements.get('servicePrice'), { value: '28' });
   Object.assign(p.elements.get('serviceDuration'), { value: '45' });
   Object.assign(p.elements.get('serviceSortOrder'), { value: '1' });
   await p.api.saveService();
   const body = JSON.parse(p.requests[0].options.body);
-  assert.deepEqual(Object.keys(body).sort(), ['bookable', 'category', 'description', 'durationMinutes', 'isActive', 'name', 'price', 'sortOrder'].sort());
+  assert.deepEqual(Object.keys(body).sort(), ['bookable', 'category', 'durationMinutes', 'isActive', 'name', 'nameZh', 'nameEn', 'price', 'priceIsFrom', 'sortOrder'].sort());
   assert.equal(p.requests[0].options.method, 'POST');
 });
 
@@ -199,10 +201,21 @@ test('admin receives read-only UI while owner and manager can write', () => {
   p.api.setProfile(manager); assert.equal(p.elements.get('addStaffButton').hidden, false);
 });
 
-test('frontend never sends client tenant identity or stores auth tokens', () => {
+test('frontend never sends client tenant identity and stores locale only', () => {
   assert.doesNotMatch(source, /\bshopId\b|\bshop_id\b|\btenantId\b/);
-  assert.doesNotMatch(source + html, /localStorage|sessionStorage/);
+  assert.match(source, /gg_beauty_locale/);
+  assert.doesNotMatch(source + html, /localStorage[^\n]*(token|session|auth|password)|(token|session|auth|password)[^\n]*localStorage/i);
+  assert.doesNotMatch(source + html, /sessionStorage/);
   assert.doesNotMatch(source, /document\.cookie/);
+});
+
+test('manual language choice persists only normalized locale', () => {
+  const p = page();
+  const stored = [];
+  p.context.localStorage = { setItem(key, value) { stored.push([key, value]); }, getItem() { return null; } };
+  p.api.setLocale('zh-SG');
+  assert.deepEqual(stored, [['gg_beauty_locale', 'zh-CN']]);
+  assert.equal(p.api._state.locale, 'zh-CN');
 });
 
 test('self-service UI provides no hard-delete action or endpoint', () => {
