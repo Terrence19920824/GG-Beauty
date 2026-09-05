@@ -3,6 +3,9 @@
 
 BEGIN;
 
+SET LOCAL lock_timeout = '5s';
+SET LOCAL statement_timeout = '30s';
+
 INSERT INTO public.service_translations (
   shop_id,
   service_id,

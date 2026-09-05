@@ -39,17 +39,76 @@ test('localized resolver follows requested, English, Chinese, canonical fallback
   assert.equal(resolveLocalizedService({ name: 'Canonical', translations: {} }, 'en').name, 'Canonical');
 });
 
-test('schema and backfill migrations are tenant-safe, idempotent, and preserve history', () => {
-  const preflight = fs.readFileSync(path.join(root, 'migrations/010_service_translations_preflight_readonly.sql'), 'utf8');
-  const schema = fs.readFileSync(path.join(root, 'migrations/011_service_translations_schema.sql'), 'utf8');
-  const backfill = fs.readFileSync(path.join(root, 'migrations/012_service_translations_backfill.sql'), 'utf8');
+const migrationSql = () => ({
+  preflight: fs.readFileSync(path.join(root, 'migrations/010_service_translations_preflight_readonly.sql'), 'utf8'),
+  schema: fs.readFileSync(path.join(root, 'migrations/011_service_translations_schema.sql'), 'utf8'),
+  backfill: fs.readFileSync(path.join(root, 'migrations/012_service_translations_backfill.sql'), 'utf8')
+});
+
+test('010 preflight is database-enforced read-only with no write SQL', () => {
+  const { preflight } = migrationSql();
+  assert.match(preflight, /BEGIN TRANSACTION READ ONLY/);
   assert.doesNotMatch(preflight, /\b(INSERT|UPDATE|DELETE|ALTER|CREATE|DROP|TRUNCATE)\b/i);
+  assert.match(preflight, /service_translations: EXPECTED ABSENT/);
+});
+
+test('010 validates complete translation columns and fails closed on drift', () => {
+  const { preflight } = migrationSql();
+  for (const column of ['id', 'shop_id', 'service_id', 'locale', 'name', 'description', 'created_at', 'updated_at']) {
+    assert.match(preflight, new RegExp(`column_shape -> '${column}'`));
+  }
+  assert.match(preflight, /RAISE EXCEPTION 'service i18n preflight: service_translations column drift'/);
+  assert.match(preflight, /column_count <> 8/);
+  assert.match(preflight, /service_translations default drift/);
+});
+
+test('010 validates actual PK unique FK checks and index definitions', () => {
+  const { preflight } = migrationSql();
+  assert.match(preflight, /contype = 'p'/);
+  assert.match(preflight, /ARRAY\['shop_id', 'service_id', 'locale'\]::name\[\]/);
+  assert.match(preflight, /contype = 'f'[\s\S]*confrelid = 'public\.services'::regclass[\s\S]*confdeltype = 'r'/);
+  assert.match(preflight, /service_translations locale CHECK drift/);
+  assert.match(preflight, /service_translations name CHECK drift/);
+  assert.match(preflight, /ARRAY\['shop_id', 'locale', 'service_id'\]::name\[\]/);
+});
+
+test('010 validates optional column type nullability default and locale check', () => {
+  const { preflight } = migrationSql();
+  assert.match(preflight, /atttypid = 'boolean'::regtype AND a\.attnotnull/);
+  assert.match(preflight, /IN \('false', 'false::boolean'\)/);
+  assert.match(preflight, /atttypid = 'text'::regtype[\s\S]*NOT attnotnull/);
+  assert.match(preflight, /service_locale_snapshot CHECK drift/);
+});
+
+test('011 has bounded locks and rejects existing drift before idempotent DDL', () => {
+  const { schema } = migrationSql();
+  assert.match(schema, /SET LOCAL lock_timeout = '5s'/);
+  assert.match(schema, /SET LOCAL statement_timeout = '30s'/);
+  assert.match(schema, /price_is_from schema drift/);
+  assert.match(schema, /service_locale_snapshot (?:column|CHECK) drift/);
+  assert.match(schema, /service_translations (?:column|PK|UNIQUE|tenant FK|locale CHECK|name CHECK|lookup index) drift/);
+  assert.doesNotMatch(schema, /CREATE TABLE IF NOT EXISTS public\.service_translations/);
+  assert.ok(schema.indexOf('schema drift') < schema.indexOf('ALTER TABLE public.services'));
+});
+
+test('011 validates final schema and preserves tenant-safe constraints', () => {
+  const { schema } = migrationSql();
   assert.match(schema, /FOREIGN KEY \(shop_id, service_id\)[\s\S]*REFERENCES public\.services \(shop_id, id\)[\s\S]*ON DELETE RESTRICT/);
   assert.match(schema, /price_is_from BOOLEAN NOT NULL DEFAULT FALSE/);
   assert.match(schema, /service_locale_snapshot TEXT NULL/);
+  assert.match(schema, /final price_is_from validation failed/);
+  assert.match(schema, /final snapshot validation failed/);
+  assert.match(schema, /final constraint\/index validation failed/);
+});
+
+test('012 has bounded locks and remains idempotent without snapshot rewrites', () => {
+  const { backfill } = migrationSql();
+  assert.match(backfill, /SET LOCAL lock_timeout = '5s'/);
+  assert.match(backfill, /SET LOCAL statement_timeout = '30s'/);
   assert.match(backfill, /'en'/);
   assert.match(backfill, /ON CONFLICT \(shop_id, service_id, locale\) DO NOTHING/);
   assert.doesNotMatch(backfill, /UPDATE\s+(public\.)?(services|appointment_items)/i);
+  assert.doesNotMatch(backfill, /service_(?:name|locale)_snapshot/i);
 });
 
 const withServer = async operation => {
