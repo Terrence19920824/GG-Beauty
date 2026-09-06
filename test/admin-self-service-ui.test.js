@@ -9,6 +9,8 @@ const vm = require('node:vm');
 const root = path.resolve(__dirname, '..');
 const html = fs.readFileSync(path.join(root, 'public/admin.html'), 'utf8');
 const source = fs.readFileSync(path.join(root, 'public/admin-self-service.js'), 'utf8');
+const sharedSource = fs.readFileSync(path.join(root, 'public/shared-i18n.js'), 'utf8');
+const i18n = require('../public/shared-i18n');
 
 const response = (status, data = {}) => ({ status, ok: status >= 200 && status < 300, async json() { return data; } });
 
@@ -37,7 +39,13 @@ function page(replies = []) {
   ids.forEach(id => elements.set(id, element()));
   const requests = [];
   const context = {
-    document: { getElementById(id) { if (!elements.has(id)) elements.set(id, element()); return elements.get(id); } },
+    document: {
+      documentElement: {},
+      getElementById(id) { if (!elements.has(id)) elements.set(id, element()); return elements.get(id); },
+      querySelectorAll() { return []; }
+    },
+    ggI18n: i18n,
+    navigator: { languages: ['zh-CN'] },
     fetch: async (url, options = {}) => { requests.push({ url, options }); const next = replies.shift(); if (!next) throw new Error(`Unexpected request: ${url}`); return next; },
     showLogin(message) { context.loginMessage = message; },
     loadAppointments: async () => {},
@@ -60,7 +68,7 @@ test('navigation exposes calendar, staff and services with later modules disable
   assert.match(html, /id="nav-calendar"[^>]*>日历/);
   assert.match(html, /id="nav-staff"[^>]*>员工/);
   assert.match(html, /id="nav-services"[^>]*>服务/);
-  assert.match(html, /disabled title="即将推出">顾客/);
+  assert.match(html, /disabled[^>]*data-i18n="customers"/);
 });
 
 test('service list loads safe management fields and has no delete action', async () => {
@@ -166,7 +174,7 @@ test('weekly schedule saves ISO weekdays and current location', async () => {
 });
 
 test('override UI supports day off, leave and custom hours labels', () => {
-  assert.match(source, /休息一天/); assert.match(source, /请假/); assert.match(source, /特殊营业时间/);
+  assert.match(sharedSource, /休息一天/); assert.match(sharedSource, /请假/); assert.match(sharedSource, /特殊营业时间/);
   assert.match(source, /day_off/); assert.match(source, /leave/); assert.match(source, /custom_hours/);
 });
 
@@ -184,14 +192,14 @@ test('known 409 codes have safe business messages', async () => {
   p.api.setProfile(owner); p.api._state.selectedStaffId = 'u1';
   await p.api.saveCapability();
   assert.match(p.elements.get('capabilityStatus').textContent, /未来预约使用这个项目/);
-  assert.match(source, /该员工已有未来预约，暂时不能停用/);
-  assert.match(source, /新排班与该员工未来预约冲突/);
+  assert.match(sharedSource, /该员工已有未来预约，暂时不能停用/);
+  assert.match(sharedSource, /新排班与该员工未来预约冲突/);
 });
 
 test('401 expires session through the existing login UI', async () => {
   const p = page([response(401, { success: false, message: '请登录' })]); p.api.setProfile(owner);
   await p.api.loadServices();
-  assert.equal(p.context.loginMessage, '请登录');
+  assert.equal(p.context.loginMessage, '登录已过期，请重新登录');
 });
 
 test('admin receives read-only UI while owner and manager can write', () => {
@@ -218,13 +226,45 @@ test('manual language choice persists only normalized locale', () => {
   assert.equal(p.api._state.locale, 'zh-CN');
 });
 
+test('English locale translates owner staff, schedule and override UI without changing business names', async () => {
+  const p = page([
+    response(200, { success: true, data: [{ service_id: 's1', name: '热烫 / Digital Perm', category: 'Hair', is_active: true, bookable: true, assigned: true }] }),
+    response(200, { success: true, data: [{ id: 'l1', name: 'Main 门店', timezone: 'Asia/Singapore', is_active: true, assigned: true }] }),
+    response(200, { success: true, data: [] }),
+    response(200, { success: true, data: { timezone: 'Asia/Singapore' } })
+  ]);
+  p.api.setProfile(owner);
+  p.api.setLocale('en');
+  p.api._state.staff = [{ id: 'u1', name: 'guanguan', staff_code: 'A01', bookable: false, is_active: true }];
+  await p.api.selectStaff('u1');
+  assert.match(p.elements.get('staffList').innerHTML, /guanguan/);
+  assert.match(p.elements.get('staffSettings').innerHTML, /Weekly Schedule/);
+  p.api.openStaffTab('capability');
+  assert.match(p.elements.get('staffTabContent').innerHTML, /Services this staff member can perform/);
+  assert.match(p.elements.get('staffTabContent').innerHTML, /热烫 \/ Digital Perm/);
+  p.api.openStaffTab('schedule');
+  assert.match(p.elements.get('staffTabContent').innerHTML, /Monday/);
+  assert.doesNotMatch(p.elements.get('staffTabContent').innerHTML, /周一|每周排班|保存排班/);
+  p.api.openStaffTab('overrides');
+  assert.match(p.elements.get('staffTabContent').innerHTML, /Day Off|Special Dates/);
+});
+
+test('Chinese locale translates owner service and staff controls', () => {
+  const p = page();
+  p.api.setProfile(owner);
+  p.api.setLocale('zh-CN');
+  p.api.openStaffForm();
+  assert.match(p.elements.get('staffDetail').innerHTML, /新增员工/);
+  assert.match(p.elements.get('staffDetail').innerHTML, /允许顾客预约/);
+});
+
 test('self-service UI provides no hard-delete action or endpoint', () => {
   assert.doesNotMatch(source + html, /method:\s*['"]DELETE['"]|删除服务|删除员工/);
 });
 
 test('save buttons use busy state to prevent duplicate mutation', () => {
   assert.match(source, /button\.disabled = busy/);
-  assert.match(source, /保存中\.\.\./);
+  assert.match(source, /t\('saving'\)/);
   assert.match(source, /finally \{ setBusy/);
 });
 

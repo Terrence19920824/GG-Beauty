@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-  <title>GG-Beauty 在线预约</title>
+  <title data-i18n="customerPageTitle">GG-Beauty 在线预约</title>
 
   <style>
     * {
@@ -125,50 +125,52 @@
 
   <div class="header">
     <h1>GG-Beauty</h1>
-    <p>Online Appointment · 在线预约</p>
+    <p data-i18n="onlineAppointment">在线预约</p>
     <div><button id="languageZh" type="button">中文</button> <button id="languageEn" type="button">EN</button></div>
   </div>
 
   <div class="card">
 
-    <label id="serviceLabel">服务项目</label>
+    <label id="serviceLabel" data-i18n="serviceManagement">服务项目</label>
     <select id="service">
-      <option value="">正在读取服务...</option>
+      <option value="" data-i18n="loadingCustomerServices">正在读取服务...</option>
     </select>
 
-    <label>选择员工</label>
+    <label data-i18n="chooseStaffCustomer">选择员工</label>
     <select id="staff">
       <option value="Staff 01">Staff 01</option>
     </select>
 
-    <label>预约日期</label>
+    <label data-i18n="appointmentDate">预约日期</label>
     <input type="date" id="date">
 
-    <label>可预约时间</label>
+    <label data-i18n="availableTimes">可预约时间</label>
 
     <div id="times" class="time-grid">
-      <div>请先选择日期</div>
+      <div data-i18n="chooseDate">请先选择日期</div>
     </div>
 
   </div>
 
   <div class="card">
 
-    <label>姓名</label>
+    <label data-i18n="name">姓名</label>
     <input
       type="text"
       id="customerName"
       placeholder="请输入姓名"
+      data-i18n-placeholder="enterName"
     >
 
-    <label>手机号码</label>
+    <label data-i18n="customerPhone">手机号码</label>
     <input
       type="tel"
       id="phone"
       placeholder="请输入手机号码"
+      data-i18n-placeholder="enterPhone"
     >
 
-    <label>Email（选填）</label>
+    <label data-i18n="optionalEmail">Email（选填）</label>
     <input
       type="email"
       id="email"
@@ -176,7 +178,7 @@
     >
 
     <button id="submitBtn">
-      确认预约
+      <span data-i18n="bookAppointment">确认预约</span>
     </button>
 
     <div id="message" class="message"></div>
@@ -185,6 +187,7 @@
 
 </div>
 
+<script src="/shared-i18n.js"></script>
 <script src="/service-locale.js"></script>
 <script>
 
@@ -192,18 +195,11 @@ const SHOP_SLUG = 'gg-beauty-test';
 
 let selectedTime = '';
 let availableServices = [];
-const localeApi = globalThis.ggServiceLocale;
-const text = {
-  'zh-CN': { service: '服务项目', loading: '正在读取服务...', noServices: '暂无可预约服务', chooseDate: '请先选择日期', checking: '正在查询...', noTimes: '当天暂无可预约时间', submit: '确认预约', submitting: '正在提交...', min: '分钟', fromSuffix: ' 起', fromPrefix: '' },
-  en: { service: 'Service', loading: 'Loading services...', noServices: 'No services available', chooseDate: 'Choose a date first', checking: 'Checking...', noTimes: 'No times available', submit: 'Book appointment', submitting: 'Submitting...', min: 'min', fromSuffix: '', fromPrefix: 'From ' }
-};
+const localeApi = globalThis.ggI18n;
+const customerT = key => localeApi.t(key, currentLocale);
 
 function initialLocale() {
-  try {
-    const saved = localStorage.getItem(localeApi.STORAGE_KEY);
-    if (saved === 'zh-CN' || saved === 'en') return saved;
-  } catch (_error) {}
-  return localeApi.browserLocale(navigator);
+  return localeApi.getStoredLocale(localStorage, navigator);
 }
 
 let currentLocale = initialLocale();
@@ -213,10 +209,7 @@ function selectedService() {
 }
 
 function serviceOptionText(service) {
-  const copy = text[currentLocale];
-  const from = service.priceIsFrom ? copy.fromPrefix : '';
-  const suffix = service.priceIsFrom ? copy.fromSuffix : '';
-  return `${service.name} · ${from}S$${Number(service.price).toFixed(2)}${suffix} · ${service.durationMinutes} ${copy.min}`;
+  return `${service.name} · ${localeApi.formatPrice(service.price, service.priceIsFrom, currentLocale)} · ${localeApi.formatDuration(service.durationMinutes, currentLocale)}`;
 }
 
 function renderServices() {
@@ -230,7 +223,7 @@ function renderServices() {
   if (!availableServices.length) {
     const option = document.createElement('option');
     option.value = '';
-    option.textContent = text[currentLocale].noServices;
+    option.textContent = customerT('noCustomerServices');
     serviceInput.appendChild(option);
   }
 }
@@ -238,17 +231,16 @@ function renderServices() {
 async function loadServices() {
   const response = await fetch(`/api/services-db?shopSlug=${encodeURIComponent(SHOP_SLUG)}&locale=${encodeURIComponent(currentLocale)}`);
   const result = await response.json();
-  if (!response.ok || result.success === false) throw new Error(result.message || text[currentLocale].noServices);
+  if (!response.ok || result.success === false) throw new Error(result.message || customerT('noCustomerServices'));
   availableServices = result.data || [];
   renderServices();
 }
 
 async function setLocale(locale) {
-  currentLocale = localeApi.normalizeLocale(locale);
-  try { localStorage.setItem(localeApi.STORAGE_KEY, currentLocale); } catch (_error) {}
+  currentLocale = localeApi.setLocale(locale, localStorage);
   document.documentElement.lang = currentLocale;
-  document.getElementById('serviceLabel').textContent = text[currentLocale].service;
-  document.getElementById('submitBtn').textContent = text[currentLocale].submit;
+  document.querySelectorAll('[data-i18n]').forEach(element => { element.textContent = customerT(element.dataset.i18n); });
+  document.querySelectorAll('[data-i18n-placeholder]').forEach(element => { element.placeholder = customerT(element.dataset.i18nPlaceholder); });
   document.getElementById('languageZh').disabled = currentLocale === 'zh-CN';
   document.getElementById('languageEn').disabled = currentLocale === 'en';
   try { await loadServices(); } catch (error) { messageBox.textContent = error.message; }
@@ -305,12 +297,12 @@ async function loadAvailableTimes() {
 
   if (!date) {
     timesBox.innerHTML =
-      `<div>${text[currentLocale].chooseDate}</div>`;
+      `<div>${customerT('chooseDate')}</div>`;
     return;
   }
 
   timesBox.innerHTML =
-    `<div>${text[currentLocale].checking}</div>`;
+    `<div>${customerT('checking')}</div>`;
 
   try {
 
@@ -329,7 +321,7 @@ async function loadAvailableTimes() {
 
     if (!result.success) {
       throw new Error(
-        result.message || '获取时间失败'
+        result.message || customerT('availabilityFailed')
       );
     }
 
@@ -352,7 +344,7 @@ function renderTimes(times) {
   if (!times || times.length === 0) {
 
     timesBox.innerHTML =
-      `<div>${text[currentLocale].noTimes}</div>`;
+      `<div>${customerT('noTimes')}</div>`;
 
     return;
   }
@@ -429,7 +421,7 @@ document
           'message error';
 
         messageBox.textContent =
-          '请填写姓名、手机、日期并选择时间';
+          customerT('requiredBookingFields');
 
         return;
       }
@@ -440,7 +432,7 @@ document
       submitBtn.disabled = true;
 
       submitBtn.textContent =
-        text[currentLocale].submitting;
+        customerT('submitting');
 
       messageBox.textContent = '';
 
@@ -476,7 +468,7 @@ document
 
         if (!result.success) {
           throw new Error(
-            result.message || '预约失败'
+            result.message || customerT('bookingFailed')
           );
         }
 
@@ -484,7 +476,7 @@ document
           'message success';
 
         messageBox.innerHTML =
-          `✅ 预约成功！<br>` +
+          `✅ ${customerT('bookingSuccess')}<br>` +
           `${date} ${selectedTime}<br>` +
           `${service.name} · ${staff}`;
 
@@ -504,7 +496,7 @@ document
         submitBtn.disabled = false;
 
         submitBtn.textContent =
-          text[currentLocale].submit;
+          customerT('bookAppointment');
       }
     }
   );

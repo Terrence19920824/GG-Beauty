@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-  <title>GG-Beauty 老板端预约后台</title>
+  <title data-i18n="ownerPageTitle">GG-Beauty 老板端预约后台</title>
 
   <style>
     * {
@@ -370,13 +370,14 @@
     padding: 32px;
     border-radius: 16px;
   ">
-    <h2>GG-Beauty 老板登录</h2>
+    <h2 data-i18n="ownerLogin">GG-Beauty 老板登录</h2>
 
     <input
       id="ownerLoginIdentifier"
       type="text"
       autocomplete="username"
       placeholder="请输入登录账号"
+      data-i18n-placeholder="loginAccount"
       style="
         width: 100%;
         padding: 14px;
@@ -389,6 +390,7 @@
       type="password"
       autocomplete="current-password"
       placeholder="请输入密码"
+      data-i18n-placeholder="password"
       style="
         width: 100%;
         padding: 14px;
@@ -400,6 +402,7 @@
       id="ownerShopSlug"
       type="text"
       placeholder="店铺标识（如有多家店）"
+      data-i18n-placeholder="shopSlug"
       style="
         width: 100%;
         padding: 14px;
@@ -418,7 +421,7 @@
         border-radius: 8px;
       "
     >
-      登录
+      <span data-i18n="login">登录</span>
     </button>
 
     <div
@@ -433,8 +436,8 @@
     <div>
       <button id="adminLanguageZh" class="refresh-btn" type="button" onclick="ownerSelfService.setLocale('zh-CN')">中文</button>
       <button id="adminLanguageEn" class="refresh-btn" type="button" onclick="ownerSelfService.setLocale('en')">EN</button>
-      <h1>GG-Beauty 老板端</h1>
-      <p>Appointment Dashboard · 预约管理后台</p>
+      <h1 data-i18n="ownerTitle">GG-Beauty 老板端</h1>
+      <p data-i18n="ownerSubtitle">预约管理后台</p>
     </div>
 
     <div>
@@ -442,13 +445,13 @@
         class="refresh-btn"
         onclick="loadAppointments()"
       >
-        刷新预约
+        <span data-i18n="refreshAppointments">刷新预约</span>
       </button>
       <button
         class="refresh-btn"
         onclick="ownerLogout()"
       >
-        退出登录
+        <span data-i18n="logout">退出登录</span>
       </button>
     </div>
   </div>
@@ -457,9 +460,9 @@
     <button id="nav-calendar" class="nav-btn active" data-i18n="calendar" onclick="ownerSelfService.showView('calendar')">日历</button>
     <button id="nav-staff" class="nav-btn" data-i18n="staff" onclick="ownerSelfService.showView('staff')">员工</button>
     <button id="nav-services" class="nav-btn" data-i18n="services" onclick="ownerSelfService.showView('services')">服务</button>
-    <button class="nav-btn" disabled title="即将推出">顾客</button>
-    <button class="nav-btn" disabled title="即将推出">收银</button>
-    <button class="nav-btn" disabled title="即将推出">更多</button>
+    <button class="nav-btn" disabled data-i18n="customers" data-i18n-title="comingSoon" title="即将推出">顾客</button>
+    <button class="nav-btn" disabled data-i18n="checkout" data-i18n-title="comingSoon" title="即将推出">收银</button>
+    <button class="nav-btn" disabled data-i18n="more" data-i18n-title="comingSoon" title="即将推出">更多</button>
   </nav>
 
   <section id="calendarView" class="view">
@@ -467,17 +470,17 @@
   <div class="summary">
 
     <div class="summary-card">
-      <div class="label">全部预约</div>
+      <div class="label" data-i18n="allAppointments">全部预约</div>
       <div class="number" id="totalCount">0</div>
     </div>
 
     <div class="summary-card">
-      <div class="label">待确认</div>
+      <div class="label" data-i18n="pendingAppointments">待确认</div>
       <div class="number" id="pendingCount">0</div>
     </div>
 
     <div class="summary-card">
-      <div class="label">今日预约</div>
+      <div class="label" data-i18n="todayAppointments">今日预约</div>
       <div class="number" id="todayCount">0</div>
     </div>
 
@@ -486,7 +489,7 @@
   <div class="card">
 
     <div id="content" class="loading">
-      正在读取预约...
+      <span data-i18n="loadingAppointments">正在读取预约...</span>
     </div>
 
   </div>
@@ -496,44 +499,45 @@
   <section id="servicesView" class="view" hidden>
     <div class="toolbar">
       <div><h2 data-i18n="serviceManagement">服务项目</h2><div class="muted" data-i18n="serviceHelp">管理价格、时长与顾客预约状态</div></div>
-      <button id="addServiceButton" class="primary-btn" onclick="ownerSelfService.openServiceForm()">新增服务</button>
+      <button id="addServiceButton" class="primary-btn" data-i18n="addService" onclick="ownerSelfService.openServiceForm()">新增服务</button>
     </div>
     <div class="card">
       <div id="servicesMessage" class="save-status"></div>
-      <div id="servicesList" class="loading">正在读取服务...</div>
+      <div id="servicesList" class="loading" data-i18n="loadingServices">正在读取服务...</div>
     </div>
     <div id="serviceFormPanel" class="card panel" hidden style="margin-top:16px">
       <div class="section-heading"><h3 id="serviceFormTitle">新增服务</h3></div>
       <div class="form-grid">
-        <label class="field"><span>中文名称</span><input id="serviceNameZh" maxlength="200"></label>
-        <label class="field"><span>English Name</span><input id="serviceNameEn" maxlength="200"></label>
-        <label class="field"><span>分类</span><input id="serviceCategory" maxlength="100"></label>
-        <label class="field full"><span>中文说明</span><textarea id="serviceDescriptionZh" maxlength="2000"></textarea></label>
-        <label class="field full"><span>English Description</span><textarea id="serviceDescriptionEn" maxlength="2000"></textarea></label>
-        <label class="field"><span>价格（S$）</span><input id="servicePrice" type="number" min="0" step="0.01"></label>
-        <label class="field"><span>服务时长（分钟）</span><input id="serviceDuration" type="number" min="1" max="1440"></label>
-        <label class="field"><span>排序</span><input id="serviceSortOrder" type="number" min="0"></label>
-        <label class="check-row"><input id="serviceBookable" type="checkbox">允许顾客预约</label>
-        <label class="check-row"><input id="serviceActive" type="checkbox">启用项目</label>
-        <label class="check-row"><input id="servicePriceIsFrom" type="checkbox">起价 / From</label>
+        <label class="field"><span data-i18n="chineseName">中文名称</span><input id="serviceNameZh" maxlength="200"></label>
+        <label class="field"><span data-i18n="englishName">English Name</span><input id="serviceNameEn" maxlength="200"></label>
+        <label class="field"><span data-i18n="category">分类</span><input id="serviceCategory" maxlength="100"></label>
+        <label class="field full"><span data-i18n="chineseDescription">中文说明</span><textarea id="serviceDescriptionZh" maxlength="2000"></textarea></label>
+        <label class="field full"><span data-i18n="englishDescription">English Description</span><textarea id="serviceDescriptionEn" maxlength="2000"></textarea></label>
+        <label class="field"><span data-i18n="price">价格</span><input id="servicePrice" type="number" min="0" step="0.01"></label>
+        <label class="field"><span data-i18n="durationMinutes">服务时长（分钟）</span><input id="serviceDuration" type="number" min="1" max="1440"></label>
+        <label class="field"><span data-i18n="sortOrder">排序</span><input id="serviceSortOrder" type="number" min="0"></label>
+        <label class="check-row"><input id="serviceBookable" type="checkbox"><span data-i18n="allowBooking">允许顾客预约</span></label>
+        <label class="check-row"><input id="serviceActive" type="checkbox"><span data-i18n="serviceActive">启用项目</span></label>
+        <label class="check-row"><input id="servicePriceIsFrom" type="checkbox"><span data-i18n="startingPrice">起价 / From</span></label>
       </div>
-      <div class="form-actions"><button class="secondary-btn" onclick="ownerSelfService.closeServiceForm()">取消</button><button id="saveServiceButton" class="primary-btn" onclick="ownerSelfService.saveService()">保存</button></div>
+      <div class="form-actions"><button class="secondary-btn" data-i18n="cancel" onclick="ownerSelfService.closeServiceForm()">取消</button><button id="saveServiceButton" class="primary-btn" data-i18n="save" onclick="ownerSelfService.saveService()">保存</button></div>
     </div>
   </section>
 
   <section id="staffView" class="view" hidden>
     <div class="toolbar">
-      <div><h2>员工</h2><div class="muted">管理员工资料、服务能力与排班</div></div>
-      <button id="addStaffButton" class="primary-btn" onclick="ownerSelfService.openStaffForm()">新增员工</button>
+      <div><h2 data-i18n="staffManagement">员工</h2><div class="muted" data-i18n="staffHelp">管理员工资料、服务能力与排班</div></div>
+      <button id="addStaffButton" class="primary-btn" data-i18n="addStaff" onclick="ownerSelfService.openStaffForm()">新增员工</button>
     </div>
     <div class="management-grid">
-      <div class="card"><div id="staffMessage" class="save-status"></div><div id="staffList" class="loading">正在读取员工...</div></div>
-      <div id="staffDetail" class="card"><div class="empty">请选择一位员工</div></div>
+      <div class="card"><div id="staffMessage" class="save-status"></div><div id="staffList" class="loading" data-i18n="loadingStaff">正在读取员工...</div></div>
+      <div id="staffDetail" class="card"><div class="empty" data-i18n="chooseStaff">请选择一位员工</div></div>
     </div>
   </section>
 
 </div>
 
+<script src="/shared-i18n.js"></script>
 <script src="/service-locale.js"></script>
 <script src="/admin-self-service.js"></script>
 
@@ -547,6 +551,17 @@ const loginOverlay =
 
 const adminContent =
   document.getElementById('adminContent');
+
+let currentAppointments = [];
+globalThis.currentAppointments = currentAppointments;
+const adminT = key => globalThis.ggI18n.t(
+  key,
+  globalThis.ownerSelfService?._state.locale || globalThis.ggI18n.DEFAULT_LOCALE
+);
+const adminResultMessage = (result, fallbackKey) =>
+  globalThis.ownerSelfService?._state.locale === 'zh-CN' && result?.message
+    ? result.message
+    : adminT(fallbackKey);
 
 function showLogin(message = '') {
   adminContent.hidden = true;
@@ -565,7 +580,9 @@ function showLogin(message = '') {
   document.getElementById('todayCount').textContent = '0';
 
   content.className = 'loading';
-  content.textContent = '请先登录后查看预约';
+  currentAppointments = [];
+  globalThis.currentAppointments = currentAppointments;
+  content.textContent = adminT('loginRequired');
 
   if (globalThis.ownerSelfService) {
     globalThis.ownerSelfService.reset();
@@ -589,7 +606,7 @@ async function initializeAdmin() {
     }
 
     if (!response.ok) {
-      showLogin('无法验证登录状态，请稍后重试');
+      showLogin(adminT('authCheckFailed'));
       return;
     }
 
@@ -602,7 +619,7 @@ async function initializeAdmin() {
     showAdmin();
     await loadAppointments();
   } catch (_error) {
-    showLogin('无法验证登录状态，请稍后重试');
+    showLogin(adminT('authCheckFailed'));
   }
 }
 
@@ -619,11 +636,11 @@ async function adminLogin() {
   const message = document.getElementById('loginMessage');
 
   if (!loginIdentifier || !password) {
-    message.textContent = '请输入登录账号和密码';
+    message.textContent = adminT('loginRequiredFields');
     return;
   }
 
-  message.textContent = '正在登录...';
+  message.textContent = adminT('loggingIn');
 
   try {
     const loginBody = {
@@ -647,7 +664,7 @@ async function adminLogin() {
     const result = await response.json();
 
     if (!response.ok || !result.success) {
-      message.textContent = result.message || '密码错误';
+      message.textContent = adminResultMessage(result, 'loginFailed');
       return;
     }
 
@@ -662,7 +679,7 @@ async function adminLogin() {
     await loadAppointments();
 
   } catch (error) {
-    message.textContent = '登录失败，请重试';
+    message.textContent = adminT('loginFailed');
   }
 }
 
@@ -674,12 +691,12 @@ async function ownerLogout() {
     });
 
     if (!response.ok) {
-      throw new Error('退出登录失败');
+      throw new Error(adminT('logoutFailed'));
     }
 
-    showLogin('已退出登录');
+    showLogin(adminT('loggedOut'));
   } catch (_error) {
-    alert('退出登录失败，请稍后重试');
+    alert(adminT('logoutFailed'));
   }
 }
 // 格式化新加坡时间
@@ -691,7 +708,7 @@ function formatSingaporeTime(dateString) {
     new Date(dateString);
 
   return new Intl.DateTimeFormat(
-    'zh-CN',
+    globalThis.ownerSelfService?._state.locale || 'en',
     {
       timeZone: 'Asia/Singapore',
       year: 'numeric',
@@ -705,17 +722,8 @@ function formatSingaporeTime(dateString) {
 }
 
 
-// 状态中文
 function getStatusText(status) {
-
-  const map = {
-    pending: '待确认',
-    confirmed: '已确认',
-    cancelled: '已取消',
-    completed: '已完成'
-  };
-
-  return map[status] || status || '-';
+  return globalThis.ggI18n.formatStatus(status, globalThis.ownerSelfService?._state.locale || 'en') || status || '-';
 }
 
 
@@ -740,7 +748,7 @@ async function loadAppointments() {
   content.className = 'loading';
 
   content.textContent =
-    '正在读取预约...';
+    adminT('loadingAppointments');
 
   try {
 
@@ -753,19 +761,22 @@ async function loadAppointments() {
       await response.json();
 
     if (response.status === 401) {
-      showLogin(result.message || '请先登录');
+      showLogin(adminT('sessionExpired'));
 
       return;
     }
 
     if (!response.ok || !result.success) {
       throw new Error(
-        result.message || '读取预约失败'
+        adminResultMessage(result, 'error')
       );
     }
 
     const appointments =
       result.data || [];
+
+    currentAppointments = appointments;
+    globalThis.currentAppointments = currentAppointments;
 
     updateSummary(appointments);
 
@@ -842,7 +853,7 @@ function renderAppointments(appointments) {
     content.className = 'empty';
 
     content.textContent =
-      '目前没有预约';
+      adminT('noAppointments');
 
     return;
   }
@@ -892,9 +903,9 @@ function renderAppointments(appointments) {
 
         
       <td>
-  <button onclick="updateAppointmentStatus('${item.id}', 'confirmed')">确认</button>
-  <button onclick="updateAppointmentStatus('${item.id}', 'completed')">完成</button>
-  <button onclick="updateAppointmentStatus('${item.id}', 'cancelled')">取消</button>
+  <button onclick="updateAppointmentStatus('${item.id}', 'confirmed')">${adminT('confirm')}</button>
+  <button onclick="updateAppointmentStatus('${item.id}', 'completed')">${adminT('complete')}</button>
+  <button onclick="updateAppointmentStatus('${item.id}', 'cancelled')">${adminT('cancel')}</button>
 </td>
 </tr>
 `;
@@ -906,13 +917,13 @@ function renderAppointments(appointments) {
 
       <thead>
         <tr>
-          <th>预约时间</th>
-          <th>顾客姓名</th>
-          <th>电话</th>
-          <th>项目</th>
-          <th>员工</th>
-          <th>状态</th>
-          <th>操作</th>
+          <th>${adminT('appointmentTime')}</th>
+          <th>${adminT('customerName')}</th>
+          <th>${adminT('phone')}</th>
+          <th>${adminT('service')}</th>
+          <th>${adminT('staff')}</th>
+          <th>${adminT('status')}</th>
+          <th>${adminT('actions')}</th>
         </tr>
       </thead>
 
@@ -924,13 +935,9 @@ function renderAppointments(appointments) {
   `;
 }
 async function updateAppointmentStatus(id, status) {
-  const actionText = {
-    confirmed: '确认',
-    completed: '完成',
-    cancelled: '取消'
-  }[status] || status;
+  const promptKey = { confirmed: 'confirmAppointmentPrompt', completed: 'completeAppointmentPrompt', cancelled: 'cancelAppointmentPrompt' }[status];
 
-  if (!confirm(`确定要${actionText}这条预约吗？`)) {
+  if (!confirm(adminT(promptKey))) {
     return;
   }
 
@@ -950,18 +957,18 @@ async function updateAppointmentStatus(id, status) {
     const result = await response.json();
 
     if (response.status === 401) {
-      showLogin(result.message || '请先登录');
+      showLogin(adminT('sessionExpired'));
       return;
     }
 
     if (!response.ok || !result.success) {
-      throw new Error(result.message || '操作失败');
+      throw new Error(adminResultMessage(result, 'operationFailed'));
     }
 
     await loadAppointments();
 
   } catch (error) {
-    alert(error.message || '操作失败');
+    alert(error.message || adminT('operationFailed'));
   }
 }
 

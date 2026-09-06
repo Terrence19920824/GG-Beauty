@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const i18n = require('../public/shared-i18n');
 
 const htmlPath = path.join(__dirname, '..', 'public', 'admin.html');
 const html = fs.readFileSync(htmlPath, 'utf8');
@@ -61,6 +62,8 @@ const createPage = replies => {
     Date,
     Intl,
     JSON,
+    ggI18n: i18n,
+    ownerSelfService: { _state: { locale: 'zh-CN' }, setProfile() {}, reset() {} },
     confirm: () => true,
     alert: message => alerts.push(message),
     fetch: async (url, options = {}) => {

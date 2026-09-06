@@ -11,6 +11,7 @@ const {
   resolveLocalizedService,
   STORAGE_KEY
 } = require('../public/service-locale');
+const sharedI18n = require('../public/shared-i18n');
 
 const root = path.resolve(__dirname, '..');
 const ID = {
@@ -37,6 +38,26 @@ test('localized resolver follows requested, English, Chinese, canonical fallback
   assert.equal(resolveLocalizedService({ ...service, translations: { en: service.translations.en } }, 'zh').name, 'English');
   assert.equal(resolveLocalizedService({ ...service, translations: { 'zh-CN': service.translations['zh-CN'] } }, 'en').name, '中文');
   assert.equal(resolveLocalizedService({ name: 'Canonical', translations: {} }, 'en').name, 'Canonical');
+});
+
+test('shared UI i18n normalizes, persists and safely falls back missing keys', () => {
+  const writes = [];
+  const storage = { getItem: () => 'en', setItem: (key, value) => writes.push([key, value]) };
+  assert.equal(sharedI18n.getStoredLocale(storage, { languages: ['zh-SG'] }), 'en');
+  assert.equal(sharedI18n.setLocale('zh-Hans', storage), 'zh-CN');
+  assert.deepEqual(writes, [['gg_beauty_locale', 'zh-CN']]);
+  assert.equal(sharedI18n.t('save', 'zh-CN'), '保存');
+  assert.equal(sharedI18n.t('save', 'en'), 'Save');
+  assert.equal(sharedI18n.t('missing.key', 'en'), 'missing.key');
+  assert.equal(sharedI18n.formatStatus('no_show', 'zh-CN'), '未到店');
+  assert.equal(sharedI18n.formatStatus('completed', 'en'), 'Completed');
+});
+
+test('shared formatters translate presentation only', () => {
+  assert.equal(sharedI18n.formatPrice(168, true, 'zh-CN'), 'S$168.00 起');
+  assert.equal(sharedI18n.formatPrice(168, true, 'en'), 'From S$168.00');
+  assert.equal(sharedI18n.formatDuration(150, 'zh-CN'), '150 分钟');
+  assert.equal(sharedI18n.formatDuration(150, 'en'), '150 min');
 });
 
 const migrationSql = () => ({
@@ -165,9 +186,20 @@ test('availability uses tenant service id and never localized display name ident
 
 test('customer UI sends serviceId and locale and displays from-price in both languages', () => {
   const html = fs.readFileSync(path.join(root, 'public/index.html'), 'utf8');
+  const shared = fs.readFileSync(path.join(root, 'public/shared-i18n.js'), 'utf8');
   assert.match(html, /serviceId: service\.id/);
   assert.match(html, /locale: currentLocale/);
-  assert.match(html, /From /);
-  assert.match(html, / 起/);
+  assert.match(shared, /From/);
+  assert.match(shared, /起/);
   assert.doesNotMatch(html, /service:\s*service\.name/);
+});
+
+test('customer and owner pages share one locale module and store no auth state', () => {
+  const customer = fs.readFileSync(path.join(root, 'public/index.html'), 'utf8');
+  const owner = fs.readFileSync(path.join(root, 'public/admin.html'), 'utf8');
+  const shared = fs.readFileSync(path.join(root, 'public/shared-i18n.js'), 'utf8');
+  assert.match(customer, /src="\/shared-i18n\.js"/);
+  assert.match(owner, /src="\/shared-i18n\.js"/);
+  assert.match(customer, /const localeApi = globalThis\.ggI18n/);
+  assert.doesNotMatch(customer + owner + shared, /localStorage[^\n]*(token|session|auth|password)|(token|session|auth|password)[^\n]*localStorage/i);
 });
