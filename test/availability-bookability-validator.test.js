@@ -7,7 +7,8 @@ const {
   StaffBookabilityError
 } = require('../lib/staff-bookability-validator');
 const {
-  filterBookableCandidateSlots
+  filterBookableCandidateSlots,
+  filterAnyStaffCandidateSlots
 } = require('../server');
 
 const ID = {
@@ -156,4 +157,29 @@ test('validator receives trusted ids and candidate instants', async () => {
       requestedEndAt: candidates()[0].end_at
     }
   );
+});
+
+test('no preference exposes a slot when at least one eligible staff passes', async () => {
+  const seen = [];
+  const result = await filterAnyStaffCandidateSlots({
+    dbClient: {}, candidates: candidates(), shopId: ID.shop,
+    locationId: ID.location, serviceId: ID.service,
+    staffCandidates: [{ staff_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' }, { staff_id: ID.staff }],
+    validator: async input => {
+      seen.push(input.staffId);
+      if (input.staffId !== ID.staff) throw new StaffBookabilityError('APPOINTMENT_COLLISION');
+    }
+  });
+  assert.deepEqual(result, ['10:00', '10:30']);
+  assert.deepEqual(seen, ['aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', ID.staff, 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', ID.staff]);
+});
+
+test('no preference hides slots when every eligible staff fails', async () => {
+  const result = await filterAnyStaffCandidateSlots({
+    dbClient: {}, candidates: candidates(), shopId: ID.shop,
+    locationId: ID.location, serviceId: ID.service,
+    staffCandidates: [{ staff_id: ID.staff }],
+    validator: unavailable('STAFF_ON_LEAVE')
+  });
+  assert.deepEqual(result, []);
 });

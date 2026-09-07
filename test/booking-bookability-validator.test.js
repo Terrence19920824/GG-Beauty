@@ -12,6 +12,7 @@ const ID = {
   shop: '11111111-1111-4111-8111-111111111111',
   location: '22222222-2222-4222-8222-222222222222',
   staff: '33333333-3333-4333-8333-333333333333',
+  staff2: '33333333-3333-4333-8333-444444444444',
   service: '44444444-4444-4444-8444-444444444444',
   customer: '55555555-5555-4555-8555-555555555555',
   appointment: '66666666-6666-4666-8666-666666666666',
@@ -36,6 +37,12 @@ const responseForSql = (sql, params = []) => {
   if (/FROM shops/.test(sql)) return { rows: [{ id: ID.shop }] };
   if (/FROM locations\s/.test(sql) && !/WITH interval_scope/.test(sql)) {
     return { rows: [{ id: ID.location }] };
+  }
+  if (/assigned_appointment_count/.test(sql)) {
+    return { rows: [
+      { staff_id: ID.staff, display_name: 'Amy', assigned_appointment_count: 0 },
+      { staff_id: ID.staff2, display_name: 'Bob', assigned_appointment_count: 1 }
+    ] };
   }
   if (/FROM services/.test(sql)) {
     if (params[1] == null && params[2] && params[2] !== 'Test Service') {
@@ -271,6 +278,44 @@ test('serviceId booking uses localized snapshot name and normalized locale', asy
   assert.equal(itemWrite.params[5], 'zh-CN');
 });
 
+test('no preference revalidates ordered candidates inside transaction and assigns a passing staff id', async () => {
+  delete process.env.BOOKING_WRITE_MAINTENANCE;
+  const fixture = makePool();
+  const seen = [];
+  installDependencies(fixture.pool, async input => {
+    seen.push(input.staffId);
+    assert.equal(fixture.state.queries[0].sql, 'BEGIN');
+    if (input.staffId === ID.staff) throw new StaffBookabilityError('APPOINTMENT_COLLISION');
+  });
+  await withServer(async baseUrl => {
+    const response = await postBooking(baseUrl, {
+      ...body,
+      serviceId: ID.service,
+      staff: undefined,
+      staffSelectionType: 'no_preference'
+    });
+    assert.equal(response.status, 200);
+  });
+  assert.deepEqual(seen, [ID.staff, ID.staff2]);
+  const parentWrite = fixture.state.queries.find(({ sql }) => /^INSERT INTO appointments/i.test(sql));
+  assert.equal(parentWrite.params[4], ID.staff2);
+  assert.equal(fixture.state.queries.at(-1).sql, 'COMMIT');
+});
+
+test('no preference rolls back without business writes when all candidates fail', async () => {
+  delete process.env.BOOKING_WRITE_MAINTENANCE;
+  const fixture = makePool();
+  installDependencies(fixture.pool, async () => { throw new StaffBookabilityError('STAFF_ON_LEAVE'); });
+  await withServer(async baseUrl => {
+    const response = await postBooking(baseUrl, {
+      ...body, serviceId: ID.service, staff: undefined, staffSelectionType: 'no_preference'
+    });
+    assert.equal(response.status, 409);
+  });
+  assert.equal(sqlWrites(fixture.state).length, 0);
+  assert.equal(fixture.state.queries.at(-1).sql, 'ROLLBACK');
+});
+
 test('legacy canonical service name remains compatible only without serviceId', async () => {
   delete process.env.BOOKING_WRITE_MAINTENANCE;
   const fixture = makePool();
@@ -326,6 +371,24 @@ test('parent 23P01 rolls back and returns 409', async () => {
   await withServer(async baseUrl => {
     const response = await postBooking(baseUrl);
     assert.equal(response.status, 409);
+  });
+  assert.equal(fixture.state.queries.at(-1).sql, 'ROLLBACK');
+  assert.equal(fixture.state.released, 1);
+});
+
+test('assignment exclusion 23P01 rolls back the whole booking and returns 409', async () => {
+  delete process.env.BOOKING_WRITE_MAINTENANCE;
+  const fixture = makePool(sql => {
+    if (!/^INSERT INTO appointment_item_staff_assignments/i.test(sql)) return null;
+    const error = new Error('assignment exclusion detail');
+    error.code = '23P01';
+    return error;
+  });
+  installDependencies(fixture.pool, async () => {});
+  await withServer(async baseUrl => {
+    const response = await postBooking(baseUrl);
+    assert.equal(response.status, 409);
+    assert.equal((await response.json()).message, '该时间段已被预约，请选择其他时间');
   });
   assert.equal(fixture.state.queries.at(-1).sql, 'ROLLBACK');
   assert.equal(fixture.state.released, 1);

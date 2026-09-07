@@ -138,7 +138,7 @@
 
     <label data-i18n="chooseStaffCustomer">选择员工</label>
     <select id="staff">
-      <option value="Staff 01">Staff 01</option>
+      <option value="" data-i18n="customerStaffLoading">正在读取员工...</option>
     </select>
 
     <label data-i18n="appointmentDate">预约日期</label>
@@ -195,6 +195,8 @@ const SHOP_SLUG = 'gg-beauty-test';
 
 let selectedTime = '';
 let availableServices = [];
+let availableStaff = [];
+const NO_PREFERENCE_VALUE = '__no_preference__';
 const localeApi = globalThis.ggI18n;
 const customerT = key => localeApi.t(key, currentLocale);
 
@@ -234,6 +236,43 @@ async function loadServices() {
   if (!response.ok || result.success === false) throw new Error(result.message || customerT('noCustomerServices'));
   availableServices = result.data || [];
   renderServices();
+  await loadStaffOptions();
+}
+
+function renderStaffOptions() {
+  staffInput.innerHTML = '';
+  const noPreference = document.createElement('option');
+  noPreference.value = NO_PREFERENCE_VALUE;
+  noPreference.textContent = customerT('customerStaffNoPreference');
+  staffInput.appendChild(noPreference);
+  for (const member of availableStaff) {
+    const option = document.createElement('option');
+    option.value = member.staffId;
+    option.textContent = member.displayName;
+    staffInput.appendChild(option);
+  }
+  if (!availableStaff.length) {
+    const option = document.createElement('option');
+    option.value = '';
+    option.disabled = true;
+    option.textContent = customerT('customerStaffNone');
+    staffInput.appendChild(option);
+  }
+}
+
+async function loadStaffOptions() {
+  const service = selectedService();
+  availableStaff = [];
+  if (!service) {
+    renderStaffOptions();
+    return;
+  }
+  staffInput.innerHTML = `<option value="">${customerT('customerStaffLoading')}</option>`;
+  const response = await fetch(`/api/booking/staff-options?shopSlug=${encodeURIComponent(SHOP_SLUG)}&serviceId=${encodeURIComponent(service.id)}`);
+  const result = await response.json();
+  if (!response.ok || result.success === false) throw new Error(result.message || customerT('customerStaffNone'));
+  availableStaff = result.data || [];
+  renderStaffOptions();
 }
 
 async function setLocale(locale) {
@@ -282,7 +321,15 @@ staffInput.addEventListener(
 
 serviceInput.addEventListener(
   'change',
-  loadAvailableTimes
+  async () => {
+    selectedTime = '';
+    try {
+      await loadStaffOptions();
+      await loadAvailableTimes();
+    } catch (error) {
+      timesBox.innerHTML = `<div class="error">${error.message}</div>`;
+    }
+  }
 );
 
 
@@ -290,7 +337,8 @@ serviceInput.addEventListener(
 async function loadAvailableTimes() {
 
   const date = dateInput.value;
-  const staff = staffInput.value;
+  const staffSelection = staffInput.value;
+  const noPreference = staffSelection === NO_PREFERENCE_VALUE;
   const service = selectedService();
 
   selectedTime = '';
@@ -310,7 +358,8 @@ async function loadAvailableTimes() {
       `/api/available-times-db` +
       `?shopSlug=${encodeURIComponent(SHOP_SLUG)}` +
       `&date=${encodeURIComponent(date)}` +
-      `&staff=${encodeURIComponent(staff)}` +
+      `&staffSelectionType=${noPreference ? 'no_preference' : 'specific'}` +
+      (noPreference ? '' : `&staffId=${encodeURIComponent(staffSelection)}`) +
       `&serviceId=${encodeURIComponent(service?.id || '')}`;
 
     const response =
@@ -404,13 +453,15 @@ document
       const date =
         dateInput.value;
 
-      const staff =
+      const staffSelection =
         staffInput.value;
+      const noPreference = staffSelection === NO_PREFERENCE_VALUE;
 
       const service = selectedService();
 
       if (
         !service ||
+        (!noPreference && !staffSelection) ||
         !customerName ||
         !phone ||
         !date ||
@@ -453,7 +504,8 @@ document
                 shopSlug: SHOP_SLUG,
                 serviceId: service.id,
                 locale: currentLocale,
-                staff,
+                staffSelectionType: noPreference ? 'no_preference' : 'specific',
+                ...(noPreference ? {} : { staffId: staffSelection }),
                 customerName,
                 phone,
                 email,
@@ -478,7 +530,7 @@ document
         messageBox.innerHTML =
           `✅ ${customerT('bookingSuccess')}<br>` +
           `${date} ${selectedTime}<br>` +
-          `${service.name} · ${staff}`;
+          `${service.name} · ${staffInput.options[staffInput.selectedIndex].textContent}`;
 
         // 成功后重新读取时间
         await loadAvailableTimes();

@@ -1711,6 +1711,8 @@ app.post('/api/new-db', async (req, res) => {
     service,
     locale: requestedLocale,
     staff,
+    staffId: requestedStaffId,
+    staffSelectionType = requestedStaffId ? 'specific' : undefined,
     customerName,
     phone,
     email,
@@ -1718,10 +1720,13 @@ app.post('/api/new-db', async (req, res) => {
     time
   } = req.body;
 
+  const noPreference = staffSelectionType === 'no_preference';
+
   if (
     !shopSlug ||
     (!serviceId && !service) ||
-    !staff ||
+    (!noPreference && !requestedStaffId && !staff) ||
+    !['specific', 'no_preference', undefined].includes(staffSelectionType) ||
     !customerName ||
     !phone ||
     !date ||
@@ -1738,6 +1743,10 @@ app.post('/api/new-db', async (req, res) => {
       success: false,
       message: '服务项目无效'
     });
+  }
+
+  if (requestedStaffId !== undefined && !isUuid(requestedStaffId)) {
+    return res.status(400).json({ success: false, message: '员工无效' });
   }
 
   const serviceLocale = normalizeLocale(requestedLocale);
@@ -1850,18 +1859,21 @@ app.post('/api/new-db', async (req, res) => {
         }
 
         // 4. 找员工
-        const staffResult = await client.query(
+        const staffResult = noPreference ? { rows: [] } : await client.query(
           `
           SELECT id
           FROM staff
           WHERE shop_id = $1
-            AND name = $2
+            AND (
+              ($2::UUID IS NOT NULL AND id = $2::UUID)
+              OR ($2::UUID IS NULL AND name = $3)
+            )
           LIMIT 1
           `,
-          [shopId, staff]
+          [shopId, requestedStaffId || null, staff || null]
         );
 
-        if (staffResult.rows.length === 0) {
+        if (!noPreference && staffResult.rows.length === 0) {
           throw new AppointmentMutationError(
             'staff_not_found',
             400,
@@ -1869,7 +1881,7 @@ app.post('/api/new-db', async (req, res) => {
           );
         }
 
-        const staffId = staffResult.rows[0].id;
+        let staffId = noPreference ? null : staffResult.rows[0].id;
 
         // 5. PostgreSQL derives the authoritative interval from the
         // server-selected location timezone and service duration.
@@ -1920,15 +1932,43 @@ app.post('/api/new-db', async (req, res) => {
         const endAt =
           intervalResult.rows[0].end_at;
 
-        await req.app.locals.bookingValidator({
-          dbClient: client,
-          shopId,
-          locationId,
-          staffId,
-          serviceId: selectedService.id,
-          requestedStartAt: startAt,
-          requestedEndAt: endAt
-        });
+        if (noPreference) {
+          const staffCandidates = await loadEligibleBookingStaff(client, {
+            shopId,
+            locationId,
+            serviceId: selectedService.id,
+            date
+          });
+          for (const candidate of staffCandidates) {
+            try {
+              await req.app.locals.bookingValidator({
+                dbClient: client,
+                shopId,
+                locationId,
+                staffId: candidate.staff_id,
+                serviceId: selectedService.id,
+                requestedStartAt: startAt,
+                requestedEndAt: endAt
+              });
+              staffId = candidate.staff_id;
+              break;
+            } catch (error) {
+              if (error instanceof StaffBookabilityError && UNAVAILABLE_SLOT_ERROR_CODES.has(error.code)) continue;
+              throw error;
+            }
+          }
+          if (!staffId) throw new StaffBookabilityError('NO_AVAILABLE_STAFF');
+        } else {
+          await req.app.locals.bookingValidator({
+            dbClient: client,
+            shopId,
+            locationId,
+            staffId,
+            serviceId: selectedService.id,
+            requestedStartAt: startAt,
+            requestedEndAt: endAt
+          });
+        }
 
         // 6. Validator passed before any customer or appointment write.
         let customerResult = await client.query(
@@ -2153,7 +2193,8 @@ const UNAVAILABLE_SLOT_ERROR_CODES = new Set([
   'STAFF_ON_LEAVE',
   'SCHEDULE_OVERRIDE_PENDING',
   'SCHEDULE_CONFIGURATION_INVALID',
-  'APPOINTMENT_COLLISION'
+  'APPOINTMENT_COLLISION',
+  'NO_AVAILABLE_STAFF'
 ]);
 
 const isValidCalendarDate = value => {
@@ -2226,6 +2267,143 @@ const filterBookableCandidateSlots = async ({
   return availableTimes;
 };
 
+// Phase-one customer location boundary: resolve the tenant from its public
+// slug, then select that tenant's first active location. A future locationId
+// may be added here only after validating it against the resolved shop.
+const loadTrustedCustomerBookingScope = async (dbClient, shopSlug) => {
+  const result = await dbClient.query(
+    `
+    SELECT shop.id AS shop_id, location.id AS location_id
+    FROM shops AS shop
+    JOIN LATERAL (
+      SELECT id
+      FROM locations
+      WHERE shop_id = shop.id AND is_active = TRUE
+      ORDER BY created_at ASC
+      LIMIT 1
+    ) AS location ON TRUE
+    WHERE shop.slug = $1 AND shop.status = 'active'
+    LIMIT 1
+    `,
+    [shopSlug]
+  );
+  return result.rows[0] || null;
+};
+
+const loadEligibleBookingStaff = async (
+  dbClient,
+  { shopId, locationId, serviceId, date = null }
+) => {
+  const result = await dbClient.query(
+    `
+    SELECT
+      member.id AS staff_id,
+      member.name AS display_name,
+      COUNT(DISTINCT busy_item.appointment_id) FILTER (
+        WHERE busy.blocks_time = TRUE
+          AND ($4::DATE IS NULL OR (busy.start_at AT TIME ZONE location.timezone)::DATE = $4::DATE)
+      )::INTEGER AS assigned_appointment_count
+    FROM services AS service
+    JOIN staff_services AS capability
+      ON capability.shop_id = service.shop_id
+     AND capability.service_id = service.id
+     AND capability.is_active = TRUE
+    JOIN staff AS member
+      ON member.shop_id = capability.shop_id
+     AND member.id = capability.staff_id
+     AND member.is_active = TRUE
+     AND member.bookable = TRUE
+    JOIN staff_location_assignments AS location_assignment
+      ON location_assignment.shop_id = member.shop_id
+     AND location_assignment.staff_id = member.id
+     AND location_assignment.location_id = $2::UUID
+     AND location_assignment.is_active = TRUE
+    JOIN locations AS location
+      ON location.shop_id = service.shop_id
+     AND location.id = location_assignment.location_id
+     AND location.is_active = TRUE
+    LEFT JOIN appointment_item_staff_assignments AS busy
+      ON busy.shop_id = member.shop_id
+     AND busy.staff_id = member.id
+    LEFT JOIN appointment_items AS busy_item
+      ON busy_item.shop_id = busy.shop_id
+     AND busy_item.location_id = busy.location_id
+     AND busy_item.id = busy.appointment_item_id
+    WHERE service.shop_id = $1::UUID
+      AND service.id = $3::UUID
+      AND service.is_active = TRUE
+      AND service.bookable = TRUE
+    GROUP BY member.id, member.name
+    ORDER BY assigned_appointment_count ASC, member.id ASC
+    LIMIT 100
+    `,
+    [shopId, locationId, serviceId, date]
+  );
+  return result.rows;
+};
+
+const filterAnyStaffCandidateSlots = async ({
+  dbClient,
+  candidates,
+  staffCandidates,
+  shopId,
+  locationId,
+  serviceId,
+  validator = validateStaffBookability
+}) => {
+  const availableTimes = [];
+  for (const candidate of candidates) {
+    let available = false;
+    for (const member of staffCandidates) {
+      try {
+        await validator({
+          dbClient,
+          shopId,
+          locationId,
+          staffId: member.staff_id,
+          serviceId,
+          requestedStartAt: candidate.start_at,
+          requestedEndAt: candidate.end_at
+        });
+        available = true;
+        break;
+      } catch (error) {
+        if (error instanceof StaffBookabilityError && UNAVAILABLE_SLOT_ERROR_CODES.has(error.code)) continue;
+        throw error;
+      }
+    }
+    if (available) availableTimes.push(candidate.time);
+  }
+  return availableTimes;
+};
+
+app.get('/api/booking/staff-options', async (req, res) => {
+  const { shopSlug, serviceId } = req.query;
+  if (typeof shopSlug !== 'string' || !shopSlug || !isUuid(serviceId)) {
+    return res.status(400).json({ success: false, message: '预约选项无效' });
+  }
+  let client;
+  try {
+    client = await req.app.locals.bookingPool.connect();
+    const scope = await loadTrustedCustomerBookingScope(client, shopSlug);
+    if (!scope) return res.status(404).json({ success: false, message: '找不到预约选项' });
+    const staffOptions = await loadEligibleBookingStaff(client, {
+      shopId: scope.shop_id,
+      locationId: scope.location_id,
+      serviceId
+    });
+    return res.json({
+      success: true,
+      data: staffOptions.map(row => ({ staffId: row.staff_id, displayName: row.display_name }))
+    });
+  } catch (error) {
+    console.error('Staff options error:', safeStaffAuthErrorCode(error));
+    return res.status(500).json({ success: false, message: '获取员工选项失败' });
+  } finally {
+    if (client) client.release();
+  }
+});
+
 app.get(
   '/api/available-times-db',
   async (req, res) => {
@@ -2234,15 +2412,19 @@ app.get(
       shopSlug,
       date,
       staff,
+      staffId: requestedStaffId,
+      staffSelectionType = requestedStaffId ? 'specific' : undefined,
       serviceId,
       service
     } = req.query;
 
+    const noPreference = staffSelectionType === 'no_preference';
+
     if (
       typeof shopSlug !== 'string' ||
-      typeof staff !== 'string' ||
       !shopSlug ||
-      !staff ||
+      (!noPreference && !requestedStaffId && (typeof staff !== 'string' || !staff)) ||
+      !['specific', 'no_preference', undefined].includes(staffSelectionType) ||
       (!serviceId && (typeof service !== 'string' || !service)) ||
       !isValidCalendarDate(date)
     ) {
@@ -2258,6 +2440,10 @@ app.get(
         success: false,
         message: '服务项目无效'
       });
+    }
+
+    if (requestedStaffId !== undefined && !isUuid(requestedStaffId)) {
+      return res.status(400).json({ success: false, message: '员工无效' });
     }
 
     let client;
@@ -2311,21 +2497,25 @@ app.get(
       const locationId = locationResult.rows[0].id;
 
       // 3. Tenant-scoped lookup only; bookability is decided by the validator.
-      const staffResult = await client.query(
+      const staffResult = noPreference ? { rows: [] } : await client.query(
         `
         SELECT id
         FROM staff
         WHERE shop_id = $1
-          AND name = $2
+          AND (
+            ($2::UUID IS NOT NULL AND id = $2::UUID)
+            OR ($2::UUID IS NULL AND name = $3)
+          )
         LIMIT 1
         `,
         [
           shopId,
-          staff
+          requestedStaffId || null,
+          staff || null
         ]
       );
 
-      if (staffResult.rows.length === 0) {
+      if (!noPreference && staffResult.rows.length === 0) {
         return res.status(404).json({
           success: false,
           message: '找不到预约选项'
@@ -2333,7 +2523,7 @@ app.get(
       }
 
       const staffId =
-        staffResult.rows[0].id;
+        noPreference ? null : staffResult.rows[0].id;
 
 
       // 4. Duration comes only from the tenant-scoped service row.
@@ -2423,15 +2613,15 @@ app.get(
             end_at AT TIME ZONE 'UTC',
             'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'
           ) AS end_at,
-          EXISTS (
+          CASE WHEN $4::UUID IS NULL THEN FALSE ELSE EXISTS (
             SELECT 1
-            FROM appointments AS appointment
-            WHERE appointment.staff_id = $4::UUID
-              AND appointment.status IN ('pending', 'confirmed')
-              AND appointment.override_conflict = FALSE
-              AND appointment.start_at < bounded_candidate.end_at
-              AND appointment.end_at > bounded_candidate.start_at
-          ) AS has_database_guard_collision
+            FROM appointment_item_staff_assignments AS assignment
+            WHERE assignment.shop_id = $5::UUID
+              AND assignment.staff_id = $4::UUID
+              AND assignment.blocks_time = TRUE
+              AND assignment.start_at < bounded_candidate.end_at
+              AND assignment.end_at > bounded_candidate.start_at
+          ) END AS has_database_guard_collision
         FROM bounded_candidate
         ORDER BY start_at
         `,
@@ -2445,14 +2635,33 @@ app.get(
         ]
       );
 
-      const availableTimes =
-        await filterBookableCandidateSlots({
+      const staffCandidates = noPreference
+        ? await loadEligibleBookingStaff(client, {
+            shopId,
+            locationId,
+            serviceId: serviceResult.rows[0].id,
+            date
+          })
+        : null;
+
+      const availableTimes = noPreference
+        ? await filterAnyStaffCandidateSlots({
+            dbClient: client,
+            candidates: candidateResult.rows,
+            staffCandidates,
+            shopId,
+            locationId,
+            serviceId: serviceResult.rows[0].id,
+            validator: req.app.locals.bookingValidator
+          })
+        : await filterBookableCandidateSlots({
           dbClient: client,
           candidates: candidateResult.rows,
           shopId,
           locationId,
           staffId,
-          serviceId: serviceResult.rows[0].id
+          serviceId: serviceResult.rows[0].id,
+          validator: req.app.locals.bookingValidator
         });
 
 
@@ -3710,5 +3919,8 @@ if (require.main === module) {
 
 module.exports = {
   app,
-  filterBookableCandidateSlots
+  filterBookableCandidateSlots,
+  filterAnyStaffCandidateSlots,
+  loadEligibleBookingStaff,
+  loadTrustedCustomerBookingScope
 };
