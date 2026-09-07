@@ -8,9 +8,15 @@ BEGIN
   ) THEN RAISE EXCEPTION 'blocks_time final schema invalid'; END IF;
   IF NOT EXISTS (
     SELECT 1 FROM pg_constraint WHERE conrelid='public.appointment_item_staff_assignments'::regclass
+      AND conname='appointment_item_staff_time_range_check' AND contype='c'
+      AND regexp_replace(pg_get_constraintdef(oid),'\s','','g') IN ('CHECK((end_at>start_at))','CHECK((start_at<end_at))')
+  ) THEN RAISE EXCEPTION 'Assignment time range CHECK missing or drifted'; END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conrelid='public.appointment_item_staff_assignments'::regclass
       AND conname='prevent_assignment_staff_double_booking' AND contype='x'
       AND pg_get_constraintdef(oid) ~ 'shop_id WITH =.*staff_id WITH =.*tstzrange\(start_at, end_at.*WITH &&'
       AND pg_get_constraintdef(oid) ~ 'blocks_time = true'
+      AND pg_get_constraintdef(oid) !~ 'location_id WITH|role WITH'
   ) THEN RAISE EXCEPTION 'Assignment exclusion constraint missing or drifted'; END IF;
   IF (SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
       WHERE n.nspname='public' AND p.proname IN ('assignment_collision_project','assignment_collision_sync_item_time','assignment_collision_sync_parent_state','assignment_collision_consistency_check'))<>4
@@ -24,37 +30,37 @@ BEGIN
     RAISE EXCEPTION 'Projection function definition drift';
   END IF;
   IF NOT EXISTS (
-    SELECT 1 FROM pg_trigger WHERE NOT tgisinternal
+    SELECT 1 FROM pg_trigger WHERE NOT tgisinternal AND tgenabled='O'
       AND tgname='assignment_collision_project_trigger'
       AND tgrelid='public.appointment_item_staff_assignments'::regclass
       AND tgfoid='public.assignment_collision_project()'::regprocedure
       AND pg_get_triggerdef(oid) LIKE '%BEFORE INSERT OR UPDATE%'
   ) OR NOT EXISTS (
-    SELECT 1 FROM pg_trigger WHERE NOT tgisinternal
+    SELECT 1 FROM pg_trigger WHERE NOT tgisinternal AND tgenabled='O'
       AND tgname='assignment_collision_item_time_trigger'
       AND tgrelid='public.appointment_items'::regclass
       AND tgfoid='public.assignment_collision_sync_item_time()'::regprocedure
       AND pg_get_triggerdef(oid) LIKE '%AFTER UPDATE OF start_at, end_at%'
   ) OR NOT EXISTS (
-    SELECT 1 FROM pg_trigger WHERE NOT tgisinternal
+    SELECT 1 FROM pg_trigger WHERE NOT tgisinternal AND tgenabled='O'
       AND tgname='assignment_collision_parent_state_trigger'
       AND tgrelid='public.appointments'::regclass
       AND tgfoid='public.assignment_collision_sync_parent_state()'::regprocedure
       AND pg_get_triggerdef(oid) LIKE '%AFTER UPDATE OF status, override_conflict%'
   ) OR NOT EXISTS (
-    SELECT 1 FROM pg_trigger WHERE NOT tgisinternal
+    SELECT 1 FROM pg_trigger WHERE NOT tgisinternal AND tgenabled='O'
       AND tgname='assignment_collision_consistency_trigger'
       AND tgrelid='public.appointment_item_staff_assignments'::regclass
       AND tgfoid='public.assignment_collision_consistency_check()'::regprocedure
       AND tgdeferrable AND tginitdeferred
   ) OR NOT EXISTS (
-    SELECT 1 FROM pg_trigger WHERE NOT tgisinternal
+    SELECT 1 FROM pg_trigger WHERE NOT tgisinternal AND tgenabled='O'
       AND tgname='assignment_collision_item_consistency_trigger'
       AND tgrelid='public.appointment_items'::regclass
       AND tgfoid='public.assignment_collision_consistency_check()'::regprocedure
       AND tgdeferrable AND tginitdeferred
   ) OR NOT EXISTS (
-    SELECT 1 FROM pg_trigger WHERE NOT tgisinternal
+    SELECT 1 FROM pg_trigger WHERE NOT tgisinternal AND tgenabled='O'
       AND tgname='assignment_collision_parent_consistency_trigger'
       AND tgrelid='public.appointments'::regclass
       AND tgfoid='public.assignment_collision_consistency_check()'::regprocedure
@@ -67,6 +73,13 @@ BEGIN
     WHERE a.blocks_time IS NULL OR a.end_at<=a.start_at OR a.start_at IS DISTINCT FROM i.start_at OR a.end_at IS DISTINCT FROM i.end_at
        OR a.blocks_time IS DISTINCT FROM (p.status IN ('pending','confirmed') AND p.override_conflict=FALSE)
   ) THEN RAISE EXCEPTION 'Assignment projection data drift'; END IF;
+  IF EXISTS (
+    SELECT 1 FROM appointment_item_staff_assignments a1
+    JOIN appointment_item_staff_assignments a2
+      ON a2.shop_id=a1.shop_id AND a2.staff_id=a1.staff_id AND a2.id>a1.id
+    WHERE a1.blocks_time=TRUE AND a2.blocks_time=TRUE
+      AND tstzrange(a1.start_at,a1.end_at,'[)') && tstzrange(a2.start_at,a2.end_at,'[)')
+  ) THEN RAISE EXCEPTION 'Blocking assignment overlap detected'; END IF;
 END $verify$;
 SELECT 'PASS' AS assignment_collision_verification;
 ROLLBACK;

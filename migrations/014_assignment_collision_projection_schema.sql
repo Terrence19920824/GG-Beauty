@@ -1,4 +1,6 @@
 -- Assignment collision projection functions and triggers. No backfill.
+-- Release invariant: run 014 -> 015 -> 016 in one controlled maintenance window;
+-- permit no appointment/assignment time or status mutations between phases.
 BEGIN;
 SET LOCAL lock_timeout='5s';
 SET LOCAL statement_timeout='30s';
@@ -9,22 +11,49 @@ BEGIN
   IF to_regclass('public.appointment_item_staff_assignments') IS NULL THEN
     RAISE EXCEPTION 'Assignment table is missing';
   END IF;
-  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='appointment_item_staff_assignments' AND column_name='blocks_time' AND udt_name<>'bool') THEN
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='appointment_item_staff_assignments' AND column_name='blocks_time'
+    AND (udt_name<>'bool' OR column_default IS NOT NULL)) THEN
     RAISE EXCEPTION 'blocks_time schema drift';
   END IF;
   SELECT count(*) INTO function_count FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
    WHERE n.nspname='public' AND p.proname IN ('assignment_collision_project','assignment_collision_sync_item_time','assignment_collision_sync_parent_state','assignment_collision_consistency_check');
   IF function_count NOT IN (0,4) THEN RAISE EXCEPTION 'Partial assignment collision function set'; END IF;
   IF function_count=4 AND (
-    NOT EXISTS (SELECT 1 FROM pg_proc WHERE oid=to_regprocedure('public.assignment_collision_project()') AND pg_get_functiondef(oid) LIKE '%NEW.blocks_time%')
-    OR NOT EXISTS (SELECT 1 FROM pg_proc WHERE oid=to_regprocedure('public.assignment_collision_sync_item_time()') AND pg_get_functiondef(oid) LIKE '%UPDATE public.appointment_item_staff_assignments%')
-    OR NOT EXISTS (SELECT 1 FROM pg_proc WHERE oid=to_regprocedure('public.assignment_collision_sync_parent_state()') AND pg_get_functiondef(oid) LIKE '%NEW.override_conflict=FALSE%')
-    OR NOT EXISTS (SELECT 1 FROM pg_proc WHERE oid=to_regprocedure('public.assignment_collision_consistency_check()') AND pg_get_functiondef(oid) LIKE '%appointment assignment projection inconsistent%')
+    NOT EXISTS (SELECT 1 FROM pg_proc p WHERE p.oid=to_regprocedure('public.assignment_collision_project()') AND p.prorettype='trigger'::regtype
+      AND NOT p.prosecdef AND p.proconfig @> ARRAY['search_path=pg_catalog, public']
+      AND pg_get_functiondef(p.oid) LIKE '%NEW.start_at:=projection.start_at%'
+      AND pg_get_functiondef(p.oid) LIKE '%NEW.end_at:=projection.end_at%'
+      AND pg_get_functiondef(p.oid) LIKE '%NEW.blocks_time:=projection.blocks_time%'
+      AND pg_get_functiondef(p.oid) LIKE '%p.status IN (''pending'',''confirmed'') AND p.override_conflict=FALSE%'
+      AND pg_get_functiondef(p.oid) LIKE '%s.shop_id=i.shop_id AND s.id=NEW.staff_id%')
+    OR NOT EXISTS (SELECT 1 FROM pg_proc p WHERE p.oid=to_regprocedure('public.assignment_collision_sync_item_time()') AND p.prorettype='trigger'::regtype
+      AND NOT p.prosecdef AND pg_get_functiondef(p.oid) LIKE '%SET start_at=NEW.start_at,end_at=NEW.end_at%'
+      AND pg_get_functiondef(p.oid) LIKE '%appointment_item_id=NEW.id%')
+    OR NOT EXISTS (SELECT 1 FROM pg_proc p WHERE p.oid=to_regprocedure('public.assignment_collision_sync_parent_state()') AND p.prorettype='trigger'::regtype
+      AND NOT p.prosecdef AND pg_get_functiondef(p.oid) LIKE '%NEW.status IN (''pending'',''confirmed'') AND NEW.override_conflict=FALSE%'
+      AND pg_get_functiondef(p.oid) LIKE '%i.appointment_id=NEW.id%')
+    OR NOT EXISTS (SELECT 1 FROM pg_proc p WHERE p.oid=to_regprocedure('public.assignment_collision_consistency_check()') AND p.prorettype='trigger'::regtype
+      AND NOT p.prosecdef AND pg_get_functiondef(p.oid) LIKE '%appointment assignment projection inconsistent%'
+      AND pg_get_functiondef(p.oid) LIKE '%count(a.id)<>1%')
   ) THEN RAISE EXCEPTION 'Assignment collision function drift'; END IF;
   SELECT count(*) INTO trigger_count FROM pg_trigger WHERE NOT tgisinternal AND tgname IN (
     'assignment_collision_project_trigger','assignment_collision_item_time_trigger','assignment_collision_parent_state_trigger',
     'assignment_collision_consistency_trigger','assignment_collision_item_consistency_trigger','assignment_collision_parent_consistency_trigger');
   IF trigger_count NOT IN (0,6) THEN RAISE EXCEPTION 'Partial assignment collision trigger set'; END IF;
+  IF trigger_count=6 AND (
+    NOT EXISTS (SELECT 1 FROM pg_trigger WHERE NOT tgisinternal AND tgenabled='O' AND tgname='assignment_collision_project_trigger'
+      AND tgrelid='public.appointment_item_staff_assignments'::regclass AND tgfoid=to_regprocedure('public.assignment_collision_project()')
+      AND pg_get_triggerdef(oid) LIKE '%BEFORE INSERT OR UPDATE OF shop_id, location_id, appointment_item_id, staff_id, start_at, end_at, blocks_time%')
+    OR NOT EXISTS (SELECT 1 FROM pg_trigger WHERE NOT tgisinternal AND tgenabled='O' AND tgname='assignment_collision_item_time_trigger'
+      AND tgrelid='public.appointment_items'::regclass AND tgfoid=to_regprocedure('public.assignment_collision_sync_item_time()')
+      AND pg_get_triggerdef(oid) LIKE '%AFTER UPDATE OF start_at, end_at%')
+    OR NOT EXISTS (SELECT 1 FROM pg_trigger WHERE NOT tgisinternal AND tgenabled='O' AND tgname='assignment_collision_parent_state_trigger'
+      AND tgrelid='public.appointments'::regclass AND tgfoid=to_regprocedure('public.assignment_collision_sync_parent_state()')
+      AND pg_get_triggerdef(oid) LIKE '%AFTER UPDATE OF status, override_conflict%')
+    OR (SELECT count(*) FROM pg_trigger WHERE NOT tgisinternal AND tgenabled='O' AND tgname IN
+      ('assignment_collision_consistency_trigger','assignment_collision_item_consistency_trigger','assignment_collision_parent_consistency_trigger')
+      AND tgfoid=to_regprocedure('public.assignment_collision_consistency_check()') AND tgdeferrable AND tginitdeferred)<>3
+  ) THEN RAISE EXCEPTION 'Assignment collision trigger drift'; END IF;
 END $guard$;
 
 ALTER TABLE public.appointment_item_staff_assignments

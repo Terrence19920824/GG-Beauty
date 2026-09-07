@@ -287,6 +287,38 @@ test('assignment collision migrations on real PostgreSQL 17', { timeout: 120000 
       await admin.query(`CREATE CONSTRAINT TRIGGER assignment_collision_parent_consistency_trigger AFTER UPDATE OF start_at,end_at,staff_id ON public.appointments DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.assignment_collision_consistency_check()`);
     });
 
+    await t.test('projection migration fails closed on existing function and trigger drift', async () => {
+      const originalFunction = (await admin.query(`SELECT pg_get_functiondef('public.assignment_collision_project()'::regprocedure) definition`)).rows[0].definition;
+      await admin.query(`CREATE OR REPLACE FUNCTION public.assignment_collision_project() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END $$`);
+      await assert.rejects(admin.query(sql(migrations[1])), /function drift/);
+      await admin.query('ROLLBACK');
+      await admin.query(originalFunction);
+
+      await admin.query('ALTER TABLE appointment_item_staff_assignments DISABLE TRIGGER assignment_collision_project_trigger');
+      await assert.rejects(admin.query(sql(migrations[1])), /trigger drift/);
+      await admin.query('ROLLBACK');
+      await admin.query('ALTER TABLE appointment_item_staff_assignments ENABLE TRIGGER assignment_collision_project_trigger');
+    });
+
+    await t.test('backfill fails closed on projection function drift', async () => {
+      const original = (await admin.query(`SELECT pg_get_functiondef('public.assignment_collision_sync_parent_state()'::regprocedure) definition`)).rows[0].definition;
+      await admin.query(`CREATE OR REPLACE FUNCTION public.assignment_collision_sync_parent_state() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END $$`);
+      await assert.rejects(admin.query(sql(migrations[2])), /projection dependency drift/);
+      await admin.query('ROLLBACK');
+      await admin.query(original);
+    });
+
+    await t.test('constraint and verification fail closed on time CHECK drift', async () => {
+      await admin.query('ALTER TABLE appointment_item_staff_assignments DROP CONSTRAINT appointment_item_staff_time_range_check');
+      await admin.query('ALTER TABLE appointment_item_staff_assignments ADD CONSTRAINT appointment_item_staff_time_range_check CHECK(end_at>=start_at)');
+      await assert.rejects(admin.query(sql(migrations[3])), /time range CHECK drift/);
+      await admin.query('ROLLBACK');
+      await assert.rejects(admin.query(sql(migrations[4])), /time range CHECK missing or drifted/);
+      await admin.query('ROLLBACK');
+      await admin.query('ALTER TABLE appointment_item_staff_assignments DROP CONSTRAINT appointment_item_staff_time_range_check');
+      await admin.query('ALTER TABLE appointment_item_staff_assignments ADD CONSTRAINT appointment_item_staff_time_range_check CHECK(end_at>start_at)');
+    });
+
     await t.test('migration reruns and final verification are idempotent', async () => {
       await admin.query(sql(migrations[1]));
       await admin.query(sql(migrations[2]));
@@ -317,8 +349,10 @@ test('assignment collision migration files are staged and safe', () => {
   assert.match(projection, /AFTER UPDATE OF status,override_conflict/);
   assert.match(backfill, /GET DIAGNOSTICS affected=ROW_COUNT/);
   assert.match(constraint, /EXCLUDE USING gist/);
+  assert.match(constraint, /ADD CONSTRAINT appointment_item_staff_time_range_check CHECK \(end_at > start_at\)/);
   assert.match(constraint, /tstzrange\(start_at,end_at,'\[\)'\) WITH &&/);
   assert.match(verification, /BEGIN TRANSACTION READ ONLY/i);
+  assert.match(verification, /Blocking assignment overlap detected/);
 });
 
 test('shared validator uses canonical primary and assistant assignments', () => {
