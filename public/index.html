@@ -63,6 +63,21 @@
       background: white;
     }
 
+    .date-picker {
+      position: relative;
+    }
+
+    .date-picker-display {
+      min-height: 49px;
+    }
+
+    .date-picker input[type="date"] {
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+      cursor: pointer;
+    }
+
     button {
       width: 100%;
       border: none;
@@ -142,7 +157,10 @@
     </select>
 
     <label data-i18n="appointmentDate">预约日期</label>
-    <input type="date" id="date">
+    <div class="date-picker">
+      <input type="text" id="dateDisplay" class="date-picker-display" readonly aria-hidden="true">
+      <input type="date" id="date" aria-label="预约日期">
+    </div>
 
     <label data-i18n="availableTimes">可预约时间</label>
 
@@ -282,11 +300,16 @@ async function setLocale(locale) {
   document.querySelectorAll('[data-i18n-placeholder]').forEach(element => { element.placeholder = customerT(element.dataset.i18nPlaceholder); });
   document.getElementById('languageZh').disabled = currentLocale === 'zh-CN';
   document.getElementById('languageEn').disabled = currentLocale === 'en';
+  dateInput.lang = currentLocale;
+  renderSelectedDate();
   try { await loadServices(); } catch (error) { messageBox.textContent = error.message; }
 }
 
 const dateInput =
   document.getElementById('date');
+
+const dateDisplay =
+  document.getElementById('dateDisplay');
 
 const staffInput =
   document.getElementById('staff');
@@ -307,11 +330,18 @@ const today =
 
 dateInput.min = today;
 
+function renderSelectedDate() {
+  dateDisplay.value = localeApi.formatDate(dateInput.value, currentLocale);
+}
+
 
 // 日期 / 员工 / 项目变化时重新读取时间
 dateInput.addEventListener(
   'change',
-  loadAvailableTimes
+  () => {
+    renderSelectedDate();
+    loadAvailableTimes();
+  }
 );
 
 staffInput.addEventListener(
@@ -529,7 +559,7 @@ document
 
         messageBox.innerHTML =
           `✅ ${customerT('bookingSuccess')}<br>` +
-          `${date} ${selectedTime}<br>` +
+          `${localeApi.formatDate(date, currentLocale)} ${selectedTime}<br>` +
           `${service.name} · ${staffInput.options[staffInput.selectedIndex].textContent}`;
 
         // 成功后重新读取时间

@@ -46,7 +46,7 @@
       store: 'Location', type: 'Type', dayOff: 'Day Off', leave: 'Leave', customHours: 'Special Hours', startTime: 'Start Time', endTime: 'End Time', notesOptional: 'Notes (optional)', noOverrides: 'No special dates', effective: 'Active', deactivate: 'Deactivate',
       invalidScheduleTime: 'Start time must be before end time. Overnight shifts are not supported.', invalidOverrideTime: 'Start time must be before end time. Overnight periods are not supported.', customHoursRequired: 'Special hours require both a start and end time.',
       sessionExpired: 'Your session expired. Please log in again.', staffFutureAppointments: 'This staff member has future appointments and cannot be deactivated yet.', staffServiceFutureAppointments: 'A future appointment uses this staff service, so it cannot be removed yet.', scheduleFutureAppointments: 'The new schedule conflicts with a future appointment.',
-      onlineAppointment: 'Online Appointment', chooseStaffCustomer: 'Choose Staff', customerStaffNoPreference: 'No Preference', customerStaffChoose: 'Choose Staff', customerStaffNone: 'No staff are currently available', customerStaffLoading: 'Loading staff...', customerStaffAnyAvailable: 'Any available staff', appointmentDate: 'Appointment Date', availableTimes: 'Available Times', chooseDate: 'Choose a date first', customerPhone: 'Mobile Number', optionalEmail: 'Email (optional)', enterName: 'Enter your name', enterPhone: 'Enter your mobile number', bookAppointment: 'Book Appointment', loadingCustomerServices: 'Loading services...', noCustomerServices: 'No services available', checking: 'Checking...', noTimes: 'No times available', submitting: 'Submitting...', availabilityFailed: 'Unable to load available times', requiredBookingFields: 'Enter your name, phone and date, then choose a time', bookingFailed: 'Booking failed', bookingSuccess: 'Appointment booked!', from: 'From'
+      onlineAppointment: 'Online Appointment', chooseStaffCustomer: 'Choose Staff', customerStaffNoPreference: 'No Preference', customerStaffChoose: 'Choose Staff', customerStaffNone: 'No staff are currently available', customerStaffLoading: 'Loading staff...', customerStaffAnyAvailable: 'Any available staff', appointmentDate: 'Appointment Date', availableTimes: 'Available Times', chooseDate: 'Choose a date first', customerPhone: 'Mobile Number', optionalEmail: 'Email (optional)', enterName: 'Enter your name', enterPhone: 'Enter your mobile number', bookAppointment: 'Book Appointment', loadingCustomerServices: 'Loading services...', noCustomerServices: 'No services available', checking: 'Checking...', noTimes: 'No available times on this date.', submitting: 'Submitting...', availabilityFailed: 'Unable to load available times', requiredBookingFields: 'Enter your name, phone and date, then choose a time', bookingFailed: 'Booking failed', bookingSuccess: 'Appointment booked!', from: 'From'
     }
   };
 
@@ -84,6 +84,15 @@
   }
 
   function formatDuration(minutes, locale) { return `${minutes} ${t('minutes', locale)}`; }
+  function formatDate(value, locale) {
+    if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return '';
+    const [year, month, day] = value.split('-').map(Number);
+    const date = new Date(Date.UTC(year, month - 1, day));
+    const options = normalizeLocale(locale) === 'zh-CN'
+      ? { year: 'numeric', month: 'long', day: 'numeric', timeZone: 'UTC' }
+      : { year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC' };
+    return new Intl.DateTimeFormat(normalizeLocale(locale), options).format(date);
+  }
   function formatPrice(price, priceIsFrom, locale) {
     const amount = `S$${Number(price || 0).toFixed(2)}`;
     if (!priceIsFrom) return amount;
@@ -104,5 +113,5 @@
     return { locale, name: requested.name || english.name || chinese.name || canonicalName, description: requested.description || english.description || chinese.description || canonicalDescription };
   }
 
-  return { DEFAULT_LOCALE, STORAGE_KEY, dictionaries, normalizeLocale, browserLocale: detectBrowserLocale, detectBrowserLocale, getStoredLocale, setLocale, t, formatDuration, formatPrice, formatStatus, resolveLocalizedService };
+  return { DEFAULT_LOCALE, STORAGE_KEY, dictionaries, normalizeLocale, browserLocale: detectBrowserLocale, detectBrowserLocale, getStoredLocale, setLocale, t, formatDate, formatDuration, formatPrice, formatStatus, resolveLocalizedService };
 });
