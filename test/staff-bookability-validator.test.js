@@ -59,6 +59,9 @@ const inputFor = row => ({
     query: async (sql, params) => {
       assert.match(sql, /staff_location_working_hours/);
       assert.match(sql, /staff_schedule_overrides/);
+      assert.match(sql, /appointment_item_staff_assignments AS assignment/);
+      assert.match(sql, /assignment\.role IN \('primary', 'assistant'\)/);
+      assert.match(sql, /assignment\.blocks_time = TRUE/);
       assert.doesNotMatch(sql, /staff_working_hours/);
       assert.doesNotMatch(sql, /staff_time_off/);
       assert.equal(params.length, 6);
