@@ -5,6 +5,7 @@
     locale: 'en',
     profile: null,
     services: [],
+    categories: [],
     staff: [],
     selectedStaffId: null,
     capability: [],
@@ -13,6 +14,7 @@
     overrides: [],
     selectedLocationId: null,
     editingServiceId: null,
+    editingCategoryId: null,
     capabilityIds: new Set(),
     locationIds: new Set()
   };
@@ -71,6 +73,7 @@
     const en = byId('adminLanguageEn');
     if (zh) zh.disabled = state.locale === 'zh-CN';
     if (en) en.disabled = state.locale === 'en';
+    if (state.categories.length) renderCategories();
     if (state.services.length) renderServices();
     const serviceTitle = byId('serviceFormTitle');
     if (serviceTitle && !byId('serviceFormPanel')?.hidden) serviceTitle.textContent = state.editingServiceId ? t('editService') : t('addService');
@@ -119,6 +122,7 @@
     button.disabled = busy;
     const idleKey = {
       saveServiceButton: 'save', saveStaffButton: 'save', saveCapabilityButton: 'saveCapabilities',
+      saveCategoryButton: 'save',
       saveLocationsButton: 'saveLocations', saveScheduleButton: 'saveSchedule', saveOverrideButton: 'addSpecialDate'
     }[buttonId] || 'save';
     button.textContent = busy ? t('saving') : t(idleKey);
@@ -135,12 +139,14 @@
     state.profile = profile;
     const write = canWrite();
     byId('addServiceButton').hidden = !write;
+    byId('addCategoryButton').hidden = !write;
     byId('addStaffButton').hidden = !write;
   }
 
   function reset() {
     state.profile = null;
     state.services = [];
+    state.categories = [];
     state.staff = [];
     state.selectedStaffId = null;
     byId('servicesList').textContent = '';
@@ -168,12 +174,25 @@
     list.className = 'loading';
     list.textContent = t('loadingServices');
     try {
-      state.services = await request('/api/owner/services') || [];
+      const [categories, services] = await Promise.all([request('/api/owner/service-categories'), request('/api/owner/services')]);
+      state.categories = categories || [];
+      state.services = services || [];
+      renderCategories();
       renderServices();
     } catch (error) {
       if (!error.sessionExpired) { list.className = 'error'; list.textContent = error.message; }
     }
   }
+
+  function categoryName(category) { return [category.nameZh, category.nameEn, category.canonicalName].filter(Boolean).filter((v,i,a)=>a.indexOf(v)===i).slice(0,2).join(' / '); }
+  function renderCategories() {
+    const list=byId('categoriesList'); if(!state.categories.length){list.className='empty';list.textContent=t('noCategories');return;}
+    list.className=''; const actions=canWrite();
+    list.innerHTML=`<div class="service-table"><table><thead><tr><th>${t('category')}</th><th>${t('icon')}</th><th>${t('sortOrder')}</th><th>${t('serviceCount')}</th><th>${t('status')}</th>${actions?`<th>${t('actions')}</th>`:''}</tr></thead><tbody>${state.categories.map(category=>`<tr><td>${escapeHtml(categoryName(category))}</td><td>${escapeHtml(category.iconKey||'—')}</td><td>${escapeHtml(category.sortOrder??0)}</td><td>${escapeHtml(category.serviceCount??0)}</td><td>${category.isActive?t('active'):t('inactive')}</td>${actions?`<td><button class="secondary-btn" onclick="ownerSelfService.openCategoryForm('${escapeHtml(category.id)}')">${t('edit')}</button></td>`:''}</tr>`).join('')}</tbody></table></div>`;
+  }
+  function openCategoryForm(id) { if(!canWrite())return; const category=id?state.categories.find(item=>item.id===id):null; state.editingCategoryId=category?.id||null; byId('categoryFormTitle').textContent=category?t('editCategory'):t('addCategory'); byId('categoryNameZh').value=category?.nameZh||''; byId('categoryNameEn').value=category?.nameEn||category?.canonicalName||''; byId('categoryIconKey').value=category?.iconKey||''; byId('categorySortOrder').value=category?.sortOrder??0; byId('categoryActive').checked=category?.isActive??true; byId('categoryFormPanel').hidden=false; }
+  function closeCategoryForm(){state.editingCategoryId=null;byId('categoryFormPanel').hidden=true;}
+  async function saveCategory(){if(!canWrite())return;const nameZh=value('categoryNameZh').trim(),nameEn=value('categoryNameEn').trim();const body={canonicalName:nameEn||nameZh,iconKey:value('categoryIconKey').trim()||null,sortOrder:Number(value('categorySortOrder')),isActive:checked('categoryActive')};if(nameZh)body.nameZh=nameZh;if(nameEn)body.nameEn=nameEn;setBusy('saveCategoryButton',true);try{const id=state.editingCategoryId;await request(id?`/api/owner/service-categories/${encodeURIComponent(id)}`:'/api/owner/service-categories',{method:id?'PATCH':'POST',body:JSON.stringify(body)});closeCategoryForm();await loadServices();}catch(error){if(!error.sessionExpired)setMessage('categoriesMessage',error.message,true);}finally{setBusy('saveCategoryButton',false);}}
 
   function renderServices() {
     const list = byId('servicesList');
@@ -194,7 +213,8 @@
       const isFrom = apiValue(service, 'priceIsFrom', 'price_is_from') === true;
       const price = localeApi.formatPrice ? localeApi.formatPrice(service.price, isFrom, state.locale) : `S$${Number(service.price || 0).toFixed(2)}`;
       const duration = localeApi.formatDuration ? localeApi.formatDuration(apiValue(service, 'durationMinutes', 'duration_minutes'), state.locale) : apiValue(service, 'durationMinutes', 'duration_minutes');
-      return `<tr><td>${escapeHtml(service.category || t('uncategorized'))}</td><td>${escapeHtml(bilingualName)}</td><td>${price}</td><td>${escapeHtml(duration)}</td><td>${service.bookable ? t('enabled') : t('disabled')}</td><td>${apiValue(service, 'isActive', 'is_active') ? t('active') : t('inactive')}</td>${actions ? `<td><button class="secondary-btn" onclick="ownerSelfService.openServiceForm('${id}')">${t('edit')}</button></td>` : ''}</tr>`;
+      const linkedCategory = state.categories.find(category => category.id === service.categoryId);
+      return `<tr><td>${escapeHtml(linkedCategory ? categoryName(linkedCategory) : service.category || t('uncategorized'))}</td><td>${escapeHtml(bilingualName)}</td><td>${price}</td><td>${escapeHtml(duration)}</td><td>${service.bookable ? t('enabled') : t('disabled')}</td><td>${apiValue(service, 'isActive', 'is_active') ? t('active') : t('inactive')}</td>${actions ? `<td><button class="secondary-btn" onclick="ownerSelfService.openServiceForm('${id}')">${t('edit')}</button></td>` : ''}</tr>`;
     }).join('')}</tbody></table></div>`;
   }
 
@@ -205,7 +225,8 @@
     byId('serviceFormTitle').textContent = service ? t('editService') : t('addService');
     byId('serviceNameZh').value = service?.nameZh || '';
     byId('serviceNameEn').value = service?.nameEn || service?.canonicalName || service?.name || '';
-    byId('serviceCategory').value = service?.category || '';
+    byId('serviceCategoryId').innerHTML = `<option value="">${t('chooseCategory')}</option>${state.categories.filter(category=>category.isActive||category.id===service?.categoryId).map(category=>`<option value="${escapeHtml(category.id)}">${escapeHtml(categoryName(category))}</option>`).join('')}`;
+    byId('serviceCategoryId').value = service?.categoryId || '';
     byId('serviceDescriptionZh').value = service?.descriptionZh || '';
     byId('serviceDescriptionEn').value = service?.descriptionEn || service?.canonicalDescription || service?.description || '';
     byId('servicePrice').value = service?.price ?? '';
@@ -228,9 +249,11 @@
     const nameEn = value('serviceNameEn').trim();
     const descriptionZh = value('serviceDescriptionZh').trim();
     const descriptionEn = value('serviceDescriptionEn').trim();
+    const categoryId = value('serviceCategoryId').trim();
+    if (!state.editingServiceId && !categoryId) { setMessage('servicesMessage', t('categoryRequired'), true); return; }
     const body = {
       name: nameEn || nameZh,
-      category: value('serviceCategory').trim() || null,
+      categoryId: categoryId || null,
       price: Number(value('servicePrice')),
       priceIsFrom: checked('servicePriceIsFrom'),
       durationMinutes: Number(value('serviceDuration')),
@@ -460,6 +483,6 @@
     } catch (error) { if (!error.sessionExpired) setMessage('staffMessage', error.message, true); }
   }
 
-  global.ownerSelfService = { setLocale, setProfile, reset, showView, loadServices, openServiceForm, closeServiceForm, saveService, loadStaff, openStaffForm, saveStaff, selectStaff, openStaffTab, toggleCapability, saveCapability, toggleLocation, saveLocations, changeScheduleLocation, saveSchedule, updateOverrideFields, saveOverride, deactivateOverride, _state: state, _request: request };
+  global.ownerSelfService = { setLocale, setProfile, reset, showView, loadServices, renderCategories, openCategoryForm, closeCategoryForm, saveCategory, openServiceForm, closeServiceForm, saveService, loadStaff, openStaffForm, saveStaff, selectStaff, openStaffTab, toggleCapability, saveCapability, toggleLocation, saveLocations, changeScheduleLocation, saveSchedule, updateOverrideFields, saveOverride, deactivateOverride, _state: state, _request: request };
   setLocale(initialLocale());
 })(globalThis);

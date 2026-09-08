@@ -498,6 +498,22 @@
 
   <section id="servicesView" class="view" hidden>
     <div class="toolbar">
+      <div><h2 data-i18n="serviceCategories">服务分类</h2><div class="muted" data-i18n="categoryHelp">管理分类名称、图标、排序与状态</div></div>
+      <button id="addCategoryButton" class="primary-btn" data-i18n="addCategory" onclick="ownerSelfService.openCategoryForm()">新增分类</button>
+    </div>
+    <div class="card"><div id="categoriesMessage" class="save-status"></div><div id="categoriesList" class="loading" data-i18n="loadingCategories">正在读取分类...</div></div>
+    <div id="categoryFormPanel" class="card panel" hidden style="margin-top:16px">
+      <div class="section-heading"><h3 id="categoryFormTitle" data-i18n="addCategory">新增分类</h3></div>
+      <div class="form-grid">
+        <label class="field"><span data-i18n="chineseName">中文名称</span><input id="categoryNameZh" maxlength="200"></label>
+        <label class="field"><span data-i18n="englishName">English Name</span><input id="categoryNameEn" maxlength="200"></label>
+        <label class="field"><span data-i18n="icon">图标</span><input id="categoryIconKey" maxlength="100"></label>
+        <label class="field"><span data-i18n="sortOrder">排序</span><input id="categorySortOrder" type="number" min="0"></label>
+        <label class="check-row"><input id="categoryActive" type="checkbox"><span data-i18n="active">启用</span></label>
+      </div>
+      <div class="form-actions"><button class="secondary-btn" data-i18n="cancel" onclick="ownerSelfService.closeCategoryForm()">取消</button><button id="saveCategoryButton" class="primary-btn" data-i18n="save" onclick="ownerSelfService.saveCategory()">保存</button></div>
+    </div>
+    <div class="toolbar">
       <div><h2 data-i18n="serviceManagement">服务项目</h2><div class="muted" data-i18n="serviceHelp">管理价格、时长与顾客预约状态</div></div>
       <button id="addServiceButton" class="primary-btn" data-i18n="addService" onclick="ownerSelfService.openServiceForm()">新增服务</button>
     </div>
@@ -510,7 +526,7 @@
       <div class="form-grid">
         <label class="field"><span data-i18n="chineseName">中文名称</span><input id="serviceNameZh" maxlength="200"></label>
         <label class="field"><span data-i18n="englishName">English Name</span><input id="serviceNameEn" maxlength="200"></label>
-        <label class="field"><span data-i18n="category">分类</span><input id="serviceCategory" maxlength="100"></label>
+        <label class="field"><span data-i18n="category">分类</span><select id="serviceCategoryId"></select></label>
         <label class="field full"><span data-i18n="chineseDescription">中文说明</span><textarea id="serviceDescriptionZh" maxlength="2000"></textarea></label>
         <label class="field full"><span data-i18n="englishDescription">English Description</span><textarea id="serviceDescriptionEn" maxlength="2000"></textarea></label>
         <label class="field"><span data-i18n="price">价格</span><input id="servicePrice" type="number" min="0" step="0.01"></label>

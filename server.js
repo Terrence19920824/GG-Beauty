@@ -31,6 +31,7 @@ const {
 const {
   createOwnerScheduleManagement
 } = require('./lib/owner-schedule-management');
+const { createOwnerServiceCategoryManagement } = require('./lib/owner-service-category-management');
 const {
   normalizeLocale
 } = require('./public/service-locale');
@@ -637,8 +638,19 @@ app.get('/api/owner/staff/:staffId/schedule-overrides', requireOwnerAuth, requir
 app.post('/api/owner/staff/:staffId/schedule-overrides', requireOwnerAuth, requireOwnerRole(['owner', 'manager']), ownerScheduleManagement.postOverride);
 app.patch('/api/owner/staff/:staffId/schedule-overrides/:overrideId', requireOwnerAuth, requireOwnerRole(['owner', 'manager']), ownerScheduleManagement.patchOverride);
 
+const ownerServiceCategoryManagement = createOwnerServiceCategoryManagement({
+  pool: { connect: (...args) => app.locals.ownerAuthPool.connect(...args) },
+  isUuid,
+  runInTransaction,
+  safeErrorCode: safeStaffAuthErrorCode
+});
+app.get('/api/owner/service-categories', requireOwnerAuth, requireOwnerRole(['owner', 'manager', 'admin']), ownerServiceCategoryManagement.list);
+app.post('/api/owner/service-categories', requireOwnerAuth, requireOwnerRole(['owner', 'manager']), ownerServiceCategoryManagement.create);
+app.patch('/api/owner/service-categories/:categoryId', requireOwnerAuth, requireOwnerRole(['owner', 'manager']), ownerServiceCategoryManagement.patch);
+
 const OWNER_SERVICE_FIELDS = new Set([
   'category',
+  'categoryId',
   'name',
   'description',
   'nameZh',
@@ -769,6 +781,11 @@ const validateOwnerServiceFields = (body, { partial }) => {
     values[field] = trimmed || null;
   }
 
+  if (keys.includes('categoryId')) {
+    if (body.categoryId !== null && !isUuid(body.categoryId)) return { error: '分类ID不正确' };
+    values.categoryId = body.categoryId;
+  }
+
   if (keys.includes('price')) {
     if (
       typeof body.price !== 'number' ||
@@ -825,6 +842,7 @@ const validateOwnerServiceFields = (body, { partial }) => {
 
 const OWNER_SERVICE_RETURNING_SQL = `
   service.id,
+  service.category_id AS "categoryId",
   service.category,
   service.name,
   service.description,
@@ -860,6 +878,12 @@ const OWNER_SERVICE_SELECT_SQL = `
    AND translation_en.service_id = service.id
    AND translation_en.locale = 'en'
 `;
+
+const assertOwnerServiceCategory = async (client, shopId, categoryId) => {
+  if (categoryId === null || categoryId === undefined) return;
+  const result = await client.query('SELECT id FROM service_categories WHERE id=$1 AND shop_id=$2 LIMIT 1', [categoryId, shopId]);
+  if (result.rows.length !== 1) throw new AppointmentMutationError('category_not_found', 409, '服务分类不存在或不属于当前店铺');
+};
 
 const selectOwnerService = async (client, shopId, serviceId) => {
   const result = await client.query(
@@ -965,15 +989,17 @@ app.post(
         app.locals.ownerAuthPool,
         async client => {
           const canonicalName = values.name || values.nameEn || values.nameZh;
+          await assertOwnerServiceCategory(client, req.ownerAuth.shopId, values.categoryId);
           const result = await client.query(
             `INSERT INTO services (
-               shop_id, category, name, description, price,
+               shop_id, category, category_id, name, description, price,
                price_is_from, duration_minutes, bookable, is_active, sort_order
-             ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+             ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
              RETURNING id`,
             [
               req.ownerAuth.shopId,
               values.category ?? null,
+              values.categoryId ?? null,
               canonicalName,
               values.description ?? null,
               values.price ?? 0,
@@ -1053,6 +1079,7 @@ app.patch(
     const values = validation.values;
     const columnByField = {
       category: 'category',
+      categoryId: 'category_id',
       name: 'name',
       description: 'description',
       price: 'price',
@@ -1094,6 +1121,8 @@ app.patch(
               'service_not_found', 404, '未找到该服务'
             );
           }
+
+          await assertOwnerServiceCategory(client, req.ownerAuth.shopId, values.categoryId);
 
           if (assignments.length) {
             const result = await client.query(

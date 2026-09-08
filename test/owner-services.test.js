@@ -10,7 +10,9 @@ const ID = {
   shopA: '33333333-3333-4333-8333-333333333333',
   shopB: '44444444-4444-4444-8444-444444444444',
   serviceA: '55555555-5555-4555-8555-555555555555',
-  serviceB: '66666666-6666-4666-8666-666666666666'
+  serviceB: '66666666-6666-4666-8666-666666666666',
+  categoryA: '77777777-7777-4777-8777-777777777771',
+  categoryB: '77777777-7777-4777-8777-777777777772'
 };
 
 const sessionRow = role => ({
@@ -55,6 +57,7 @@ const makePool = ({
       [ID.serviceB]: { ...serviceB, shop_id: ID.shopB }
     },
     translations: {},
+    categories: { [ID.categoryA]: ID.shopA, [ID.categoryB]: ID.shopB },
     poolQueries: [],
     clientQueries: [],
     releases: 0,
@@ -88,6 +91,10 @@ const makePool = ({
             ? [{ id: current.id }]
             : []
         };
+      }
+
+      if (/^SELECT id FROM service_categories/.test(normalized)) {
+        return { rows: state.categories[params[0]] === params[1] ? [{ id: params[0] }] : [] };
       }
 
       if (/^SELECT name, description\s+FROM service_translations/.test(normalized)) {
@@ -124,14 +131,15 @@ const makePool = ({
         const created = {
           id,
           category: params[1],
-          name: params[2],
-          description: params[3],
-          price: String(params[4]),
-          price_is_from: params[5],
-          duration_minutes: params[6],
-          bookable: params[7],
-          is_active: params[8],
-          sort_order: params[9],
+          category_id: params[2],
+          name: params[3],
+          description: params[4],
+          price: String(params[5]),
+          price_is_from: params[6],
+          duration_minutes: params[7],
+          bookable: params[8],
+          is_active: params[9],
+          sort_order: params[10],
           created_at: '2030-01-02T00:00:00Z',
           updated_at: '2030-01-02T00:00:00Z',
           shop_id: params[0]
@@ -155,6 +163,7 @@ const makePool = ({
         )[1];
         const fieldMap = {
           category: 'category',
+          category_id: 'category_id',
           name: 'name',
           description: 'description',
           price: 'price',
@@ -166,7 +175,7 @@ const makePool = ({
         };
 
         for (const match of setClause.matchAll(
-          /(category|name|description|price|price_is_from|duration_minutes|bookable|is_active|sort_order) = \$(\d+)/g
+          /(category|category_id|name|description|price|price_is_from|duration_minutes|bookable|is_active|sort_order) = \$(\d+)/g
         )) {
           current[fieldMap[match[1]]] =
             params[Number(match[2]) - 1];
@@ -288,7 +297,7 @@ for (const role of ['owner', 'manager']) {
       item => /^INSERT INTO services/.test(item.sql)
     );
     assert.equal(insert.params[0], ID.shopA);
-    assert.equal(insert.params[5], false);
+    assert.equal(insert.params[6], false);
 
     const updated = await run(
       fixture,
@@ -557,6 +566,16 @@ test('PATCH updates English and preserves the Chinese translation', async () => 
   assert.equal(response.status, 200);
   assert.equal(fixture.state.translations[`${ID.shopA}:${ID.serviceA}:en`].name, 'Haircut');
   assert.equal(fixture.state.translations[`${ID.shopA}:${ID.serviceA}:zh-CN`].name, '剪发');
+});
+
+test('service category assignment is tenant-safe and null remains compatible', async () => {
+  const fixture = makePool();
+  const rejected = await run(fixture, '/api/owner/services', { method:'POST', body:{name:'Blocked',categoryId:ID.categoryB} });
+  assert.equal(rejected.status,409);
+  const accepted = await run(fixture, `/api/owner/services/${ID.serviceA}`, { method:'PATCH', body:{categoryId:ID.categoryA} });
+  assert.equal(accepted.status,200);
+  const cleared = await run(fixture, `/api/owner/services/${ID.serviceA}`, { method:'PATCH', body:{categoryId:null} });
+  assert.equal(cleared.status,200);
 });
 
 for (const body of [
