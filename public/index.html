@@ -214,6 +214,7 @@ const SHOP_SLUG = 'gg-beauty-test';
 let selectedTime = '';
 let availableServices = [];
 let availableStaff = [];
+let availabilityIsEmpty = false;
 const NO_PREFERENCE_VALUE = '__no_preference__';
 const localeApi = globalThis.ggI18n;
 const customerT = key => localeApi.t(key, currentLocale);
@@ -302,6 +303,9 @@ async function setLocale(locale) {
   document.getElementById('languageEn').disabled = currentLocale === 'en';
   dateInput.lang = currentLocale;
   renderSelectedDate();
+  if (availabilityIsEmpty) {
+    timesBox.innerHTML = `<div>${customerT('noTimes')}</div>`;
+  }
   try { await loadServices(); } catch (error) { messageBox.textContent = error.message; }
 }
 
@@ -374,11 +378,13 @@ async function loadAvailableTimes() {
   selectedTime = '';
 
   if (!date) {
+    availabilityIsEmpty = false;
     timesBox.innerHTML =
       `<div>${customerT('chooseDate')}</div>`;
     return;
   }
 
+  availabilityIsEmpty = false;
   timesBox.innerHTML =
     `<div>${customerT('checking')}</div>`;
 
@@ -408,6 +414,7 @@ async function loadAvailableTimes() {
 
   } catch (error) {
 
+    availabilityIsEmpty = false;
     timesBox.innerHTML =
       `<div class="error">${error.message}</div>`;
 
@@ -419,8 +426,9 @@ async function loadAvailableTimes() {
 function renderTimes(times) {
 
   timesBox.innerHTML = '';
+  availabilityIsEmpty = !times || times.length === 0;
 
-  if (!times || times.length === 0) {
+  if (availabilityIsEmpty) {
 
     timesBox.innerHTML =
       `<div>${customerT('noTimes')}</div>`;
