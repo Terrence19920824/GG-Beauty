@@ -195,6 +195,12 @@ for (const role of ['owner', 'manager', 'admin']) {
       /FROM services AS service/.test(query.sql)
     );
     assert.match(serviceQuery.sql, /capability\.shop_id = service\.shop_id/);
+    assert.match(serviceQuery.sql, /service_translation_zh\.shop_id = service\.shop_id/);
+    assert.match(serviceQuery.sql, /service_translation_en\.shop_id = service\.shop_id/);
+    assert.match(serviceQuery.sql, /category\.shop_id = service\.shop_id/);
+    assert.match(serviceQuery.sql, /category_translation_zh\.shop_id = category\.shop_id/);
+    assert.match(serviceQuery.sql, /category_translation_en\.shop_id = category\.shop_id/);
+    assert.match(serviceQuery.sql, /ORDER BY category\.sort_order ASC NULLS LAST/);
     assert.match(serviceQuery.sql, /WHERE service\.shop_id = \$1/);
     assert.deepEqual(serviceQuery.params, [ID.shopA, ID.staffA]);
   });

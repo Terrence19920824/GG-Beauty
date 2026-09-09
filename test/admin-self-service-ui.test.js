@@ -152,6 +152,41 @@ test('inactive unassigned service is disabled while existing assignment remains 
   assert.match(rendered, /Used[\s\S]*项目已停用/);
 });
 
+test('capability groups and localizes categories and services while preserving serviceId selection', async () => {
+  const capability = [
+    { service_id: 's-beauty', canonical_name: 'Facial', name_zh: '面部护理', name_en: 'Facial', category_id: 'c-beauty', category_name: 'Beauty', category_name_zh: '美容', category_name_en: 'Beauty', category_sort_order: 20, service_sort_order: 0, is_active: true, bookable: false, assigned: false },
+    { service_id: 's-hair', canonical_name: 'Haircut', name_zh: '剪发', name_en: 'Haircut', category_id: 'c-hair', category_name: 'Hair', category_name_zh: '美发', category_name_en: 'Hair', category_sort_order: 10, service_sort_order: 0, is_active: true, bookable: true, assigned: true }
+  ];
+  const p = page([response(200, { success: true, data: capability }), response(200, { success: true, data: [] }), response(200, { success: true, data: [] })]);
+  p.api.setProfile(owner); p.api._state.staff = [{ id: 'u1', name: 'Amy' }]; await p.api.selectStaff('u1');
+  let rendered = p.elements.get('staffTabContent').innerHTML;
+  assert.ok(rendered.indexOf('美发') < rendered.indexOf('美容'));
+  assert.match(rendered, /剪发/); assert.match(rendered, /面部护理/); assert.match(rendered, /当前未开放预约/);
+  assert.match(rendered, /data-service-id="s-hair"[\s\S]*checked/);
+
+  p.api.setLocale('en');
+  rendered = p.elements.get('staffTabContent').innerHTML;
+  assert.ok(rendered.indexOf('Hair') < rendered.indexOf('Beauty'));
+  assert.match(rendered, /Haircut/); assert.match(rendered, /Facial/); assert.match(rendered, /Not open for booking/);
+  assert.match(rendered, /data-service-id="s-hair"[\s\S]*checked/);
+  assert.deepEqual([...p.api._state.capabilityIds], ['s-hair']);
+});
+
+test('capability localization follows requested to en to zh to canonical fallback', async () => {
+  const p = page([]); p.api.setProfile(owner);
+  p.api._state.capability = [
+    { service_id: 's-en', canonical_name: 'Canonical EN', name_en: 'English', name_zh: '中文', category_id: 'c1', category_name: 'Canonical Category', category_name_en: 'English Category', category_name_zh: '中文分类', category_sort_order: 1, is_active: true, bookable: true },
+    { service_id: 's-zh', canonical_name: 'Canonical ZH', name_zh: '仅中文', category_id: 'c2', category_name: 'Canonical Two', category_name_zh: '仅中文分类', category_sort_order: 2, is_active: true, bookable: true },
+    { service_id: 's-canonical', canonical_name: 'Canonical Only', category_id: 'c3', category_name: 'Canonical Category Only', category_sort_order: 3, is_active: true, bookable: true }
+  ];
+  p.api._state.capabilityIds = new Set();
+  p.api.setLocale('en'); p.api.openStaffTab('capability');
+  const rendered = p.elements.get('staffTabContent').innerHTML;
+  assert.match(rendered, /English Category[\s\S]*English/);
+  assert.match(rendered, /仅中文分类[\s\S]*仅中文/);
+  assert.match(rendered, /Canonical Category Only[\s\S]*Canonical Only/);
+});
+
 test('location assignment loads and saves locationIds only', async () => {
   const p = page([response(200, { success: true }), response(200, { success: true, data: [] }), response(200, { success: true, data: [] }), response(200, { success: true, data: [] })]);
   p.api.setProfile(owner); p.api._state.selectedStaffId = 'u1'; p.api.toggleLocation('l1', true);

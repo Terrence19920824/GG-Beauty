@@ -41,6 +41,22 @@
     }
   };
   const t = (key, params) => localeApi.t ? localeApi.t(key, state.locale, params) : key;
+  const localizedValue = (item, fields) => {
+    const requested = state.locale === 'zh-CN' ? fields.zh : fields.en;
+    return apiValue(item, requested[0], requested[1])
+      || apiValue(item, fields.en[0], fields.en[1])
+      || apiValue(item, fields.zh[0], fields.zh[1])
+      || apiValue(item, fields.canonical[0], fields.canonical[1])
+      || '';
+  };
+  const localizedCapabilityServiceName = service => localizedValue(service, {
+    zh: ['nameZh', 'name_zh'], en: ['nameEn', 'name_en'],
+    canonical: ['canonicalName', 'canonical_name']
+  }) || service.name || '';
+  const localizedCapabilityCategoryName = service => localizedValue(service, {
+    zh: ['categoryNameZh', 'category_name_zh'], en: ['categoryNameEn', 'category_name_en'],
+    canonical: ['categoryName', 'category_name']
+  }) || service.category || t('uncategorized');
 
   function initialLocale() {
     try {
@@ -378,13 +394,41 @@
   }
 
   function renderCapability(container) {
-    container.innerHTML = `<div class="section-heading"><h3>${t('capabilityHeading')}</h3></div>${state.capability.map(service => {
+    const groups = [];
+    const groupById = new Map();
+    const orderedServices = [...state.capability].sort((left, right) => {
+      const leftCategoryOrder = Number(apiValue(left, 'categorySortOrder', 'category_sort_order') ?? Number.MAX_SAFE_INTEGER);
+      const rightCategoryOrder = Number(apiValue(right, 'categorySortOrder', 'category_sort_order') ?? Number.MAX_SAFE_INTEGER);
+      if (leftCategoryOrder !== rightCategoryOrder) return leftCategoryOrder - rightCategoryOrder;
+      const leftCategory = String(apiValue(left, 'categoryId', 'category_id') || left.category || '');
+      const rightCategory = String(apiValue(right, 'categoryId', 'category_id') || right.category || '');
+      if (leftCategory !== rightCategory) return leftCategory.localeCompare(rightCategory);
+      const leftServiceOrder = Number(apiValue(left, 'serviceSortOrder', 'service_sort_order') ?? 0);
+      const rightServiceOrder = Number(apiValue(right, 'serviceSortOrder', 'service_sort_order') ?? 0);
+      if (leftServiceOrder !== rightServiceOrder) return leftServiceOrder - rightServiceOrder;
+      const canonical = service => String(apiValue(service, 'canonicalName', 'canonical_name') || service.name || '');
+      const nameOrder = canonical(left).localeCompare(canonical(right));
+      return nameOrder || String(apiValue(left, 'serviceId', 'service_id')).localeCompare(String(apiValue(right, 'serviceId', 'service_id')));
+    });
+    orderedServices.forEach(service => {
+      const categoryId = apiValue(service, 'categoryId', 'category_id');
+      const key = categoryId || `legacy:${service.category || ''}`;
+      let group = groupById.get(key);
+      if (!group) {
+        group = { key, service, services: [] };
+        groupById.set(key, group);
+        groups.push(group);
+      }
+      group.services.push(service);
+    });
+    const content = groups.map(group => `<section class="capability-group" data-category-id="${escapeHtml(apiValue(group.service, 'categoryId', 'category_id') || '')}"><h4>${escapeHtml(localizedCapabilityCategoryName(group.service))}</h4>${group.services.map(service => {
       const id = apiValue(service, 'serviceId', 'service_id');
       const active = apiValue(service, 'isActive', 'is_active');
       const selected = state.capabilityIds.has(id);
       const disabled = !canWrite() || (!active && !selected);
-      return `<div class="check-row"><input type="checkbox" ${selected ? 'checked' : ''} ${disabled ? 'disabled' : ''} onchange="ownerSelfService.toggleCapability('${escapeHtml(id)}', this.checked)"><label>${escapeHtml(service.name)} <span class="muted">${escapeHtml(service.category || '')}${!active ? ` · ${t('serviceInactive')}` : ''}${!service.bookable ? ` · ${t('serviceNotBookable')}` : ''}</span></label></div>`;
-    }).join('') || `<div class="empty">${t('noCapabilityServices')}</div>`}${canWrite() ? `<div class="form-actions"><span id="capabilityStatus" class="save-status"></span><button id="saveCapabilityButton" class="primary-btn" onclick="ownerSelfService.saveCapability()">${t('saveCapabilities')}</button></div>` : `<div class="notice">${t('adminReadOnly')}</div>`}`;
+      return `<div class="check-row" data-service-id="${escapeHtml(id)}"><input type="checkbox" ${selected ? 'checked' : ''} ${disabled ? 'disabled' : ''} onchange="ownerSelfService.toggleCapability('${escapeHtml(id)}', this.checked)"><label>${escapeHtml(localizedCapabilityServiceName(service))}${!active ? ` <span class="muted">· ${t('serviceInactive')}</span>` : ''}${!service.bookable ? ` <span class="muted">· ${t('serviceNotBookable')}</span>` : ''}</label></div>`;
+    }).join('')}</section>`).join('');
+    container.innerHTML = `<div class="section-heading"><h3>${t('capabilityHeading')}</h3></div>${content || `<div class="empty">${t('noCapabilityServices')}</div>`}${canWrite() ? `<div class="form-actions"><span id="capabilityStatus" class="save-status"></span><button id="saveCapabilityButton" class="primary-btn" onclick="ownerSelfService.saveCapability()">${t('saveCapabilities')}</button></div>` : `<div class="notice">${t('adminReadOnly')}</div>`}`;
   }
 
   function toggleCapability(id, enabled) { enabled ? state.capabilityIds.add(id) : state.capabilityIds.delete(id); }
