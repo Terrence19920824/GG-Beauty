@@ -24,6 +24,7 @@ function element() {
 
 function page(replies = []) {
   const elements = new Map();
+  const eventListeners = new Map();
   const ids = [
     'addServiceButton', 'addStaffButton', 'servicesList', 'servicesMessage', 'serviceFormPanel', 'serviceFormTitle',
     'serviceNameZh', 'serviceNameEn', 'serviceCategoryId', 'serviceDescriptionZh', 'serviceDescriptionEn', 'servicePrice', 'serviceDuration', 'serviceSortOrder',
@@ -49,6 +50,9 @@ function page(replies = []) {
     navigator: { languages: ['zh-CN'] },
     fetch: async (url, options = {}) => { requests.push({ url, options }); const next = replies.shift(); if (!next) throw new Error(`Unexpected request: ${url}`); return next; },
     showLogin(message) { context.loginMessage = message; },
+    addEventListener(type, listener) { eventListeners.set(type, listener); },
+    confirm() { return context.confirmResult; },
+    confirmResult: false,
     loadAppointments: async () => {},
     console,
     encodeURIComponent,
@@ -58,7 +62,7 @@ function page(replies = []) {
   context.globalThis = context;
   vm.createContext(context);
   vm.runInContext(source, context);
-  return { api: context.ownerSelfService, elements, requests, context };
+  return { api: context.ownerSelfService, elements, requests, context, eventListeners };
 }
 
 const owner = { membership: { role: 'owner' } };
@@ -130,6 +134,15 @@ test('staff edit uses PATCH and supports active/bookable fields', async () => {
   await p.api.saveStaff(false);
   assert.equal(p.requests[0].options.method, 'PATCH');
   assert.equal(JSON.parse(p.requests[0].options.body).bookable, true);
+  assert.equal(p.requests.some(request => /\/services|\/schedule/.test(request.url)), false);
+});
+
+test('profile save label is explicit and localized', () => {
+  const p = page(); p.api.setProfile(owner);
+  p.api.setLocale('zh-CN'); p.api.openStaffForm();
+  assert.match(p.elements.get('staffDetail').innerHTML, /保存基本资料/);
+  p.api.setLocale('en'); p.api.openStaffForm();
+  assert.match(p.elements.get('staffDetail').innerHTML, /Save Profile/);
 });
 
 test('capability checkboxes load and save only serviceIds', async () => {
@@ -141,6 +154,23 @@ test('capability checkboxes load and save only serviceIds', async () => {
   p.api.setProfile(owner); p.api._state.staff = [{ id: 'u1', name: 'Amy', is_active: true }];
   await p.api.selectStaff('u1'); await p.api.saveCapability();
   assert.deepEqual(JSON.parse(p.requests[3].options.body), { serviceIds: ['s1'] });
+});
+
+test('capability save is independent, reloads authoritative state and preserves active tab', async () => {
+  const capability = [{ service_id: 's1', name: 'Facial', is_active: true, assigned: true }];
+  const refreshed = [{ service_id: 's1', name: 'Facial', is_active: true, assigned: false }, { service_id: 's2', name: 'Haircut', is_active: true, assigned: true }];
+  const p = page([
+    response(200, { success: true, data: capability }), response(200, { success: true, data: [] }), response(200, { success: true, data: [] }),
+    response(200, { success: true }), response(200, { success: true, data: refreshed })
+  ]);
+  p.api.setProfile(owner); p.api._state.staff = [{ id: 'u1', name: 'Amy' }];
+  await p.api.selectStaff('u1'); p.api.toggleCapability('s2', true); await p.api.saveCapability();
+  assert.equal(p.api._state.activeStaffTab, 'capability');
+  assert.deepEqual([...p.api._state.capabilityIds], ['s2']);
+  assert.equal(p.api._state.staffDirty.capability, false);
+  assert.deepEqual(p.requests.slice(3).map(request => [request.options.method || 'GET', request.url]), [
+    ['PUT', '/api/owner/staff/u1/services'], ['GET', '/api/owner/staff/u1/services']
+  ]);
 });
 
 test('inactive unassigned service is disabled while existing assignment remains visible', async () => {
@@ -189,9 +219,11 @@ test('capability localization follows requested to en to zh to canonical fallbac
 
 test('location assignment loads and saves locationIds only', async () => {
   const p = page([response(200, { success: true }), response(200, { success: true, data: [] }), response(200, { success: true, data: [] }), response(200, { success: true, data: [] })]);
-  p.api.setProfile(owner); p.api._state.selectedStaffId = 'u1'; p.api.toggleLocation('l1', true);
+  p.api.setProfile(owner); p.api._state.selectedStaffId = 'u1'; p.api._state.staff = [{ id: 'u1', name: 'Amy' }]; p.api._state.activeStaffTab = 'locations'; p.api.toggleLocation('l1', true);
   await p.api.saveLocations();
   assert.deepEqual(JSON.parse(p.requests[0].options.body), { locationIds: ['l1'] });
+  assert.equal(p.api._state.activeStaffTab, 'locations');
+  assert.equal(p.api._state.staffDirty.locations, false);
 });
 
 test('weekly schedule validates time before mutation', async () => {
@@ -203,15 +235,41 @@ test('weekly schedule validates time before mutation', async () => {
 });
 
 test('weekly schedule saves ISO weekdays and current location', async () => {
-  const p = page([response(200, { success: true })]); p.api.setProfile(owner); p.api._state.selectedStaffId = 'u1'; p.api._state.selectedLocationId = 'l1';
+  const p = page([response(200, { success: true }), response(200, { success: true, data: { timezone: 'Asia/Singapore', days: [] } })]); p.api.setProfile(owner); p.api._state.selectedStaffId = 'u1'; p.api._state.selectedLocationId = 'l1'; p.api._state.locations = [{ id: 'l1', assigned: true }]; p.api._state.activeStaffTab = 'schedule';
   p.elements.get('scheduleWorking1').checked = true; p.elements.get('scheduleStart1').value = '10:00'; p.elements.get('scheduleEnd1').value = '19:00';
+  p.api.markStaffTabDirty('schedule');
   await p.api.saveSchedule();
   const body = JSON.parse(p.requests[0].options.body);
   assert.equal(body.locationId, 'l1'); assert.deepEqual(body.days[0], { dayOfWeek: 1, isWorking: true, startTime: '10:00', endTime: '19:00' });
+  assert.equal(p.requests[1].url, '/api/owner/staff/u1/schedule?locationId=l1');
+  assert.equal(p.api._state.activeStaffTab, 'schedule');
+  assert.equal(p.api._state.staffDirty.schedule, false);
+});
+
+test('dirty tab warns on tab switch and browser refresh', () => {
+  const p = page(); p.api.setProfile(owner); p.api._state.capability = [{ service_id: 's1', name: 'Facial', is_active: true }];
+  p.api.openStaffTab('capability'); p.api.toggleCapability('s1', true);
+  assert.match(p.elements.get('capabilityStatus').textContent, /未保存/);
+  assert.equal(p.api.openStaffTab('locations'), false);
+  assert.equal(p.api._state.activeStaffTab, 'capability');
+  const event = { prevented: false, preventDefault() { this.prevented = true; }, returnValue: null };
+  p.eventListeners.get('beforeunload')(event);
+  assert.equal(event.prevented, true); assert.equal(event.returnValue, '');
+});
+
+test('save failure keeps active tab, dirty selection and API error', async () => {
+  const p = page([response(409, { success: false, message: 'Cannot save' })]);
+  p.api.setProfile(owner); p.api._state.selectedStaffId = 'u1'; p.api._state.capability = [{ service_id: 's1', name: 'Facial', is_active: true }];
+  p.api.openStaffTab('capability'); p.api.toggleCapability('s1', true); await p.api.saveCapability();
+  assert.equal(p.api._state.activeStaffTab, 'capability');
+  assert.equal(p.api._state.staffDirty.capability, true);
+  assert.deepEqual([...p.api._state.capabilityIds], ['s1']);
+  assert.equal(p.elements.get('capabilityStatus').textContent, 'Cannot save');
 });
 
 test('override UI supports day off, leave and custom hours labels', () => {
   assert.match(sharedSource, /休息一天/); assert.match(sharedSource, /请假/); assert.match(sharedSource, /特殊营业时间/);
+  assert.match(sharedSource, /Add Override/);
   assert.match(source, /day_off/); assert.match(source, /leave/); assert.match(source, /custom_hours/);
 });
 

@@ -16,7 +16,9 @@
     editingServiceId: null,
     editingCategoryId: null,
     capabilityIds: new Set(),
-    locationIds: new Set()
+    locationIds: new Set(),
+    activeStaffTab: 'capability',
+    staffDirty: { capability: false, locations: false, schedule: false, overrides: false }
   };
 
   const byId = id => document.getElementById(id);
@@ -137,7 +139,7 @@
     if (!button) return;
     button.disabled = busy;
     const idleKey = {
-      saveServiceButton: 'save', saveStaffButton: 'save', saveCapabilityButton: 'saveCapabilities',
+      saveServiceButton: 'save', saveStaffButton: 'saveProfile', saveCapabilityButton: 'saveCapabilities',
       saveCategoryButton: 'save',
       saveLocationsButton: 'saveLocations', saveScheduleButton: 'saveSchedule', saveOverrideButton: 'addSpecialDate'
     }[buttonId] || 'save';
@@ -149,6 +151,23 @@
     if (!element) return;
     element.textContent = text;
     element.style.color = isError ? '#c62828' : '#087443';
+  }
+
+  const tabStatusId = tab => ({ capability: 'capabilityStatus', locations: 'locationStatus', schedule: 'scheduleStatus', overrides: 'overrideStatus' }[tab]);
+  function markStaffTabDirty(tab) {
+    state.staffDirty[tab] = true;
+    const statusId = tabStatusId(tab);
+    if (statusId) setMessage(statusId, t('unsavedChanges'), true);
+  }
+  function clearStaffTabDirty(tab) { state.staffDirty[tab] = false; }
+  function hasUnsavedStaffChanges() { return Object.values(state.staffDirty).some(Boolean); }
+
+  if (typeof global.addEventListener === 'function') {
+    global.addEventListener('beforeunload', event => {
+      if (!hasUnsavedStaffChanges()) return;
+      event.preventDefault();
+      event.returnValue = '';
+    });
   }
 
   function setProfile(profile) {
@@ -326,7 +345,7 @@
   function renderStaffForm(staff) {
     const isNew = !staff;
     const disabled = canWrite() ? '' : 'disabled';
-    byId('staffDetail').innerHTML = `<div class="section-heading"><h3>${isNew ? t('addStaff') : t('basicDetails')}</h3></div>${isNew ? `<div class="notice">${t('staffSetupNotice')}</div>` : ''}<div class="form-grid"><label class="field"><span>${t('staffName')}</span><input id="staffName" maxlength="200" value="${escapeHtml(staff?.name || '')}" ${disabled}></label><label class="field"><span>${t('staffCode')}</span><input id="staffCode" maxlength="50" value="${escapeHtml(apiValue(staff, 'staffCode', 'staff_code') || '')}" ${disabled}></label><label class="field"><span>${t('phone')}</span><input id="staffPhone" maxlength="50" value="${escapeHtml(staff?.phone || '')}" ${disabled}></label><label class="field"><span>${t('email')}</span><input id="staffEmail" maxlength="254" value="${escapeHtml(staff?.email || '')}" ${disabled}></label><label class="check-row"><input id="staffBookable" type="checkbox" ${staff?.bookable ? 'checked' : ''} ${disabled}>${t('allowBooking')}</label><label class="check-row"><input id="staffActive" type="checkbox" ${isNew || apiValue(staff, 'isActive', 'is_active') ? 'checked' : ''} ${disabled}>${t('staffActive')}</label></div>${canWrite() ? `<div class="form-actions"><span id="staffSaveStatus" class="save-status"></span><button id="saveStaffButton" class="primary-btn" onclick="ownerSelfService.saveStaff(${isNew ? 'true' : 'false'})">${t('save')}</button></div>` : `<div class="notice">${t('adminReadOnly')}</div>`}${isNew ? '' : '<div id="staffSettings"></div>'}`;
+    byId('staffDetail').innerHTML = `<div class="section-heading"><h3>${isNew ? t('addStaff') : t('basicDetails')}</h3></div>${isNew ? `<div class="notice">${t('staffSetupNotice')}</div>` : ''}<div class="form-grid"><label class="field"><span>${t('staffName')}</span><input id="staffName" maxlength="200" value="${escapeHtml(staff?.name || '')}" ${disabled}></label><label class="field"><span>${t('staffCode')}</span><input id="staffCode" maxlength="50" value="${escapeHtml(apiValue(staff, 'staffCode', 'staff_code') || '')}" ${disabled}></label><label class="field"><span>${t('phone')}</span><input id="staffPhone" maxlength="50" value="${escapeHtml(staff?.phone || '')}" ${disabled}></label><label class="field"><span>${t('email')}</span><input id="staffEmail" maxlength="254" value="${escapeHtml(staff?.email || '')}" ${disabled}></label><label class="check-row"><input id="staffBookable" type="checkbox" ${staff?.bookable ? 'checked' : ''} ${disabled}>${t('allowBooking')}</label><label class="check-row"><input id="staffActive" type="checkbox" ${isNew || apiValue(staff, 'isActive', 'is_active') ? 'checked' : ''} ${disabled}>${t('staffActive')}</label></div>${canWrite() ? `<div class="form-actions"><span id="staffSaveStatus" class="save-status"></span><button id="saveStaffButton" class="primary-btn" onclick="ownerSelfService.saveStaff(${isNew ? 'true' : 'false'})">${t('saveProfile')}</button></div>` : `<div class="notice">${t('adminReadOnly')}</div>`}${isNew ? '' : '<div id="staffSettings"></div>'}`;
   }
 
   async function saveStaff(isNew) {
@@ -344,6 +363,10 @@
   }
 
   async function selectStaff(staffId) {
+    if (state.selectedStaffId !== staffId) {
+      state.activeStaffTab = 'capability';
+      state.staffDirty = { capability: false, locations: false, schedule: false, overrides: false };
+    }
     state.selectedStaffId = staffId;
     renderStaffList();
     const staff = state.staff.find(item => item.id === staffId);
@@ -379,14 +402,23 @@
   function renderStaffSettings() {
     const readonly = !canWrite();
     const activeLocations = state.locations.filter(item => item.assigned);
-    byId('staffSettings').innerHTML = `<div class="tabs"><button class="tab-btn active" onclick="ownerSelfService.openStaffTab('capability')">${t('capabilities')}</button><button class="tab-btn" onclick="ownerSelfService.openStaffTab('locations')">${t('locations')}</button><button class="tab-btn" onclick="ownerSelfService.openStaffTab('schedule')">${t('weeklySchedule')}</button><button class="tab-btn" onclick="ownerSelfService.openStaffTab('overrides')">${t('specialDates')}</button></div><div id="staffTabContent"></div>`;
-    openStaffTab('capability');
+    byId('staffSettings').innerHTML = `<div class="tabs">${['capability', 'locations', 'schedule', 'overrides'].map((tab, index) => `<button class="tab-btn ${tab === state.activeStaffTab ? 'active' : ''}" onclick="ownerSelfService.openStaffTab('${tab}')">${t(['capabilities', 'locations', 'weeklySchedule', 'specialDates'][index])}</button>`).join('')}</div><div id="staffTabContent"></div>`;
+    openStaffTab(state.activeStaffTab, true);
     if (!activeLocations.length && !readonly) setMessage('staffMessage', t('assignLocationBeforeSchedule'));
   }
 
-  function openStaffTab(tab) {
+  function openStaffTab(tab, force = false) {
     const container = byId('staffTabContent');
     if (!container) return;
+    if (!force && tab !== state.activeStaffTab && state.staffDirty[state.activeStaffTab]) {
+      const discard = typeof global.confirm === 'function' && global.confirm(t('discardUnsavedChanges'));
+      if (!discard) return false;
+      clearStaffTabDirty(state.activeStaffTab);
+    }
+    state.activeStaffTab = tab;
+    if (typeof document.querySelectorAll === 'function') {
+      document.querySelectorAll('.tabs .tab-btn').forEach((button, index) => button.classList.toggle('active', ['capability', 'locations', 'schedule', 'overrides'][index] === tab));
+    }
     if (tab === 'capability') renderCapability(container);
     if (tab === 'locations') renderLocations(container);
     if (tab === 'schedule') renderSchedule(container);
@@ -428,29 +460,34 @@
       const disabled = !canWrite() || (!active && !selected);
       return `<div class="check-row" data-service-id="${escapeHtml(id)}"><input type="checkbox" ${selected ? 'checked' : ''} ${disabled ? 'disabled' : ''} onchange="ownerSelfService.toggleCapability('${escapeHtml(id)}', this.checked)"><label>${escapeHtml(localizedCapabilityServiceName(service))}${!active ? ` <span class="muted">· ${t('serviceInactive')}</span>` : ''}${!service.bookable ? ` <span class="muted">· ${t('serviceNotBookable')}</span>` : ''}</label></div>`;
     }).join('')}</section>`).join('');
-    container.innerHTML = `<div class="section-heading"><h3>${t('capabilityHeading')}</h3></div>${content || `<div class="empty">${t('noCapabilityServices')}</div>`}${canWrite() ? `<div class="form-actions"><span id="capabilityStatus" class="save-status"></span><button id="saveCapabilityButton" class="primary-btn" onclick="ownerSelfService.saveCapability()">${t('saveCapabilities')}</button></div>` : `<div class="notice">${t('adminReadOnly')}</div>`}`;
+    container.innerHTML = `<div class="section-heading"><h3>${t('capabilityHeading')}</h3></div>${content || `<div class="empty">${t('noCapabilityServices')}</div>`}${canWrite() ? `<div class="form-actions tab-save-bar"><span id="capabilityStatus" class="save-status">${state.staffDirty.capability ? t('unsavedChanges') : ''}</span><button id="saveCapabilityButton" class="primary-btn" onclick="ownerSelfService.saveCapability()">${t('saveCapabilities')}</button></div>` : `<div class="notice">${t('adminReadOnly')}</div>`}`;
   }
 
-  function toggleCapability(id, enabled) { enabled ? state.capabilityIds.add(id) : state.capabilityIds.delete(id); }
+  function toggleCapability(id, enabled) { enabled ? state.capabilityIds.add(id) : state.capabilityIds.delete(id); markStaffTabDirty('capability'); }
   async function saveCapability() {
     setBusy('saveCapabilityButton', true);
     try {
       await request(`/api/owner/staff/${encodeURIComponent(state.selectedStaffId)}/services`, { method: 'PUT', body: JSON.stringify({ serviceIds: [...state.capabilityIds] }) });
+      state.capability = await request(`/api/owner/staff/${encodeURIComponent(state.selectedStaffId)}/services`) || [];
+      state.capabilityIds = new Set(state.capability.filter(item => item.assigned).map(item => apiValue(item, 'serviceId', 'service_id')));
+      clearStaffTabDirty('capability');
+      renderCapability(byId('staffTabContent'));
       setMessage('capabilityStatus', t('saved'));
     } catch (error) { if (!error.sessionExpired) setMessage('capabilityStatus', error.message, true); }
     finally { setBusy('saveCapabilityButton', false); }
   }
 
   function renderLocations(container) {
-    container.innerHTML = `<div class="section-heading"><h3>${t('locations')}</h3></div>${state.locations.map(location => `<div class="check-row"><input type="checkbox" ${state.locationIds.has(location.id) ? 'checked' : ''} ${!canWrite() || apiValue(location, 'isActive', 'is_active') === false ? 'disabled' : ''} onchange="ownerSelfService.toggleLocation('${escapeHtml(location.id)}', this.checked)"><label>${escapeHtml(location.name)} <span class="muted">${escapeHtml(location.timezone || '')}</span></label></div>`).join('') || `<div class="empty">${t('noLocations')}</div>`}${canWrite() ? `<div class="form-actions"><span id="locationStatus" class="save-status"></span><button id="saveLocationsButton" class="primary-btn" onclick="ownerSelfService.saveLocations()">${t('saveLocations')}</button></div>` : `<div class="notice">${t('adminReadOnly')}</div>`}`;
+    container.innerHTML = `<div class="section-heading"><h3>${t('locations')}</h3></div>${state.locations.map(location => `<div class="check-row"><input type="checkbox" ${state.locationIds.has(location.id) ? 'checked' : ''} ${!canWrite() || apiValue(location, 'isActive', 'is_active') === false ? 'disabled' : ''} onchange="ownerSelfService.toggleLocation('${escapeHtml(location.id)}', this.checked)"><label>${escapeHtml(location.name)} <span class="muted">${escapeHtml(location.timezone || '')}</span></label></div>`).join('') || `<div class="empty">${t('noLocations')}</div>`}${canWrite() ? `<div class="form-actions tab-save-bar"><span id="locationStatus" class="save-status">${state.staffDirty.locations ? t('unsavedChanges') : ''}</span><button id="saveLocationsButton" class="primary-btn" onclick="ownerSelfService.saveLocations()">${t('saveLocations')}</button></div>` : `<div class="notice">${t('adminReadOnly')}</div>`}`;
   }
-  function toggleLocation(id, enabled) { enabled ? state.locationIds.add(id) : state.locationIds.delete(id); }
+  function toggleLocation(id, enabled) { enabled ? state.locationIds.add(id) : state.locationIds.delete(id); markStaffTabDirty('locations'); }
   async function saveLocations() {
     setBusy('saveLocationsButton', true);
     try {
       await request(`/api/owner/staff/${encodeURIComponent(state.selectedStaffId)}/locations`, { method: 'PUT', body: JSON.stringify({ locationIds: [...state.locationIds] }) });
-      setMessage('locationStatus', t('saved'));
+      clearStaffTabDirty('locations');
       await selectStaff(state.selectedStaffId);
+      setMessage('locationStatus', t('saved'));
     } catch (error) { if (!error.sessionExpired) setMessage('locationStatus', error.message, true); }
     finally { setBusy('saveLocationsButton', false); }
   }
@@ -460,10 +497,15 @@
     if (!assigned.length) { container.innerHTML = `<div class="notice">${t('assignLocationFirst')}</div>`; return; }
     const days = state.schedule?.days || Array.from({ length: 7 }, (_, index) => ({ dayOfWeek: index + 1, isWorking: false }));
     const names = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'].map(t);
-    container.innerHTML = `<div class="section-heading"><h3>${t('weeklySchedule')}</h3><select id="scheduleLocation" onchange="ownerSelfService.changeScheduleLocation(this.value)">${assigned.map(location => `<option value="${escapeHtml(location.id)}" ${location.id === state.selectedLocationId ? 'selected' : ''}>${escapeHtml(location.name)}</option>`).join('')}</select></div><div class="muted">${t('timezone')}: ${escapeHtml(state.schedule?.timezone || assigned.find(item => item.id === state.selectedLocationId)?.timezone || '')}</div>${days.map(day => `<div class="schedule-row"><span class="weekday">${names[day.dayOfWeek - 1]}</span><label><input id="scheduleWorking${day.dayOfWeek}" type="checkbox" ${day.isWorking ? 'checked' : ''} ${!canWrite() ? 'disabled' : ''}> ${t('working')}</label><input id="scheduleStart${day.dayOfWeek}" type="time" value="${escapeHtml(day.startTime || '10:00')}" ${!canWrite() ? 'disabled' : ''}><span>${t('to')}</span><input id="scheduleEnd${day.dayOfWeek}" type="time" value="${escapeHtml(day.endTime || '19:00')}" ${!canWrite() ? 'disabled' : ''}></div>`).join('')}${canWrite() ? `<div class="form-actions"><span id="scheduleStatus" class="save-status"></span><button id="saveScheduleButton" class="primary-btn" onclick="ownerSelfService.saveSchedule()">${t('saveSchedule')}</button></div>` : `<div class="notice">${t('adminReadOnly')}</div>`}`;
+    container.innerHTML = `<div class="section-heading"><h3>${t('weeklySchedule')}</h3><select id="scheduleLocation" onchange="ownerSelfService.changeScheduleLocation(this.value)">${assigned.map(location => `<option value="${escapeHtml(location.id)}" ${location.id === state.selectedLocationId ? 'selected' : ''}>${escapeHtml(location.name)}</option>`).join('')}</select></div><div class="muted">${t('timezone')}: ${escapeHtml(state.schedule?.timezone || assigned.find(item => item.id === state.selectedLocationId)?.timezone || '')}</div>${days.map(day => `<div class="schedule-row"><span class="weekday">${names[day.dayOfWeek - 1]}</span><label><input id="scheduleWorking${day.dayOfWeek}" type="checkbox" onchange="ownerSelfService.markStaffTabDirty('schedule')" ${day.isWorking ? 'checked' : ''} ${!canWrite() ? 'disabled' : ''}> ${t('working')}</label><input id="scheduleStart${day.dayOfWeek}" type="time" onchange="ownerSelfService.markStaffTabDirty('schedule')" value="${escapeHtml(day.startTime || '10:00')}" ${!canWrite() ? 'disabled' : ''}><span>${t('to')}</span><input id="scheduleEnd${day.dayOfWeek}" type="time" onchange="ownerSelfService.markStaffTabDirty('schedule')" value="${escapeHtml(day.endTime || '19:00')}" ${!canWrite() ? 'disabled' : ''}></div>`).join('')}${canWrite() ? `<div class="form-actions tab-save-bar"><span id="scheduleStatus" class="save-status">${state.staffDirty.schedule ? t('unsavedChanges') : ''}</span><button id="saveScheduleButton" class="primary-btn" onclick="ownerSelfService.saveSchedule()">${t('saveSchedule')}</button></div>` : `<div class="notice">${t('adminReadOnly')}</div>`}`;
   }
 
   async function changeScheduleLocation(locationId) {
+    if (state.staffDirty.schedule) {
+      const discard = typeof global.confirm === 'function' && global.confirm(t('discardUnsavedChanges'));
+      if (!discard) return false;
+      clearStaffTabDirty('schedule');
+    }
     state.selectedLocationId = locationId;
     try { await loadSchedule(); renderSchedule(byId('staffTabContent')); }
     catch (error) { if (!error.sessionExpired) byId('staffTabContent').innerHTML = `<div class="error">${escapeHtml(error.message)}</div>`; }
@@ -484,15 +526,17 @@
     setBusy('saveScheduleButton', true);
     try {
       await request(`/api/owner/staff/${encodeURIComponent(state.selectedStaffId)}/schedule`, { method: 'PUT', body: JSON.stringify({ locationId: state.selectedLocationId, days }) });
-      setMessage('scheduleStatus', t('saved'));
       await loadSchedule();
+      clearStaffTabDirty('schedule');
+      renderSchedule(byId('staffTabContent'));
+      setMessage('scheduleStatus', t('saved'));
     } catch (error) { if (!error.sessionExpired) setMessage('scheduleStatus', error.message, true); }
     finally { setBusy('saveScheduleButton', false); }
   }
 
   function renderOverrides(container) {
     const assigned = state.locations.filter(item => item.assigned);
-    container.innerHTML = `<div class="section-heading"><h3>${t('specialDates')}</h3></div>${canWrite() && assigned.length ? `<div class="form-grid"><label class="field"><span>${t('store')}</span><select id="overrideLocation">${assigned.map(location => `<option value="${escapeHtml(location.id)}">${escapeHtml(location.name)}</option>`).join('')}</select></label><label class="field"><span>${t('date')}</span><input id="overrideDate" type="date"></label><label class="field"><span>${t('type')}</span><select id="overrideType" onchange="ownerSelfService.updateOverrideFields()"><option value="day_off">${t('dayOff')}</option><option value="leave">${t('leave')}</option><option value="custom_hours">${t('customHours')}</option></select></label><label id="overrideStartField" class="field" hidden><span>${t('startTime')}</span><input id="overrideStart" type="time"></label><label id="overrideEndField" class="field" hidden><span>${t('endTime')}</span><input id="overrideEnd" type="time"></label><label class="field full"><span>${t('notesOptional')}</span><input id="overrideReason" maxlength="1000"></label></div><div class="form-actions"><span id="overrideStatus" class="save-status"></span><button id="saveOverrideButton" class="primary-btn" onclick="ownerSelfService.saveOverride()">${t('addSpecialDate')}</button></div>` : (!assigned.length ? `<div class="notice">${t('assignLocationFirst')}</div>` : `<div class="notice">${t('adminReadOnly')}</div>`)}<div>${state.overrides.map(item => `<div class="list-card"><strong>${escapeHtml(dateValue(apiValue(item, 'scheduleDate', 'schedule_date')))}</strong> · ${escapeHtml(overrideLabel(apiValue(item, 'overrideType', 'override_type')))}<div class="muted">${escapeHtml(apiValue(item, 'locationName', 'location_name') || '')} ${timeValue(apiValue(item, 'startTime', 'start_time'))}${apiValue(item, 'endTime', 'end_time') ? ` - ${escapeHtml(timeValue(apiValue(item, 'endTime', 'end_time')))}` : ''} · ${apiValue(item, 'isActive', 'is_active') ? t('effective') : t('inactive')}</div>${canWrite() && apiValue(item, 'isActive', 'is_active') ? `<button class="secondary-btn" onclick="ownerSelfService.deactivateOverride('${escapeHtml(item.id)}')">${t('deactivate')}</button>` : ''}</div>`).join('') || `<div class="empty">${t('noOverrides')}</div>`}</div>`;
+    container.innerHTML = `<div class="section-heading"><h3>${t('specialDates')}</h3></div>${canWrite() && assigned.length ? `<div class="form-grid" onchange="ownerSelfService.markStaffTabDirty('overrides')" oninput="ownerSelfService.markStaffTabDirty('overrides')"><label class="field"><span>${t('store')}</span><select id="overrideLocation">${assigned.map(location => `<option value="${escapeHtml(location.id)}">${escapeHtml(location.name)}</option>`).join('')}</select></label><label class="field"><span>${t('date')}</span><input id="overrideDate" type="date"></label><label class="field"><span>${t('type')}</span><select id="overrideType" onchange="ownerSelfService.updateOverrideFields()"><option value="day_off">${t('dayOff')}</option><option value="leave">${t('leave')}</option><option value="custom_hours">${t('customHours')}</option></select></label><label id="overrideStartField" class="field" hidden><span>${t('startTime')}</span><input id="overrideStart" type="time"></label><label id="overrideEndField" class="field" hidden><span>${t('endTime')}</span><input id="overrideEnd" type="time"></label><label class="field full"><span>${t('notesOptional')}</span><input id="overrideReason" maxlength="1000"></label></div><div class="form-actions tab-save-bar"><span id="overrideStatus" class="save-status">${state.staffDirty.overrides ? t('unsavedChanges') : ''}</span><button id="saveOverrideButton" class="primary-btn" onclick="ownerSelfService.saveOverride()">${t('addSpecialDate')}</button></div>` : (!assigned.length ? `<div class="notice">${t('assignLocationFirst')}</div>` : `<div class="notice">${t('adminReadOnly')}</div>`)}<div>${state.overrides.map(item => `<div class="list-card"><strong>${escapeHtml(dateValue(apiValue(item, 'scheduleDate', 'schedule_date')))}</strong> · ${escapeHtml(overrideLabel(apiValue(item, 'overrideType', 'override_type')))}<div class="muted">${escapeHtml(apiValue(item, 'locationName', 'location_name') || '')} ${timeValue(apiValue(item, 'startTime', 'start_time'))}${apiValue(item, 'endTime', 'end_time') ? ` - ${escapeHtml(timeValue(apiValue(item, 'endTime', 'end_time')))}` : ''} · ${apiValue(item, 'isActive', 'is_active') ? t('effective') : t('inactive')}</div>${canWrite() && apiValue(item, 'isActive', 'is_active') ? `<button class="secondary-btn" onclick="ownerSelfService.deactivateOverride('${escapeHtml(item.id)}')">${t('deactivate')}</button>` : ''}</div>`).join('') || `<div class="empty">${t('noOverrides')}</div>`}</div>`;
   }
 
   function overrideLabel(type) { return ({ day_off: t('dayOff'), leave: t('leave'), custom_hours: t('customHours'), working: t('customHours') }[type] || t('specialDates')); }
@@ -513,9 +557,10 @@
     setBusy('saveOverrideButton', true);
     try {
       await request(`/api/owner/staff/${encodeURIComponent(state.selectedStaffId)}/schedule-overrides`, { method: 'POST', body: JSON.stringify(body) });
-      setMessage('overrideStatus', t('saved'));
       state.overrides = await request(`/api/owner/staff/${encodeURIComponent(state.selectedStaffId)}/schedule-overrides`) || [];
+      clearStaffTabDirty('overrides');
       renderOverrides(byId('staffTabContent'));
+      setMessage('overrideStatus', t('saved'));
     } catch (error) { if (!error.sessionExpired) setMessage('overrideStatus', error.message, true); }
     finally { setBusy('saveOverrideButton', false); }
   }
@@ -527,6 +572,6 @@
     } catch (error) { if (!error.sessionExpired) setMessage('staffMessage', error.message, true); }
   }
 
-  global.ownerSelfService = { setLocale, setProfile, reset, showView, loadServices, renderCategories, openCategoryForm, closeCategoryForm, saveCategory, openServiceForm, closeServiceForm, saveService, loadStaff, openStaffForm, saveStaff, selectStaff, openStaffTab, toggleCapability, saveCapability, toggleLocation, saveLocations, changeScheduleLocation, saveSchedule, updateOverrideFields, saveOverride, deactivateOverride, _state: state, _request: request };
+  global.ownerSelfService = { setLocale, setProfile, reset, showView, loadServices, renderCategories, openCategoryForm, closeCategoryForm, saveCategory, openServiceForm, closeServiceForm, saveService, loadStaff, openStaffForm, saveStaff, selectStaff, openStaffTab, markStaffTabDirty, toggleCapability, saveCapability, toggleLocation, saveLocations, changeScheduleLocation, saveSchedule, updateOverrideFields, saveOverride, deactivateOverride, _state: state, _request: request };
   setLocale(initialLocale());
 })(globalThis);
