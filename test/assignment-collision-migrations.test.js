@@ -14,6 +14,10 @@ const migrations = [13, 14, 15, 16, 17].map(number => {
   const name = fs.readdirSync(path.join(ROOT, 'migrations')).find(file => file.startsWith(`${String(number).padStart(3, '0')}_`));
   return path.join(ROOT, 'migrations', name);
 });
+const parentCompatibilityMigrations = [22, 23, 24].map(number => {
+  const name = fs.readdirSync(path.join(ROOT, 'migrations')).find(file => file.startsWith(`${String(number).padStart(3, '0')}_`));
+  return path.join(ROOT, 'migrations', name);
+});
 const sql = file => fs.readFileSync(file, 'utf8');
 
 const BASE_SCHEMA = `
@@ -28,13 +32,15 @@ CREATE TABLE appointments(
  status text NOT NULL DEFAULT 'pending',override_conflict boolean NOT NULL DEFAULT false,
  CONSTRAINT appointments_check CHECK(end_at>start_at),
  CONSTRAINT appointments_shop_location_id_uidx UNIQUE(shop_id,location_id,id),
+ CONSTRAINT appointments_staff_fkey FOREIGN KEY(shop_id,staff_id)
+   REFERENCES staff(shop_id,id) ON DELETE RESTRICT,
  CONSTRAINT prevent_staff_double_booking EXCLUDE USING gist
    (staff_id WITH =,tstzrange(start_at,end_at,'[)') WITH &&)
    WHERE(status IN ('pending','confirmed') AND override_conflict=false)
 );
 CREATE TABLE appointment_items(
  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),shop_id uuid NOT NULL,location_id uuid NOT NULL,
- appointment_id uuid NOT NULL,start_at timestamptz NOT NULL,end_at timestamptz NOT NULL,
+ appointment_id uuid NOT NULL,sequence_no integer NOT NULL DEFAULT 1,start_at timestamptz NOT NULL,end_at timestamptz NOT NULL,
  CONSTRAINT appointment_items_time_range_check CHECK(end_at>start_at),
  CONSTRAINT appointment_items_shop_location_id_key UNIQUE(shop_id,location_id,id),
  CONSTRAINT appointment_items_parent_fkey FOREIGN KEY(shop_id,location_id,appointment_id)
@@ -324,6 +330,18 @@ test('assignment collision migrations on real PostgreSQL 17', { timeout: 120000 
       await admin.query(sql(migrations[2]));
       await admin.query(sql(migrations[3]));
       await admin.query(sql(migrations[4]));
+    });
+
+    await t.test('022 to 024 transfers final authority to assignments', async () => {
+      await admin.query('TRUNCATE appointment_item_staff_assignments,appointment_items,appointments');
+      await createAllocation(admin, { assignedStaff: ids.staffA });
+      await admin.query(sql(parentCompatibilityMigrations[0]));
+      await admin.query(sql(parentCompatibilityMigrations[1]));
+      await admin.query(sql(parentCompatibilityMigrations[2]));
+      const parentConstraint = await admin.query(`SELECT 1 FROM pg_constraint WHERE conname='prevent_staff_double_booking'`);
+      const assignmentConstraint = await admin.query(`SELECT 1 FROM pg_constraint WHERE conname='prevent_assignment_staff_double_booking'`);
+      assert.equal(parentConstraint.rows.length, 0);
+      assert.equal(assignmentConstraint.rows.length, 1);
     });
   } finally {
     if (admin) await admin.end().catch(() => {});

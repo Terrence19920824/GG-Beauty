@@ -1385,7 +1385,31 @@ app.get(
         s.price,
 
         st.name AS staff_name,
-        st.staff_code
+        st.staff_code,
+        COALESCE(
+          (
+            SELECT JSON_AGG(
+              JSON_BUILD_OBJECT(
+                'itemId', item.id,
+                'sequenceNo', item.sequence_no,
+                'staffId', assignment.staff_id,
+                'role', assignment.role,
+                'startAt', assignment.start_at,
+                'endAt', assignment.end_at
+              )
+              ORDER BY item.sequence_no, assignment.role, assignment.id
+            )
+            FROM appointment_items item
+            JOIN appointment_item_staff_assignments assignment
+              ON assignment.shop_id = item.shop_id
+             AND assignment.location_id = item.location_id
+             AND assignment.appointment_item_id = item.id
+            WHERE item.shop_id = a.shop_id
+              AND item.location_id = a.location_id
+              AND item.appointment_id = a.id
+          ),
+          '[]'::JSON
+        ) AS staff_assignments
 
       FROM appointments a
 
@@ -3326,8 +3350,19 @@ app.get(
                 ON s.id = a.service_id
                AND s.shop_id = a.shop_id
               WHERE a.shop_id = scope.shop_id
-                AND a.staff_id = scope.staff_id
                 AND a.location_id = scope.location_id
+                AND EXISTS (
+                  SELECT 1
+                  FROM appointment_items item
+                  JOIN appointment_item_staff_assignments assignment
+                    ON assignment.shop_id = item.shop_id
+                   AND assignment.location_id = item.location_id
+                   AND assignment.appointment_item_id = item.id
+                  WHERE item.shop_id = a.shop_id
+                    AND item.location_id = a.location_id
+                    AND item.appointment_id = a.id
+                    AND assignment.staff_id = scope.staff_id
+                )
                 AND a.start_at >= (
                   scope.local_date::TIMESTAMP
                   AT TIME ZONE scope.timezone
@@ -3555,6 +3590,19 @@ app.patch(
           appointment
         );
 
+      if (
+        phaseAStructure.primaryStaffCount !== 1 ||
+        phaseAStructure.solePrimaryStaffId !==
+          req.staffAuth.staffId
+      ) {
+        await rollbackActiveTransaction();
+
+        return res.status(409).json({
+          success: false,
+          message: '多员工预约不能由员工移动整笔时间'
+        });
+      }
+
       if (appointment.is_no_op === true) {
         await client.query('COMMIT');
         transactionActive = false;
@@ -3571,48 +3619,60 @@ app.patch(
         });
       }
 
-      const conflictResult = await client.query(
+      const moveAssignments = await client.query(
         `
-        WITH proposed_time AS (
-          SELECT
-            id,
-            $5::TIMESTAMPTZ AS new_start_at,
-            $5::TIMESTAMPTZ +
-              (end_at - start_at) AS new_end_at
-          FROM appointments
-          WHERE id = $4
-            AND shop_id = $1
-            AND location_id = $2
-            AND staff_id = $3
-        )
-        SELECT existing.id
-        FROM appointments existing
-        CROSS JOIN proposed_time proposed
-        WHERE existing.shop_id = $1
-          AND existing.location_id = $2
-          AND existing.staff_id = $3
-          AND existing.id <> proposed.id
-          AND existing.status IN ('pending', 'confirmed')
-          AND existing.override_conflict = FALSE
-          AND existing.start_at < proposed.new_end_at
-          AND existing.end_at > proposed.new_start_at
-        LIMIT 1
+        SELECT
+          item.service_id,
+          assignment.staff_id,
+          assignment.start_at +
+            ($4::TIMESTAMPTZ - $5::TIMESTAMPTZ)
+            AS proposed_start_at,
+          assignment.end_at +
+            ($4::TIMESTAMPTZ - $5::TIMESTAMPTZ)
+            AS proposed_end_at
+        FROM appointment_items item
+        JOIN appointment_item_staff_assignments assignment
+          ON assignment.shop_id = item.shop_id
+         AND assignment.location_id = item.location_id
+         AND assignment.appointment_item_id = item.id
+        WHERE item.shop_id = $1
+          AND item.location_id = $2
+          AND item.appointment_id = $3
+        ORDER BY item.sequence_no, assignment.role, assignment.id
+        FOR SHARE OF assignment
         `,
         [
-          req.staffAuth.shopId,
-          req.staffAuth.locationId,
-          req.staffAuth.staffId,
+          appointment.shop_id,
+          appointment.location_id,
           appointment.id,
-          newStartAt
+          newStartAt,
+          appointment.start_at
         ]
       );
 
-      if (conflictResult.rows.length > 0) {
-        await rollbackActiveTransaction();
+      if (
+        moveAssignments.rows.length !==
+          phaseAStructure.assignmentCount
+      ) {
+        throw new AppointmentMutationError(
+          'appointment_move_assignment_count_mismatch',
+          409,
+          '预约员工结构已变化，请重试'
+        );
+      }
 
-        return res.status(409).json({
-          success: false,
-          message: '新时间与现有预约冲突'
+      for (const assignment of moveAssignments.rows) {
+        await validateStaffBookability({
+          dbClient: client,
+          shopId: appointment.shop_id,
+          locationId: appointment.location_id,
+          staffId: assignment.staff_id,
+          serviceId: assignment.service_id,
+          requestedStartAt:
+            new Date(assignment.proposed_start_at).toISOString(),
+          requestedEndAt:
+            new Date(assignment.proposed_end_at).toISOString(),
+          excludeAppointmentId: appointment.id
         });
       }
 

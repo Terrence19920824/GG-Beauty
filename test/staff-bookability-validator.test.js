@@ -64,7 +64,8 @@ const inputFor = row => ({
       assert.match(sql, /assignment\.blocks_time = TRUE/);
       assert.doesNotMatch(sql, /staff_working_hours/);
       assert.doesNotMatch(sql, /staff_time_off/);
-      assert.equal(params.length, 6);
+      assert.equal(params.length, 7);
+      assert.equal(params[6], null);
       return { rows: [row] };
     }
   },
@@ -209,6 +210,19 @@ test('normal weekly schedule passes', async () => {
       scheduleSource: 'weekly'
     }
   );
+});
+
+test('appointment move may exclude only its own canonical assignments', async () => {
+  const row = validRow();
+  const input = inputFor(row);
+  input.excludeAppointmentId = '77777777-7777-4777-8777-777777777777';
+  input.dbClient.query = async (sql, params) => {
+    assert.match(sql, /JOIN appointment_items AS collision_item/);
+    assert.match(sql, /collision_item\.appointment_id <>/);
+    assert.equal(params[6], input.excludeAppointmentId);
+    return { rows: [row] };
+  };
+  await validateStaffBookability(input);
 });
 
 test('cross-tenant identifiers fail closed without existence detail', async () => {
