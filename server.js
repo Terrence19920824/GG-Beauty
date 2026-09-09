@@ -2302,7 +2302,7 @@ const filterBookableCandidateSlots = async ({
 const loadTrustedCustomerBookingScope = async (dbClient, shopSlug) => {
   const result = await dbClient.query(
     `
-    SELECT shop.id AS shop_id, location.id AS location_id
+    SELECT shop.id AS shop_id, shop.slug AS shop_slug, location.id AS location_id
     FROM shops AS shop
     JOIN LATERAL (
       SELECT id
@@ -2318,6 +2318,29 @@ const loadTrustedCustomerBookingScope = async (dbClient, shopSlug) => {
   );
   return result.rows[0] || null;
 };
+
+app.get('/api/booking/context', async (req, res) => {
+  if (req.query.shopId !== undefined || req.query.shop_id !== undefined || req.query.tenantId !== undefined) {
+    return res.status(400).json({ success: false, message: 'Invalid shop context' });
+  }
+  const shopSlug = typeof req.query.shopSlug === 'string' ? req.query.shopSlug.trim().toLowerCase() : '';
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(shopSlug) || shopSlug.length > 100) {
+    return res.status(400).json({ success: false, message: 'Invalid shop context' });
+  }
+
+  let client;
+  try {
+    client = await req.app.locals.bookingPool.connect();
+    const scope = await loadTrustedCustomerBookingScope(client, shopSlug);
+    if (!scope) return res.status(404).json({ success: false, message: 'Shop is unavailable' });
+    return res.json({ success: true, data: { shopSlug: scope.shop_slug } });
+  } catch (error) {
+    console.error('Resolve customer shop context error:', safeStaffAuthErrorCode(error));
+    return res.status(500).json({ success: false, message: 'Unable to resolve shop context' });
+  } finally {
+    if (client) client.release();
+  }
+});
 
 const loadEligibleBookingStaff = async (
   dbClient,

@@ -6,6 +6,7 @@ const path = require('node:path');
 const test = require('node:test');
 const vm = require('node:vm');
 const i18n = require('../public/shared-i18n');
+const shopContext = require('../public/customer-shop-context');
 
 const customerHtml = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'index.html'),
@@ -30,7 +31,11 @@ const createCustomerContext = () => {
       fetchUrls.push(String(url));
       return { ok: true, json: async () => ({ success: true, data: [] }) };
     },
-    globalThis: { ggI18n: i18n },
+    globalThis: {
+      ggI18n: i18n,
+      ggCustomerShopContext: shopContext,
+      location: { hostname: 'localhost', pathname: '/', search: '' }
+    },
     localStorage: { getItem: () => 'zh-CN', setItem() {} },
     navigator: { languages: ['zh-CN'] },
     document: {
