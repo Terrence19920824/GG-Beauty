@@ -10,7 +10,7 @@
   const dictionaries = {
     'zh-CN': {
       calendar: '日历', staff: '员工', services: '服务', customers: '顾客', checkout: '收银', more: '更多',
-      save: '保存', saveProfile: '保存基本资料', saving: '保存中...', saved: '已保存', saveFailed: '保存失败', unsavedChanges: '有未保存更改', discardUnsavedChanges: '有未保存更改。放弃更改并继续吗？', cancel: '取消', edit: '编辑', add: '新增', confirm: '确认', complete: '完成', retry: '重试',
+      save: '保存', saveProfile: '保存基本资料', saving: '保存中...', saved: '已保存', saveFailed: '保存失败', savedReloadFailed: '已保存，但重新读取失败，请重试', unsavedChanges: '有未保存更改', discardUnsavedChanges: '有未保存更改。放弃更改并继续吗？', profileSaveDiscardsUnsaved: '其他设置有未保存更改。保存基本资料会重新读取员工设置，是否放弃这些更改并继续？', cancel: '取消', edit: '编辑', add: '新增', confirm: '确认', complete: '完成', retry: '重试',
       pending: '待确认', confirmed: '已确认', completed: '已完成', cancelled: '已取消', noShow: '未到店',
       name: '姓名', phone: '电话', email: 'Email', price: '价格', duration: '时长', category: '分类', status: '状态', actions: '操作',
       enabled: '启用', disabled: '停用', bookable: '可预约', notBookable: '未开放预约', active: '启用', inactive: '停用',
@@ -30,7 +30,7 @@
     },
     en: {
       calendar: 'Calendar', staff: 'Staff', services: 'Services', customers: 'Customers', checkout: 'Checkout', more: 'More',
-      save: 'Save', saveProfile: 'Save Profile', saving: 'Saving...', saved: 'Saved', saveFailed: 'Save failed', unsavedChanges: 'Unsaved changes', discardUnsavedChanges: 'You have unsaved changes. Discard them and continue?', cancel: 'Cancel', edit: 'Edit', add: 'Add', confirm: 'Confirm', complete: 'Complete', retry: 'Retry',
+      save: 'Save', saveProfile: 'Save Profile', saving: 'Saving...', saved: 'Saved', saveFailed: 'Save failed', savedReloadFailed: 'Saved, but failed to reload the latest data. Please retry.', unsavedChanges: 'Unsaved changes', discardUnsavedChanges: 'You have unsaved changes. Discard them and continue?', profileSaveDiscardsUnsaved: 'Other staff settings have unsaved changes. Saving the profile reloads staff settings. Discard those changes and continue?', cancel: 'Cancel', edit: 'Edit', add: 'Add', confirm: 'Confirm', complete: 'Complete', retry: 'Retry',
       pending: 'Pending', confirmed: 'Confirmed', completed: 'Completed', cancelled: 'Cancelled', noShow: 'No Show',
       name: 'Name', phone: 'Phone', email: 'Email', price: 'Price', duration: 'Duration', category: 'Category', status: 'Status', actions: 'Actions',
       enabled: 'Enabled', disabled: 'Disabled', bookable: 'Bookable', notBookable: 'Not bookable', active: 'Active', inactive: 'Inactive',

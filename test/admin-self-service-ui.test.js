@@ -145,6 +145,24 @@ test('profile save label is explicit and localized', () => {
   assert.match(p.elements.get('staffDetail').innerHTML, /Save Profile/);
 });
 
+test('profile save requires confirmation before discarding another tab draft', async () => {
+  const p = page([
+    response(200, { success: true, data: { id: 'u1' } }),
+    response(200, { success: true, data: [{ id: 'u1', name: 'Amy', is_active: true }] }),
+    response(200, { success: true, data: [] }), response(200, { success: true, data: [] }), response(200, { success: true, data: [] })
+  ]);
+  p.api.setProfile(owner); p.api._state.selectedStaffId = 'u1'; p.api._state.staff = [{ id: 'u1', name: 'Amy' }];
+  p.elements.get('staffName').value = 'Amy'; p.api._state.authoritativeCapabilityIds = new Set(['s1']);
+  p.api._state.capabilityIds = new Set(['s2']); p.api._state.staffDirty.capability = true;
+  assert.equal(await p.api.saveStaff(false), false);
+  assert.equal(p.requests.length, 0);
+  p.context.confirmResult = true;
+  await p.api.saveStaff(false);
+  assert.equal(p.requests[0].options.method, 'PATCH');
+  assert.equal(p.requests.some(request => request.options.method === 'PUT'), false);
+  assert.equal(p.api._state.staffDirty.capability, false);
+});
+
 test('capability checkboxes load and save only serviceIds', async () => {
   const p = page([
     response(200, { success: true, data: [{ service_id: 's1', name: '剪发', is_active: true, assigned: true }] }),
@@ -255,6 +273,36 @@ test('dirty tab warns on tab switch and browser refresh', () => {
   const event = { prevented: false, preventDefault() { this.prevented = true; }, returnValue: null };
   p.eventListeners.get('beforeunload')(event);
   assert.equal(event.prevented, true); assert.equal(event.returnValue, '');
+});
+
+test('confirmed discard restores authoritative capability, location and schedule drafts', () => {
+  const p = page(); p.api.setProfile(owner); p.context.confirmResult = true;
+  p.api._state.authoritativeCapabilityIds = new Set(['server-service']);
+  p.api._state.capabilityIds = new Set(['draft-service']);
+  p.api._state.staffDirty.capability = true;
+  p.api.openStaffTab('locations');
+  assert.deepEqual([...p.api._state.capabilityIds], ['server-service']);
+  p.api._state.authoritativeLocationIds = new Set(['server-location']);
+  p.api._state.locationIds = new Set(['draft-location']);
+  p.api._state.staffDirty.locations = true;
+  p.api.openStaffTab('schedule');
+  assert.deepEqual([...p.api._state.locationIds], ['server-location']);
+  p.api._state.authoritativeSchedule = { days: [{ dayOfWeek: 1, isWorking: false }] };
+  p.api._state.schedule = { days: [{ dayOfWeek: 1, isWorking: true }] };
+  p.api._state.staffDirty.schedule = true;
+  p.api.openStaffTab('overrides');
+  assert.equal(p.api._state.schedule.days[0].isWorking, false);
+  assert.equal(p.api._state.activeStaffTab, 'overrides');
+});
+
+test('successful mutation with reload failure remains dirty and reports partial success', async () => {
+  const p = page([response(200, { success: true }), response(500, { success: false })]);
+  p.api.setProfile(owner); p.api._state.selectedStaffId = 'u1'; p.api._state.capability = [{ service_id: 's1', name: 'Facial', is_active: true }];
+  p.api.openStaffTab('capability'); p.api.toggleCapability('s1', true); await p.api.saveCapability();
+  assert.equal(p.api._state.staffDirty.capability, true);
+  assert.deepEqual([...p.api._state.capabilityIds], ['s1']);
+  assert.match(p.elements.get('capabilityStatus').textContent, /已保存，但重新读取失败/);
+  assert.equal(p.api._state.activeStaffTab, 'capability');
 });
 
 test('save failure keeps active tab, dirty selection and API error', async () => {

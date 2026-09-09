@@ -18,7 +18,11 @@
     capabilityIds: new Set(),
     locationIds: new Set(),
     activeStaffTab: 'capability',
-    staffDirty: { capability: false, locations: false, schedule: false, overrides: false }
+    staffDirty: { capability: false, locations: false, schedule: false, overrides: false },
+    authoritativeCapabilityIds: new Set(),
+    authoritativeLocationIds: new Set(),
+    authoritativeSchedule: null,
+    authoritativeOverrides: []
   };
 
   const byId = id => document.getElementById(id);
@@ -161,6 +165,17 @@
   }
   function clearStaffTabDirty(tab) { state.staffDirty[tab] = false; }
   function hasUnsavedStaffChanges() { return Object.values(state.staffDirty).some(Boolean); }
+  const cloneData = value => value == null ? value : JSON.parse(JSON.stringify(value));
+  function restoreStaffTab(tab) {
+    if (tab === 'capability') state.capabilityIds = new Set(state.authoritativeCapabilityIds);
+    if (tab === 'locations') state.locationIds = new Set(state.authoritativeLocationIds);
+    if (tab === 'schedule') state.schedule = cloneData(state.authoritativeSchedule);
+    if (tab === 'overrides') state.overrides = cloneData(state.authoritativeOverrides) || [];
+    clearStaffTabDirty(tab);
+  }
+  function discardAllStaffDrafts() {
+    Object.keys(state.staffDirty).forEach(restoreStaffTab);
+  }
 
   if (typeof global.addEventListener === 'function') {
     global.addEventListener('beforeunload', event => {
@@ -350,6 +365,12 @@
 
   async function saveStaff(isNew) {
     if (!canWrite()) return;
+    if (!isNew && hasUnsavedStaffChanges()) {
+      const discard = typeof global.confirm === 'function' && global.confirm(t('profileSaveDiscardsUnsaved'));
+      if (!discard) return false;
+      discardAllStaffDrafts();
+      renderStaffSettings();
+    }
     const body = { name: value('staffName').trim(), phone: value('staffPhone').trim() || null, email: value('staffEmail').trim() || null, staffCode: value('staffCode').trim() || null, bookable: isNew ? false : checked('staffBookable'), isActive: checked('staffActive') };
     setBusy('saveStaffButton', true);
     try {
@@ -384,9 +405,14 @@
       state.overrides = overrides || [];
       state.capabilityIds = new Set(state.capability.filter(item => item.assigned).map(item => apiValue(item, 'serviceId', 'service_id')));
       state.locationIds = new Set(state.locations.filter(item => item.assigned).map(item => item.id));
+      state.authoritativeCapabilityIds = new Set(state.capabilityIds);
+      state.authoritativeLocationIds = new Set(state.locationIds);
+      state.authoritativeOverrides = cloneData(state.overrides) || [];
       const availableLocation = state.locations.find(item => item.assigned && apiValue(item, 'isActive', 'is_active') !== false);
       state.selectedLocationId = availableLocation?.id || null;
       await loadSchedule();
+      state.authoritativeSchedule = cloneData(state.schedule);
+      state.staffDirty = { capability: false, locations: false, schedule: false, overrides: false };
       renderStaffSettings();
     } catch (error) {
       if (!error.sessionExpired) byId('staffSettings').innerHTML = `<div class="error">${escapeHtml(error.message)}</div>`;
@@ -394,9 +420,9 @@
   }
 
   async function loadSchedule() {
-    state.schedule = null;
-    if (!state.selectedLocationId) return;
-    state.schedule = await request(`/api/owner/staff/${encodeURIComponent(state.selectedStaffId)}/schedule?locationId=${encodeURIComponent(state.selectedLocationId)}`);
+    if (!state.selectedLocationId) { state.schedule = null; return; }
+    const schedule = await request(`/api/owner/staff/${encodeURIComponent(state.selectedStaffId)}/schedule?locationId=${encodeURIComponent(state.selectedLocationId)}`);
+    state.schedule = schedule;
   }
 
   function renderStaffSettings() {
@@ -413,7 +439,7 @@
     if (!force && tab !== state.activeStaffTab && state.staffDirty[state.activeStaffTab]) {
       const discard = typeof global.confirm === 'function' && global.confirm(t('discardUnsavedChanges'));
       if (!discard) return false;
-      clearStaffTabDirty(state.activeStaffTab);
+      restoreStaffTab(state.activeStaffTab);
     }
     state.activeStaffTab = tab;
     if (typeof document.querySelectorAll === 'function') {
@@ -465,15 +491,20 @@
 
   function toggleCapability(id, enabled) { enabled ? state.capabilityIds.add(id) : state.capabilityIds.delete(id); markStaffTabDirty('capability'); }
   async function saveCapability() {
+    let mutationSaved = false;
     setBusy('saveCapabilityButton', true);
     try {
       await request(`/api/owner/staff/${encodeURIComponent(state.selectedStaffId)}/services`, { method: 'PUT', body: JSON.stringify({ serviceIds: [...state.capabilityIds] }) });
-      state.capability = await request(`/api/owner/staff/${encodeURIComponent(state.selectedStaffId)}/services`) || [];
-      state.capabilityIds = new Set(state.capability.filter(item => item.assigned).map(item => apiValue(item, 'serviceId', 'service_id')));
+      mutationSaved = true;
+      const capability = await request(`/api/owner/staff/${encodeURIComponent(state.selectedStaffId)}/services`) || [];
+      const capabilityIds = new Set(capability.filter(item => item.assigned).map(item => apiValue(item, 'serviceId', 'service_id')));
+      state.capability = capability;
+      state.capabilityIds = capabilityIds;
+      state.authoritativeCapabilityIds = new Set(capabilityIds);
       clearStaffTabDirty('capability');
       renderCapability(byId('staffTabContent'));
       setMessage('capabilityStatus', t('saved'));
-    } catch (error) { if (!error.sessionExpired) setMessage('capabilityStatus', error.message, true); }
+    } catch (error) { if (!error.sessionExpired) setMessage('capabilityStatus', mutationSaved ? t('savedReloadFailed') : error.message, true); }
     finally { setBusy('saveCapabilityButton', false); }
   }
 
@@ -482,13 +513,20 @@
   }
   function toggleLocation(id, enabled) { enabled ? state.locationIds.add(id) : state.locationIds.delete(id); markStaffTabDirty('locations'); }
   async function saveLocations() {
+    let mutationSaved = false;
     setBusy('saveLocationsButton', true);
     try {
       await request(`/api/owner/staff/${encodeURIComponent(state.selectedStaffId)}/locations`, { method: 'PUT', body: JSON.stringify({ locationIds: [...state.locationIds] }) });
+      mutationSaved = true;
+      const locations = await request(`/api/owner/staff/${encodeURIComponent(state.selectedStaffId)}/locations`) || [];
+      const locationIds = new Set(locations.filter(item => item.assigned).map(item => item.id));
+      state.locations = locations;
+      state.locationIds = locationIds;
+      state.authoritativeLocationIds = new Set(locationIds);
       clearStaffTabDirty('locations');
-      await selectStaff(state.selectedStaffId);
+      renderLocations(byId('staffTabContent'));
       setMessage('locationStatus', t('saved'));
-    } catch (error) { if (!error.sessionExpired) setMessage('locationStatus', error.message, true); }
+    } catch (error) { if (!error.sessionExpired) setMessage('locationStatus', mutationSaved ? t('savedReloadFailed') : error.message, true); }
     finally { setBusy('saveLocationsButton', false); }
   }
 
@@ -504,7 +542,7 @@
     if (state.staffDirty.schedule) {
       const discard = typeof global.confirm === 'function' && global.confirm(t('discardUnsavedChanges'));
       if (!discard) return false;
-      clearStaffTabDirty('schedule');
+      restoreStaffTab('schedule');
     }
     state.selectedLocationId = locationId;
     try { await loadSchedule(); renderSchedule(byId('staffTabContent')); }
@@ -523,14 +561,18 @@
       }
       days.push(entry);
     }
+    let mutationSaved = false;
     setBusy('saveScheduleButton', true);
     try {
       await request(`/api/owner/staff/${encodeURIComponent(state.selectedStaffId)}/schedule`, { method: 'PUT', body: JSON.stringify({ locationId: state.selectedLocationId, days }) });
-      await loadSchedule();
+      mutationSaved = true;
+      const schedule = await request(`/api/owner/staff/${encodeURIComponent(state.selectedStaffId)}/schedule?locationId=${encodeURIComponent(state.selectedLocationId)}`);
+      state.schedule = schedule;
+      state.authoritativeSchedule = cloneData(schedule);
       clearStaffTabDirty('schedule');
       renderSchedule(byId('staffTabContent'));
       setMessage('scheduleStatus', t('saved'));
-    } catch (error) { if (!error.sessionExpired) setMessage('scheduleStatus', error.message, true); }
+    } catch (error) { if (!error.sessionExpired) setMessage('scheduleStatus', mutationSaved ? t('savedReloadFailed') : error.message, true); }
     finally { setBusy('saveScheduleButton', false); }
   }
 
@@ -554,14 +596,18 @@
       if ((body.startTime || body.endTime) && (!body.startTime || !body.endTime || body.startTime >= body.endTime)) { setMessage('overrideStatus', t('invalidOverrideTime'), true); return; }
       if (type === 'custom_hours' && (!body.startTime || !body.endTime)) { setMessage('overrideStatus', t('customHoursRequired'), true); return; }
     }
+    let mutationSaved = false;
     setBusy('saveOverrideButton', true);
     try {
       await request(`/api/owner/staff/${encodeURIComponent(state.selectedStaffId)}/schedule-overrides`, { method: 'POST', body: JSON.stringify(body) });
-      state.overrides = await request(`/api/owner/staff/${encodeURIComponent(state.selectedStaffId)}/schedule-overrides`) || [];
+      mutationSaved = true;
+      const overrides = await request(`/api/owner/staff/${encodeURIComponent(state.selectedStaffId)}/schedule-overrides`) || [];
+      state.overrides = overrides;
+      state.authoritativeOverrides = cloneData(overrides);
       clearStaffTabDirty('overrides');
       renderOverrides(byId('staffTabContent'));
       setMessage('overrideStatus', t('saved'));
-    } catch (error) { if (!error.sessionExpired) setMessage('overrideStatus', error.message, true); }
+    } catch (error) { if (!error.sessionExpired) setMessage('overrideStatus', mutationSaved ? t('savedReloadFailed') : error.message, true); }
     finally { setBusy('saveOverrideButton', false); }
   }
   async function deactivateOverride(overrideId) {
