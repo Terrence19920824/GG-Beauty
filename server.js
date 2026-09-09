@@ -1205,6 +1205,60 @@ app.get('/api/db-test', async (req, res) => {
   }
 });
 
+// Public, tenant-scoped service categories. Categories without an active,
+// bookable service are intentionally hidden from the customer journey.
+app.get('/api/booking/service-categories', async (req, res) => {
+  const shopSlug = typeof req.query.shopSlug === 'string' ? req.query.shopSlug.trim() : '';
+  const locale = normalizeLocale(req.query.locale);
+  if (!shopSlug) return res.status(400).json({ success: false, message: '缺少店铺资料' });
+
+  let client;
+  try {
+    client = await req.app.locals.bookingPool.connect();
+    const result = await client.query(
+      `SELECT
+         category.id AS "categoryId",
+         COALESCE(requested.name, english.name, chinese.name, category.canonical_name) AS name,
+         category.icon_key AS "iconKey",
+         category.sort_order AS "sortOrder"
+       FROM shops AS shop
+       JOIN service_categories AS category
+         ON category.shop_id = shop.id
+        AND category.is_active = TRUE
+       LEFT JOIN service_category_translations AS requested
+         ON requested.shop_id = category.shop_id
+        AND requested.category_id = category.id
+        AND requested.locale = $2
+       LEFT JOIN service_category_translations AS english
+         ON english.shop_id = category.shop_id
+        AND english.category_id = category.id
+        AND english.locale = 'en'
+       LEFT JOIN service_category_translations AS chinese
+         ON chinese.shop_id = category.shop_id
+        AND chinese.category_id = category.id
+        AND chinese.locale = 'zh-CN'
+       WHERE shop.slug = $1
+         AND shop.status = 'active'
+         AND EXISTS (
+           SELECT 1
+           FROM services AS service
+           WHERE service.shop_id = category.shop_id
+             AND service.category_id = category.id
+             AND service.is_active = TRUE
+             AND service.bookable = TRUE
+         )
+       ORDER BY category.sort_order ASC, category.id ASC`,
+      [shopSlug, locale]
+    );
+    return res.json({ success: true, data: result.rows });
+  } catch (error) {
+    console.error('Read public service categories error:', safeStaffAuthErrorCode(error));
+    return res.status(500).json({ success: false, message: '读取服务分类失败' });
+  } finally {
+    if (client) client.release();
+  }
+});
+
 // Public, tenant-scoped service catalogue. Locale affects display fields only.
 app.get('/api/services-db', async (req, res) => {
   const shopSlug = typeof req.query.shopSlug === 'string'
@@ -1226,6 +1280,7 @@ app.get('/api/services-db', async (req, res) => {
       `SELECT
          service.id,
          service.category,
+         service.category_id AS "categoryId",
          service.price,
          service.price_is_from AS "priceIsFrom",
          service.duration_minutes AS "durationMinutes",

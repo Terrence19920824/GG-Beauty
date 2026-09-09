@@ -7,6 +7,7 @@ const test = require('node:test');
 const vm = require('node:vm');
 const i18n = require('../public/shared-i18n');
 const shopContext = require('../public/customer-shop-context');
+const categoryFlow = require('../public/customer-category-flow');
 
 const customerHtml = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'index.html'),
@@ -20,7 +21,7 @@ const createCustomerContext = () => {
     options: [], dataset: {}, classList: { add() {}, remove() {} },
     addEventListener() {}, appendChild(child) { this.options.push(child); }
   });
-  for (const id of ['date', 'dateDisplay', 'staff', 'service', 'times', 'message', 'languageZh', 'languageEn', 'submitBtn', 'customerName', 'phone', 'email']) {
+  for (const id of ['date', 'dateDisplay', 'staff', 'service', 'times', 'message', 'languageZh', 'languageEn', 'submitBtn', 'customerName', 'phone', 'email', 'categoryStep', 'categoryGrid', 'bookingStep', 'contactStep']) {
     elements.set(id, makeElement());
   }
   const fetchUrls = [];
@@ -34,6 +35,7 @@ const createCustomerContext = () => {
     globalThis: {
       ggI18n: i18n,
       ggCustomerShopContext: shopContext,
+      ggCustomerCategoryFlow: categoryFlow,
       location: { hostname: 'localhost', pathname: '/', search: '' }
     },
     localStorage: { getItem: () => 'zh-CN', setItem() {} },
