@@ -11,10 +11,17 @@ const {
   AppointmentMutationError,
   runInTransaction,
   createSingleServiceCompatibilityRows,
+  createMultiServiceRows,
   loadAndValidatePhaseAStructure,
   moveAppointmentStructurePrecisely,
   syncAppointmentItemStatus
 } = require('./lib/appointment-multi-service');
+const {
+  MultiServicePlanningError,
+  normalizeBookingItems,
+  buildSequentialTimeline,
+  planStaffAssignments
+} = require('./lib/customer-multi-service-booking');
 const {
   StaffBookabilityError,
   validateStaffBookability
@@ -1802,6 +1809,108 @@ app.post('/api/new', (req, res) => {
 // 写入 Supabase PostgreSQL
 // ==================================================
 
+const loadMultiServiceContext = async (client, { shopSlug, items, locale }) => {
+  const scope = await loadTrustedCustomerBookingScope(client, shopSlug);
+  if (!scope) throw new AppointmentMutationError('shop_not_found', 400, '找不到店铺');
+  const ids = [...new Set(items.map(item => item.serviceId))];
+  const result = await client.query(
+    `SELECT service.id,service.duration_minutes,service.price,service.price_is_from,
+       service.category_id,
+       COALESCE(requested.name,english.name,chinese.name,service.name) AS localized_name
+     FROM services service
+     JOIN service_categories category ON category.shop_id=service.shop_id
+       AND category.id=service.category_id AND category.is_active=TRUE
+     LEFT JOIN service_translations requested ON requested.shop_id=service.shop_id
+       AND requested.service_id=service.id AND requested.locale=$3
+     LEFT JOIN service_translations english ON english.shop_id=service.shop_id
+       AND english.service_id=service.id AND english.locale='en'
+     LEFT JOIN service_translations chinese ON chinese.shop_id=service.shop_id
+       AND chinese.service_id=service.id AND chinese.locale='zh-CN'
+     WHERE service.shop_id=$1 AND service.id=ANY($2::UUID[])
+       AND service.is_active=TRUE AND service.bookable=TRUE`,
+    [scope.shop_id, ids, locale]
+  );
+  if (result.rows.length !== ids.length) throw new AppointmentMutationError('service_not_found', 400, '找不到服务项目');
+  if (result.rows.some(service => !Number.isInteger(Number(service.duration_minutes)) || Number(service.duration_minutes) <= 0 ||
+    service.price === null || !Number.isFinite(Number(service.price)) || Number(service.price) < 0 || !service.localized_name)) {
+    throw new AppointmentMutationError('service_snapshot_invalid', 409, '服务资料暂不可预约');
+  }
+  const byId = new Map(result.rows.map(row => [row.id, row]));
+  return {
+    scope,
+    services: items.map(item => {
+      const service = byId.get(item.serviceId);
+      return { ...item, serviceId: service.id, duration_minutes: service.duration_minutes,
+        durationMinutes: service.duration_minutes, price: service.price,
+        priceIsFrom: service.price_is_from, localizedName: service.localized_name,
+        categoryId: service.category_id };
+    })
+  };
+};
+
+const planMultiServiceStaff = async ({ client, scope, date, timeline, validator, candidatesByService = null }) => {
+  const candidates = candidatesByService || new Map();
+  for (const serviceId of [...new Set(timeline.map(item => item.serviceId))]) {
+    if (candidates.has(serviceId)) continue;
+    candidates.set(serviceId, await loadEligibleBookingStaff(client, {
+      shopId: scope.shop_id, locationId: scope.location_id, serviceId, date
+    }));
+  }
+  return planStaffAssignments({
+    items: timeline,
+    candidatesByService: candidates,
+    validate: async (item, staffId) => {
+      try {
+        await validator({ dbClient: client, shopId: scope.shop_id,
+          locationId: scope.location_id, staffId, serviceId: item.serviceId,
+          requestedStartAt: item.startAt, requestedEndAt: item.endAt });
+      } catch (error) {
+        if (error instanceof StaffBookabilityError && UNAVAILABLE_SLOT_ERROR_CODES.has(error.code)) {
+          const unavailable = new Error(error.code); unavailable.unavailable = true; throw unavailable;
+        }
+        throw error;
+      }
+    }
+  });
+};
+
+const createMultiServiceBooking = async (req) => {
+  const body = req.body;
+  const items = normalizeBookingItems(body, isUuid);
+  const locale = normalizeLocale(body.locale);
+  const parsedStart = parseStrictIsoInstant(body.startAt);
+  if (!parsedStart || !body.shopSlug || !body.customerName || !body.phone) {
+    throw new AppointmentMutationError('booking_input_invalid', 400, '请完整填写所有必填信息');
+  }
+  return runInTransaction(req.app.locals.bookingPool, async client => {
+    const { scope, services } = await loadMultiServiceContext(client, { shopSlug: body.shopSlug, items, locale });
+    const timeline = buildSequentialTimeline(services, parsedStart.toISOString());
+    const businessDate = new Intl.DateTimeFormat('en-CA', {
+      timeZone: scope.timezone || 'Asia/Singapore', year: 'numeric', month: '2-digit', day: '2-digit'
+    }).format(parsedStart);
+    const planned = await planMultiServiceStaff({ client, scope,
+      date: businessDate, timeline, validator: req.app.locals.bookingValidator });
+    if (!planned) throw new StaffBookabilityError('NO_AVAILABLE_STAFF');
+
+    let customerResult = await client.query('SELECT id FROM customers WHERE shop_id=$1 AND phone=$2 LIMIT 1', [scope.shop_id, body.phone]);
+    if (!customerResult.rows.length) customerResult = await client.query(
+      'INSERT INTO customers (shop_id,name,phone,email) VALUES ($1,$2,$3,$4) RETURNING id',
+      [scope.shop_id, body.customerName, body.phone, body.email || null]
+    );
+    const first = planned[0], last = planned[planned.length - 1];
+    const appointmentResult = await client.query(
+      `INSERT INTO appointments (shop_id,location_id,customer_id,service_id,staff_id,start_at,end_at,status,booking_source)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,'pending','online')
+       RETURNING id,shop_id,location_id,customer_id,service_id,staff_id,appointment_no,start_at,end_at,status,created_at`,
+      [scope.shop_id, scope.location_id, customerResult.rows[0].id, first.serviceId,
+       first.staffId, first.startAt, last.endAt]
+    );
+    if (appointmentResult.rows.length !== 1) throw new AppointmentMutationError('appointment_insert_mismatch', 500, '预约创建失败');
+    await createMultiServiceRows(client, { appointment: appointmentResult.rows[0], items: planned, serviceLocale: locale });
+    return { appointment: appointmentResult.rows[0], items: planned };
+  });
+};
+
 app.post('/api/new-db', async (req, res) => {
   if (
     process.env.BOOKING_WRITE_MAINTENANCE ===
@@ -1811,6 +1920,30 @@ app.post('/api/new-db', async (req, res) => {
       error: 'Booking temporarily unavailable',
       code: 'BOOKING_MAINTENANCE'
     });
+  }
+
+  if (Array.isArray(req.body.items)) {
+    if (req.body.shopId !== undefined || req.body.shop_id !== undefined) {
+      return res.status(400).json({ success: false, message: 'Invalid shop context' });
+    }
+    try {
+      const created = await createMultiServiceBooking(req);
+      return res.json({ success: true, message: '预约成功', data: {
+        id: created.appointment.id, appointment_no: created.appointment.appointment_no,
+        start_at: created.appointment.start_at, end_at: created.appointment.end_at,
+        status: created.appointment.status, created_at: created.appointment.created_at,
+        items: created.items
+      }});
+    } catch (error) {
+      console.error('Create multi-service appointment error:', safeStaffAuthErrorCode(error));
+      const unavailable = error instanceof StaffBookabilityError || error instanceof MultiServicePlanningError;
+      const status = error.code === '23P01' || unavailable ? 409
+        : error instanceof AppointmentMutationError ? error.status : 500;
+      return res.status(status).json({ success: false,
+        message: error.code === '23P01' || unavailable ? '该时间暂不可预约'
+          : error instanceof AppointmentMutationError ? error.publicMessage : '预约失败',
+        ...(error.code === '23P01' || unavailable ? { code: 'BOOKING_NOT_AVAILABLE' } : {}) });
+    }
   }
 
   const {
@@ -2381,10 +2514,11 @@ const filterBookableCandidateSlots = async ({
 const loadTrustedCustomerBookingScope = async (dbClient, shopSlug) => {
   const result = await dbClient.query(
     `
-    SELECT shop.id AS shop_id, shop.slug AS shop_slug, location.id AS location_id
+    SELECT shop.id AS shop_id, shop.slug AS shop_slug, location.id AS location_id,
+      location.timezone
     FROM shops AS shop
     JOIN LATERAL (
-      SELECT id
+      SELECT id, timezone
       FROM locations
       WHERE shop_id = shop.id AND is_active = TRUE
       ORDER BY created_at ASC
@@ -2507,6 +2641,53 @@ const filterAnyStaffCandidateSlots = async ({
   }
   return availableTimes;
 };
+
+app.post('/api/booking/multi-service-available-times', async (req, res) => {
+  if (req.body.shopId !== undefined || req.body.shop_id !== undefined) {
+    return res.status(400).json({ success: false, message: 'Invalid shop context' });
+  }
+  let client;
+  try {
+    const items = normalizeBookingItems(req.body, isUuid);
+    if (!isValidCalendarDate(req.body.date) || typeof req.body.shopSlug !== 'string') {
+      return res.status(400).json({ success: false, message: '预约选项无效' });
+    }
+    client = await req.app.locals.bookingPool.connect();
+    const locale = normalizeLocale(req.body.locale);
+    const context = await loadMultiServiceContext(client, { shopSlug: req.body.shopSlug, items, locale });
+    const times = ['10:00','10:30','11:00','11:30','12:00','12:30','13:00','13:30','14:00','14:30','15:00','15:30','16:00','16:30','17:00','17:30','18:00','18:30','19:00','19:30','20:00','20:30'];
+    const instantResult = await client.query(
+      `SELECT candidate.time,
+         TO_CHAR((($1::DATE+candidate.time::TIME) AT TIME ZONE location.timezone) AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS start_at
+       FROM locations location CROSS JOIN UNNEST($2::TEXT[]) WITH ORDINALITY candidate(time,position)
+       WHERE location.shop_id=$3 AND location.id=$4 AND location.is_active=TRUE ORDER BY candidate.position`,
+      [req.body.date, times, context.scope.shop_id, context.scope.location_id]
+    );
+    const available = [];
+    const candidatesByService = new Map();
+    for (const serviceId of [...new Set(context.services.map(item => item.serviceId))]) {
+      candidatesByService.set(serviceId, await loadEligibleBookingStaff(client, {
+        shopId: context.scope.shop_id, locationId: context.scope.location_id,
+        serviceId, date: req.body.date
+      }));
+    }
+    for (const candidate of instantResult.rows) {
+      const timeline = buildSequentialTimeline(context.services, candidate.start_at);
+      const plan = await planMultiServiceStaff({ client, scope: context.scope, date: req.body.date,
+        timeline, validator: req.app.locals.bookingValidator, candidatesByService });
+      if (plan) available.push({ time: candidate.time, startAt: new Date(candidate.start_at).toISOString() });
+    }
+    return res.json({ success: true, data: available });
+  } catch (error) {
+    console.error('Multi-service available times error:', safeStaffAuthErrorCode(error));
+    if (error instanceof AppointmentMutationError || error instanceof MultiServicePlanningError) {
+      return res.status(error.status || 400).json({ success: false, message: error.publicMessage || '预约选项无效' });
+    }
+    return res.status(500).json({ success: false, message: '获取可预约时间失败' });
+  } finally {
+    if (client) client.release();
+  }
+});
 
 app.get('/api/booking/staff-options', async (req, res) => {
   const { shopSlug, serviceId } = req.query;

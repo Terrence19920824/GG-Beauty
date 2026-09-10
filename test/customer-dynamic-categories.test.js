@@ -9,6 +9,7 @@ const categoryFlow = require('../public/customer-category-flow');
 const i18n = require('../public/shared-i18n');
 
 const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+const cartSource = fs.readFileSync(path.join(__dirname, '..', 'public', 'customer-multi-service-cart.js'), 'utf8');
 
 const withServer = async operation => {
   const server = app.listen(0, '127.0.0.1');
@@ -86,9 +87,9 @@ test('customer UI renders dynamic two-column cards without hardcoded category na
 
 test('existing staff, time and booking flow remains downstream of service identity', () => {
   assert.match(html, /option\.value = service\.id/);
-  assert.match(html, /option\.value = member\.staffId/);
+  assert.match(html, /value="\$\{member\.staffId\}"/);
   assert.match(html, /\/api\/booking\/staff-options/);
-  assert.match(html, /\/api\/available-times-db/);
-  assert.match(html, /serviceId: service\.id/);
-  assert.match(html, /staffSelectionType: noPreference \? 'no_preference' : 'specific'/);
+  assert.match(html, /\/api\/booking\/multi-service-available-times/);
+  assert.match(cartSource, /serviceId/);
+  assert.match(cartSource, /staffSelectionType: selectionType/);
 });

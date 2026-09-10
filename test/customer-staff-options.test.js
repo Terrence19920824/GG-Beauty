@@ -92,14 +92,15 @@ test('no preference availability returns a slot only when one current candidate 
 
 test('customer UI removes static Staff 01 and uses staffId plus explicit no preference', () => {
   const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+  const cartSource = fs.readFileSync(path.join(__dirname, '..', 'public', 'customer-multi-service-cart.js'), 'utf8');
   assert.doesNotMatch(html, /Staff 01/);
   assert.match(html, /\/api\/booking\/staff-options/);
-  assert.match(html, /option\.value = member\.staffId/);
-  assert.match(html, /staffSelectionType: noPreference \? 'no_preference' : 'specific'/);
-  assert.match(html, /\.\.\.\(noPreference \? \{\} : \{ staffId: staffSelection \}\)/);
+  assert.match(html, /value="\$\{member\.staffId\}"/);
+  assert.match(cartSource, /staffSelectionType: selectionType/);
+  assert.match(cartSource, /staffId: selectionType === 'specific' \? staffId : null/);
   assert.doesNotMatch(html, /staff:\s*staffSelection/);
-  assert.ok(html.indexOf('id="service"') < html.indexOf('id="staff"'));
-  assert.ok(html.indexOf('id="staff"') < html.indexOf('id="date"'));
+  assert.equal(html.indexOf('id="staff"'), -1);
+  assert.ok(html.indexOf('id="service"') < html.indexOf('id="date"'));
 });
 
 test('shared dictionary contains customer staff choices in both locales', () => {

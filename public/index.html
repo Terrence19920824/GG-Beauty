@@ -161,6 +161,10 @@
     .error {
       color: #c62828;
     }
+    .cart-item { border: 1px solid #ddd; border-radius: 12px; padding: 12px; margin-top: 10px; }
+    .cart-item h3 { margin: 0 0 6px; }
+    .cart-meta, .cart-total { color: #555; line-height: 1.6; }
+    .remove-item { background: #eee; color: #222; margin-top: 8px; padding: 9px; }
   </style>
 </head>
 
@@ -186,10 +190,13 @@
       <option value="" data-i18n="loadingCustomerServices">正在读取服务...</option>
     </select>
 
-    <label data-i18n="chooseStaffCustomer">选择员工</label>
-    <select id="staff">
-      <option value="" data-i18n="customerStaffLoading">正在读取员工...</option>
-    </select>
+    <button id="addServiceBtn" type="button" data-i18n="addSelectedService">添加该项目</button>
+    <div id="cartPanel" hidden>
+      <label data-i18n="selectedServices">已选项目</label>
+      <div id="cartItems"></div>
+      <div id="cartTotals" class="cart-total"></div>
+      <button id="addAnotherBtn" type="button" data-i18n="addAnotherService">＋ 继续添加项目</button>
+    </div>
 
     <label data-i18n="appointmentDate">预约日期</label>
     <div class="date-picker">
@@ -230,6 +237,8 @@
       placeholder="example@email.com"
     >
 
+    <div id="confirmationSummary" class="cart-item" hidden></div>
+
     <button id="submitBtn">
       <span data-i18n="bookAppointment">确认预约</span>
     </button>
@@ -244,19 +253,23 @@
 <script src="/service-locale.js"></script>
 <script src="/customer-shop-context.js"></script>
 <script src="/customer-category-flow.js"></script>
+<script src="/customer-multi-service-cart.js"></script>
 <script>
-
-let selectedTime = '';
+/* Legacy single-service behavior is preserved server-side. This UI sends the
+   canonical multi-item request even when the cart contains one item. */
+let selectedSlot = null;
+let availabilityIsEmpty = false;
 let availableCategories = [];
 let availableServices = [];
-let availableStaff = [];
-let availabilityIsEmpty = false;
 let customerShopSlug = '';
 let selectedCategoryId = '';
+let cart = globalThis.ggCustomerMultiServiceCart.create();
+const staffByItem = new Map();
 const NO_PREFERENCE_VALUE = '__no_preference__';
 const localeApi = globalThis.ggI18n;
 const shopContextApi = globalThis.ggCustomerShopContext;
 const categoryFlowApi = globalThis.ggCustomerCategoryFlow;
+const cartApi = globalThis.ggCustomerMultiServiceCart;
 const customerT = key => localeApi.t(key, currentLocale);
 
 function initialLocale() {
@@ -276,9 +289,8 @@ async function loadCustomerShopContext() {
   customerShopSlug = result.data.shopSlug;
 }
 
-function selectedService() {
-  return availableServices.find(item => item.id === serviceInput.value) || null;
-}
+const selectedService = () => availableServices.find(item => item.id === serviceInput.value) || null;
+const serviceById = id => availableServices.find(item => item.id === id);
 
 function renderCategories() {
   const entry = categoryFlowApi.deriveEntryState(availableCategories, selectedCategoryId);
@@ -302,11 +314,8 @@ function renderCategories() {
 async function selectCategory(categoryId) {
   if (!availableCategories.some(category => category.categoryId === categoryId)) return;
   selectedCategoryId = categoryId;
-  selectedTime = '';
   renderCategories();
   renderServices();
-  await loadStaffOptions();
-  if (dateInput.value) await loadAvailableTimes();
 }
 
 function serviceOptionText(service) {
@@ -337,7 +346,7 @@ async function loadServices() {
   if (!response.ok || result.success === false) throw new Error(result.message || customerT('noCustomerServices'));
   availableServices = result.data || [];
   renderServices();
-  await loadStaffOptions();
+  await renderCart();
 }
 
 async function loadCategories() {
@@ -360,41 +369,40 @@ async function loadCustomerCatalogue() {
   await loadServices();
 }
 
-function renderStaffOptions() {
-  staffInput.innerHTML = '';
-  const noPreference = document.createElement('option');
-  noPreference.value = NO_PREFERENCE_VALUE;
-  noPreference.textContent = customerT('customerStaffNoPreference');
-  staffInput.appendChild(noPreference);
-  for (const member of availableStaff) {
-    const option = document.createElement('option');
-    option.value = member.staffId;
-    option.textContent = member.displayName;
-    staffInput.appendChild(option);
-  }
-  if (!availableStaff.length) {
-    const option = document.createElement('option');
-    option.value = '';
-    option.disabled = true;
-    option.textContent = customerT('customerStaffNone');
-    staffInput.appendChild(option);
-  }
-}
-
-async function loadStaffOptions() {
-  const service = selectedService();
-  availableStaff = [];
-  if (!service) {
-    renderStaffOptions();
-    return;
-  }
-  staffInput.innerHTML = `<option value="">${customerT('customerStaffLoading')}</option>`;
-  const response = await fetch(`/api/booking/staff-options?shopSlug=${encodeURIComponent(customerShopSlug)}&serviceId=${encodeURIComponent(service.id)}`);
+async function staffFor(item) {
+  if (staffByItem.has(item.clientItemKey)) return staffByItem.get(item.clientItemKey);
+  const response = await fetch(`/api/booking/staff-options?shopSlug=${encodeURIComponent(customerShopSlug)}&serviceId=${encodeURIComponent(item.serviceId)}`);
   const result = await response.json();
   if (!response.ok || result.success === false) throw new Error(result.message || customerT('customerStaffNone'));
-  availableStaff = result.data || [];
-  renderStaffOptions();
+  staffByItem.set(item.clientItemKey, result.data || []);
+  return result.data || [];
 }
+
+async function renderCart() {
+  cartPanel.hidden = cart.length === 0;
+  cartItems.innerHTML = '';
+  for (const item of cart) {
+    const service = serviceById(item.serviceId); if (!service) continue;
+    const members = await staffFor(item);
+    const card = document.createElement('div'); card.className = 'cart-item'; card.dataset.itemKey = item.clientItemKey;
+    const heading = document.createElement('h3'); heading.textContent = service.name; card.appendChild(heading);
+    const meta = document.createElement('div'); meta.className = 'cart-meta'; meta.textContent = `${localeApi.formatDuration(service.durationMinutes,currentLocale)} · ${localeApi.formatPrice(service.price,service.priceIsFrom,currentLocale)}`; card.appendChild(meta);
+    const label = document.createElement('label'); label.textContent = customerT('chooseStaffCustomer'); card.appendChild(label);
+    const select = document.createElement('select');
+    select.innerHTML = `<option value="${NO_PREFERENCE_VALUE}">${customerT('customerStaffNoPreference')}</option>` + members.map(member => `<option value="${member.staffId}">${member.displayName}</option>`).join('');
+    select.value = item.staffSelectionType === 'specific' ? item.staffId : NO_PREFERENCE_VALUE;
+    select.addEventListener('change', () => { cart = cartApi.updateStaff(cart,item.clientItemKey,select.value===NO_PREFERENCE_VALUE?'no_preference':'specific',select.value); clearStaleTime(); });
+    card.appendChild(select);
+    const remove = document.createElement('button'); remove.type='button'; remove.className='remove-item'; remove.textContent=customerT('removeService');
+    remove.addEventListener('click', async()=>{cart=cartApi.remove(cart,item.clientItemKey);staffByItem.delete(item.clientItemKey);clearStaleTime();await renderCart();}); card.appendChild(remove);
+    cartItems.appendChild(card);
+  }
+  const total=cartApi.totals(cart,availableServices);
+  cartTotals.textContent=`${customerT('totalDuration')}: ${localeApi.formatDuration(total.durationMinutes,currentLocale)} · ${customerT('estimatedTotal')}: ${localeApi.formatPrice(total.listedPrice,total.priceIsFrom,currentLocale)}`;
+  contactStep.hidden = cart.length === 0;
+}
+
+function clearStaleTime(){selectedSlot=null;availabilityIsEmpty=false;confirmationSummary.hidden=true;timesBox.innerHTML=`<div>${customerT('chooseDate')}</div>`;}
 
 async function setLocale(locale) {
   currentLocale = localeApi.setLocale(locale, localStorage);
@@ -405,10 +413,10 @@ async function setLocale(locale) {
   document.getElementById('languageEn').disabled = currentLocale === 'en';
   dateInput.lang = currentLocale;
   renderSelectedDate();
-  if (availabilityIsEmpty) {
-    timesBox.innerHTML = `<div>${customerT('noTimes')}</div>`;
-  }
+  await renderCart();
   try { await loadCustomerCatalogue(); } catch (error) { messageBox.textContent = error.message; }
+  if (availabilityIsEmpty) renderTimes([]);
+  else renderConfirmation();
 }
 
 const dateInput =
@@ -417,9 +425,6 @@ const dateInput =
 const dateDisplay =
   document.getElementById('dateDisplay');
 
-const staffInput =
-  document.getElementById('staff');
-
 const serviceInput =
   document.getElementById('service');
 
@@ -427,12 +432,15 @@ const categoryStep = document.getElementById('categoryStep');
 const categoryGrid = document.getElementById('categoryGrid');
 const bookingStep = document.getElementById('bookingStep');
 const contactStep = document.getElementById('contactStep');
+const cartPanel=document.getElementById('cartPanel'),cartItems=document.getElementById('cartItems'),cartTotals=document.getElementById('cartTotals');
 
 const timesBox =
   document.getElementById('times');
 
 const messageBox =
   document.getElementById('message');
+
+const confirmationSummary = document.getElementById('confirmationSummary');
 
 
 // 不允许选择过去日期
@@ -455,58 +463,36 @@ dateInput.addEventListener(
   }
 );
 
-staffInput.addEventListener(
-  'change',
-  loadAvailableTimes
-);
-
 serviceInput.addEventListener(
   'change',
-  async () => {
-    selectedTime = '';
-    try {
-      await loadStaffOptions();
-      await loadAvailableTimes();
-    } catch (error) {
-      timesBox.innerHTML = `<div class="error">${error.message}</div>`;
-    }
-  }
+  clearStaleTime
 );
+
+document.getElementById('addServiceBtn').addEventListener('click',async()=>{const service=selectedService();if(!service)return;cart=cartApi.add(cart,service);clearStaleTime();await renderCart();});
+document.getElementById('addAnotherBtn').addEventListener('click',()=>{selectedCategoryId='';categoryStep.hidden=false;categoryStep.scrollIntoView({behavior:'smooth'});});
 
 
 // 获取数据库可预约时间
 async function loadAvailableTimes() {
 
   const date = dateInput.value;
-  const staffSelection = staffInput.value;
-  const noPreference = staffSelection === NO_PREFERENCE_VALUE;
-  const service = selectedService();
-
-  selectedTime = '';
+  selectedSlot = null;
+  availabilityIsEmpty = false;
+  confirmationSummary.hidden = true;
 
   if (!date) {
-    availabilityIsEmpty = false;
     timesBox.innerHTML =
       `<div>${customerT('chooseDate')}</div>`;
     return;
   }
 
-  availabilityIsEmpty = false;
   timesBox.innerHTML =
     `<div>${customerT('checking')}</div>`;
 
   try {
 
-    const url =
-      `/api/available-times-db` +
-      `?shopSlug=${encodeURIComponent(customerShopSlug)}` +
-      `&date=${encodeURIComponent(date)}` +
-      `&staffSelectionType=${noPreference ? 'no_preference' : 'specific'}` +
-      (noPreference ? '' : `&staffId=${encodeURIComponent(staffSelection)}`) +
-      `&serviceId=${encodeURIComponent(service?.id || '')}`;
-
-    const response =
-      await fetch(url);
+    if (!cart.length) return;
+    const response = await fetch('/api/booking/multi-service-available-times',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({shopSlug:customerShopSlug,date,locale:currentLocale,items:cartApi.requestItems(cart)})});
 
     const result =
       await response.json();
@@ -521,7 +507,6 @@ async function loadAvailableTimes() {
 
   } catch (error) {
 
-    availabilityIsEmpty = false;
     timesBox.innerHTML =
       `<div class="error">${error.message}</div>`;
 
@@ -534,8 +519,7 @@ function renderTimes(times) {
 
   timesBox.innerHTML = '';
   availabilityIsEmpty = !times || times.length === 0;
-
-  if (availabilityIsEmpty) {
+  if (!times || times.length === 0) {
 
     timesBox.innerHTML =
       `<div>${customerT('noTimes')}</div>`;
@@ -543,14 +527,14 @@ function renderTimes(times) {
     return;
   }
 
-  times.forEach(time => {
+  times.forEach(slot => {
 
     const button =
       document.createElement('div');
 
     button.className = 'time-btn';
 
-    button.textContent = time;
+    button.textContent = slot.time;
 
     button.onclick = () => {
 
@@ -562,11 +546,37 @@ function renderTimes(times) {
 
       button.classList.add('selected');
 
-      selectedTime = time;
+      selectedSlot = slot;
+      renderConfirmation();
     };
 
     timesBox.appendChild(button);
   });
+}
+
+function renderConfirmation() {
+  confirmationSummary.innerHTML = '';
+  confirmationSummary.hidden = !selectedSlot || !cart.length;
+  if (confirmationSummary.hidden) return;
+  let cursor = new Date(selectedSlot.startAt).getTime();
+  for (const item of cart) {
+    const service = serviceById(item.serviceId);
+    if (!service) continue;
+    const start = new Date(cursor);
+    cursor += Number(service.durationMinutes) * 60000;
+    const end = new Date(cursor);
+    const row = document.createElement('div');
+    row.className = 'cart-meta';
+    const staff = item.staffSelectionType === 'specific'
+      ? (staffByItem.get(item.clientItemKey) || []).find(member => member.staffId === item.staffId)?.displayName
+      : customerT('customerStaffNoPreference');
+    row.textContent = `${service.name} · ${start.toLocaleTimeString(currentLocale, {hour:'2-digit',minute:'2-digit',hour12:false,timeZone:'Asia/Singapore'})}–${end.toLocaleTimeString(currentLocale, {hour:'2-digit',minute:'2-digit',hour12:false,timeZone:'Asia/Singapore'})} · ${staff || customerT('customerStaffNoPreference')} · ${localeApi.formatPrice(service.price,service.priceIsFrom,currentLocale)}`;
+    confirmationSummary.appendChild(row);
+  }
+  const total = cartApi.totals(cart, availableServices);
+  const summary = document.createElement('strong');
+  summary.textContent = `${customerT('totalDuration')}: ${localeApi.formatDuration(total.durationMinutes,currentLocale)} · ${customerT('estimatedTotal')}: ${localeApi.formatPrice(total.listedPrice,total.priceIsFrom,currentLocale)}`;
+  confirmationSummary.appendChild(summary);
 }
 
 
@@ -598,19 +608,12 @@ document
       const date =
         dateInput.value;
 
-      const staffSelection =
-        staffInput.value;
-      const noPreference = staffSelection === NO_PREFERENCE_VALUE;
-
-      const service = selectedService();
-
       if (
-        !service ||
-        (!noPreference && !staffSelection) ||
+        !cart.length ||
         !customerName ||
         !phone ||
         !date ||
-        !selectedTime
+        !selectedSlot
       ) {
 
         messageBox.className =
@@ -647,15 +650,13 @@ document
 
               body: JSON.stringify({
                 shopSlug: customerShopSlug,
-                serviceId: service.id,
+                items: cartApi.requestItems(cart),
                 locale: currentLocale,
-                staffSelectionType: noPreference ? 'no_preference' : 'specific',
-                ...(noPreference ? {} : { staffId: staffSelection }),
                 customerName,
                 phone,
                 email,
                 date,
-                time: selectedTime
+                startAt: selectedSlot.startAt
               })
             }
           );
@@ -674,8 +675,8 @@ document
 
         messageBox.innerHTML =
           `✅ ${customerT('bookingSuccess')}<br>` +
-          `${localeApi.formatDate(date, currentLocale)} ${selectedTime}<br>` +
-          `${service.name} · ${staffInput.options[staffInput.selectedIndex].textContent}`;
+          `${localeApi.formatDate(date, currentLocale)} ${selectedSlot.time}<br>` +
+          cart.map(item=>serviceById(item.serviceId)?.name).join(' · ');
 
         // 成功后重新读取时间
         await loadAvailableTimes();

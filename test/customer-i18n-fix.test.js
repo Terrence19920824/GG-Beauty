@@ -21,7 +21,7 @@ const createCustomerContext = () => {
     options: [], dataset: {}, classList: { add() {}, remove() {} },
     addEventListener() {}, appendChild(child) { this.options.push(child); }
   });
-  for (const id of ['date', 'dateDisplay', 'staff', 'service', 'times', 'message', 'languageZh', 'languageEn', 'submitBtn', 'customerName', 'phone', 'email', 'categoryStep', 'categoryGrid', 'bookingStep', 'contactStep']) {
+  for (const id of ['date', 'dateDisplay', 'service', 'times', 'message', 'languageZh', 'languageEn', 'submitBtn', 'customerName', 'phone', 'email', 'categoryStep', 'categoryGrid', 'bookingStep', 'contactStep', 'cartPanel', 'cartItems', 'cartTotals', 'confirmationSummary', 'addServiceBtn', 'addAnotherBtn']) {
     elements.set(id, makeElement());
   }
   const fetchUrls = [];
@@ -36,6 +36,7 @@ const createCustomerContext = () => {
       ggI18n: i18n,
       ggCustomerShopContext: shopContext,
       ggCustomerCategoryFlow: categoryFlow,
+      ggCustomerMultiServiceCart: require('../public/customer-multi-service-cart'),
       location: { hostname: 'localhost', pathname: '/', search: '' }
     },
     localStorage: { getItem: () => 'zh-CN', setItem() {} },
@@ -68,7 +69,7 @@ test('customer empty-time message comes from the bilingual shared dictionary', (
 });
 
 test('customer date presentation preserves canonical ISO booking value', () => {
-  assert.match(customerHtml, /email,\s*date,\s*time/);
+  assert.match(customerHtml, /email,\s*date,\s*startAt: selectedSlot\.startAt/);
   assert.doesNotMatch(customerHtml, /date:\s*localeApi\.formatDate/);
 });
 
