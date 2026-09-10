@@ -1,4 +1,4 @@
--- Booking recipient/booker foundation: strict read-only preflight.
+-- Booking recipient/booker foundation: strict read-only preflight (after 028-030 prerequisite).
 BEGIN TRANSACTION READ ONLY;
 
 DO $preflight$
@@ -13,6 +13,12 @@ BEGIN
      OR NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='appointments' AND column_name='shop_id' AND data_type='uuid' AND is_nullable='NO')
      OR NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='appointments' AND column_name='customer_id' AND data_type='uuid' AND is_nullable='NO')
   THEN RAISE EXCEPTION 'Customer/appointment identity columns missing or drifted'; END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_index ix WHERE ix.indrelid='public.customers'::regclass
+    AND ix.indisunique AND ix.indisvalid AND ix.indisready AND ix.indpred IS NULL AND ix.indexprs IS NULL
+    AND ix.indnkeyatts=2 AND ix.indnatts=2
+    AND (SELECT array_agg(a.attname ORDER BY k.ord) FROM unnest(ix.indkey::smallint[]) WITH ORDINALITY k(attnum,ord)
+         JOIN pg_attribute a ON a.attrelid=ix.indrelid AND a.attnum=k.attnum)=ARRAY['shop_id','id']::name[])
+  THEN RAISE EXCEPTION 'customers(shop_id,id) unique prerequisite missing or drifted'; END IF;
 
   SELECT pg_get_constraintdef(c.oid) INTO legacy_definition
   FROM pg_constraint c
@@ -70,6 +76,8 @@ WITH normalized AS (
         THEN regexp_replace(BTRIM(phone),'[[:space:]().-]+','','g')
       WHEN regexp_replace(BTRIM(phone),'[[:space:]().-]+','','g') ~ '^00[1-9][0-9]{7,14}$'
         THEN '+'||substr(regexp_replace(BTRIM(phone),'[[:space:]().-]+','','g'),3)
+      WHEN regexp_replace(BTRIM(phone),'[[:space:]().-]+','','g') ~ '^[0-9]{8,15}$'
+        THEN regexp_replace(BTRIM(phone),'[[:space:]().-]+','','g')
       ELSE NULL
     END AS proposed_phone_normalized
   FROM customers

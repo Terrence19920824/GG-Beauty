@@ -53,7 +53,7 @@ test('real PostgreSQL customer endpoint creates canonical multi-service and lega
   try {
     for (let attempt = 0; attempt < 50; attempt += 1) { try { db = new Client({ connectionString: url }); await db.connect(); break; } catch { if (db) await db.end().catch(() => {}); await new Promise(resolve => setTimeout(resolve, 100)); } }
     assert.ok(db); await db.query(SCHEMA);
-    for (const number of ['028_booking_recipient_booker_preflight_readonly.sql','029_booking_recipient_booker_schema.sql','030_booking_recipient_booker_legacy_backfill.sql','031_booking_recipient_booker_consistency.sql','032_booking_recipient_booker_verification_readonly.sql']) await db.query(migration(number));
+    for (const number of ['028_customers_composite_key_preflight_readonly.sql','029_customers_composite_key_schema.sql','030_customers_composite_key_verification_readonly.sql','031_booking_recipient_booker_preflight_readonly.sql','032_booking_recipient_booker_schema.sql','033_booking_recipient_booker_legacy_backfill.sql','034_booking_recipient_booker_consistency.sql','035_booking_recipient_booker_verification_readonly.sql']) await db.query(migration(number));
     await db.query(migration('014_assignment_collision_projection_schema.sql'));
     await db.query(migration('015_assignment_collision_backfill.sql'));
     await db.query(migration('016_assignment_collision_constraint.sql'));

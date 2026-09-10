@@ -49,7 +49,7 @@ END $unique_guard$;
 
 ALTER TABLE public.customers ADD COLUMN phone_normalized text;
 ALTER TABLE public.customers ADD CONSTRAINT customers_phone_normalized_format_check
-  CHECK (phone_normalized IS NULL OR phone_normalized ~ '^\+[1-9][0-9]{7,14}$');
+  CHECK (phone_normalized IS NULL OR phone_normalized ~ '^(\+[1-9][0-9]{7,14}|[0-9]{8,15})$');
 CREATE INDEX customers_shop_phone_normalized_idx
   ON public.customers(shop_id,phone_normalized) WHERE phone_normalized IS NOT NULL;
 

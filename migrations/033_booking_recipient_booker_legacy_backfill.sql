@@ -14,6 +14,8 @@ SET phone_normalized=CASE
     THEN regexp_replace(BTRIM(phone),'[[:space:]().-]+','','g')
   WHEN regexp_replace(BTRIM(phone),'[[:space:]().-]+','','g') ~ '^00[1-9][0-9]{7,14}$'
     THEN '+'||substr(regexp_replace(BTRIM(phone),'[[:space:]().-]+','','g'),3)
+  WHEN regexp_replace(BTRIM(phone),'[[:space:]().-]+','','g') ~ '^[0-9]{8,15}$'
+    THEN regexp_replace(BTRIM(phone),'[[:space:]().-]+','','g')
   ELSE NULL
 END
 WHERE phone_normalized IS NULL AND phone IS NOT NULL AND BTRIM(phone)<>'';

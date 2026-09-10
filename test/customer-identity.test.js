@@ -12,7 +12,9 @@ const {
 test('phone normalization is deterministic and never guesses a country', () => {
   assert.equal(normalizePhone(' +65 (8123)-4567 '), '+6581234567');
   assert.equal(normalizePhone('0065 8123 4567'), '+6581234567');
-  assert.equal(normalizePhone('8123 4567'), null);
+  assert.equal(normalizePhone('8123 4567'), '81234567');
+  assert.equal(normalizePhone('8123-4567'), '81234567');
+  assert.equal(normalizePhone('call-me'), null);
   assert.equal(normalizePhone(''), null);
 });
 

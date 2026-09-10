@@ -12,11 +12,14 @@ const ROOT = path.join(__dirname, '..');
 const PG_BIN = process.env.PG17_BIN || '/opt/homebrew/opt/postgresql@17/bin';
 const sql = name => fs.readFileSync(path.join(ROOT, 'migrations', name), 'utf8');
 const files = [
-  '028_booking_recipient_booker_preflight_readonly.sql',
-  '029_booking_recipient_booker_schema.sql',
-  '030_booking_recipient_booker_legacy_backfill.sql',
-  '031_booking_recipient_booker_consistency.sql',
-  '032_booking_recipient_booker_verification_readonly.sql'
+  '028_customers_composite_key_preflight_readonly.sql',
+  '029_customers_composite_key_schema.sql',
+  '030_customers_composite_key_verification_readonly.sql',
+  '031_booking_recipient_booker_preflight_readonly.sql',
+  '032_booking_recipient_booker_schema.sql',
+  '033_booking_recipient_booker_legacy_backfill.sql',
+  '034_booking_recipient_booker_consistency.sql',
+  '035_booking_recipient_booker_verification_readonly.sql'
 ];
 const ids = {
   shopA: '11111111-1111-4111-8111-111111111111', shopB: '11111111-1111-4111-8111-222222222222',
@@ -37,14 +40,15 @@ test('PostgreSQL 17 recipient/booker migration chain is tenant safe and legacy c
     await db.query(`INSERT INTO shops VALUES($1),($2)`, [ids.shopA,ids.shopB]);
     await db.query(`INSERT INTO customers VALUES($1,$4,'A','+65 8123-4567',NULL),($2,$4,'B','0065 81234567',NULL),($3,$5,'Other','+65 8123-4567',NULL)`, [ids.customerA,ids.customerB,ids.customerOther,ids.shopA,ids.shopB]);
     await db.query(`ALTER TABLE appointments DROP CONSTRAINT appointments_customer_id_fkey; ALTER TABLE appointments ADD CONSTRAINT appointments_customer_id_fkey FOREIGN KEY(customer_id) REFERENCES customers(id)`);
-    await assert.rejects(db.query(sql(files[0])), /Legacy appointments customer FK missing or drifted/);
+    await db.query(sql(files[0])); await db.query(sql(files[1])); await db.query(sql(files[2]));
+    await assert.rejects(db.query(sql(files[3])), /Legacy appointments customer FK missing or drifted/);
     await db.query('ROLLBACK');
     await db.query(`ALTER TABLE appointments DROP CONSTRAINT appointments_customer_id_fkey; ALTER TABLE appointments ADD CONSTRAINT appointments_customer_id_fkey FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE RESTRICT`);
     await db.query(`INSERT INTO appointments VALUES($1,$2,$3)`, [ids.appointment,ids.shopA,ids.customerOther]);
-    await assert.rejects(db.query(sql(files[0])), /Cross-shop appointment customer link detected/);
+    await assert.rejects(db.query(sql(files[3])), /Cross-shop appointment customer link detected/);
     await db.query('ROLLBACK');
     await db.query(`UPDATE appointments SET customer_id=$2 WHERE id=$1`, [ids.appointment,ids.customerA]);
-    for (const file of files) await db.query(sql(file));
+    for (const file of files.slice(3)) await db.query(sql(file));
     const legacy=(await db.query(`SELECT customer_id,booker_customer_id,recipient_customer_id,booker_name_snapshot FROM appointments WHERE id=$1`,[ids.appointment])).rows[0];
     assert.equal(legacy.customer_id,ids.customerA); assert.equal(legacy.booker_customer_id,ids.customerA); assert.equal(legacy.recipient_customer_id,ids.customerA); assert.equal(legacy.booker_name_snapshot,null);
     await db.query(`INSERT INTO appointments(id,shop_id,customer_id,booker_customer_id,recipient_customer_id,booker_name_snapshot,recipient_name_snapshot) VALUES(gen_random_uuid(),$1,$2,$2,$2,'A','A')`,[ids.shopA,ids.customerA]);
