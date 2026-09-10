@@ -23,13 +23,27 @@ BEGIN
   ) OR NOT EXISTS (
     SELECT 1 FROM pg_proc WHERE oid='public.assignment_collision_sync_parent_state()'::regprocedure
       AND pg_get_functiondef(oid) LIKE '%NEW.status IN (''pending'',''confirmed'') AND NEW.override_conflict=FALSE%'
+  ) OR NOT EXISTS (
+    SELECT 1 FROM pg_proc WHERE oid='public.assignment_collision_consistency_check()'::regprocedure
+      AND pg_get_functiondef(oid) LIKE '%HAVING count(i.id)=0%'
+      AND pg_get_functiondef(oid) LIKE '%HAVING count(a.id)<>1%'
+      AND pg_get_functiondef(oid) LIKE '%a.staff_id IS DISTINCT FROM p.staff_id%'
   ) OR NOT EXISTS (SELECT 1 FROM pg_trigger WHERE NOT tgisinternal AND tgenabled='O' AND tgname='assignment_collision_project_trigger')
      OR NOT EXISTS (SELECT 1 FROM pg_trigger WHERE NOT tgisinternal AND tgenabled='O' AND tgname='assignment_collision_item_time_trigger')
      OR NOT EXISTS (SELECT 1 FROM pg_trigger WHERE NOT tgisinternal AND tgenabled='O' AND tgname='assignment_collision_parent_state_trigger')
      OR (SELECT count(*) FROM pg_trigger WHERE NOT tgisinternal AND tgenabled='O'
        AND tgname IN ('assignment_collision_consistency_trigger','assignment_collision_item_consistency_trigger','assignment_collision_parent_consistency_trigger')
        AND tgfoid='public.assignment_collision_consistency_check()'::regprocedure AND tgdeferrable AND tginitdeferred)<>3
+     OR NOT EXISTS (SELECT 1 FROM pg_trigger WHERE NOT tgisinternal AND tgenabled='O'
+       AND tgname='assignment_collision_parent_consistency_trigger'
+       AND tgrelid='public.appointments'::regclass
+       AND pg_get_triggerdef(oid) LIKE '%AFTER INSERT OR UPDATE ON%')
   THEN RAISE EXCEPTION 'Assignment projection trigger missing or disabled'; END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_indexes WHERE schemaname='public'
+      AND tablename='appointment_item_staff_assignments'
+      AND indexdef ~ 'UNIQUE.*\(shop_id, location_id, appointment_item_id\).*WHERE.*role = .primary'
+  ) THEN RAISE EXCEPTION 'Unique primary-per-item index missing or drifted'; END IF;
 
   IF EXISTS (
     SELECT 1 FROM appointments p LEFT JOIN appointment_items i
@@ -55,6 +69,19 @@ BEGIN
       ON i.shop_id=p.shop_id AND i.location_id=p.location_id AND i.appointment_id=p.id
     GROUP BY p.id,p.start_at,p.end_at HAVING min(i.start_at) IS DISTINCT FROM p.start_at OR max(i.end_at) IS DISTINCT FROM p.end_at
   ) THEN RAISE EXCEPTION 'Parent span mismatch'; END IF;
+  IF EXISTS (
+    SELECT 1 FROM (
+      SELECT i.*,
+        row_number() OVER(PARTITION BY shop_id,location_id,appointment_id ORDER BY sequence_no,id) expected_sequence,
+        lag(end_at) OVER(PARTITION BY shop_id,location_id,appointment_id ORDER BY sequence_no,id) previous_end_at
+      FROM appointment_items i
+    ) ordered
+    WHERE sequence_no IS NULL OR sequence_no<1 OR sequence_no<>expected_sequence
+       OR (expected_sequence>1 AND start_at IS DISTINCT FROM previous_end_at)
+  ) OR EXISTS (
+    SELECT 1 FROM appointment_items
+    GROUP BY shop_id,location_id,appointment_id,sequence_no HAVING count(*)>1
+  ) THEN RAISE EXCEPTION 'Item sequence or sequential-time invariant mismatch'; END IF;
   IF EXISTS (
     SELECT 1 FROM appointments p JOIN appointment_items i ON i.shop_id=p.shop_id AND i.location_id=p.location_id AND i.appointment_id=p.id
     JOIN appointment_item_staff_assignments a ON a.shop_id=i.shop_id AND a.location_id=i.location_id AND a.appointment_item_id=i.id AND a.role='primary'

@@ -34,6 +34,13 @@ BEGIN
     GROUP BY i.id HAVING count(a.id)<>1
   ) THEN RAISE EXCEPTION 'Item primary count invalid'; END IF;
   IF EXISTS (
+    SELECT 1 FROM appointments p
+    JOIN appointment_items i ON i.shop_id=p.shop_id AND i.location_id=p.location_id AND i.appointment_id=p.id
+    JOIN appointment_item_staff_assignments a ON a.shop_id=i.shop_id AND a.location_id=i.location_id AND a.appointment_item_id=i.id AND a.role='primary'
+    WHERE (SELECT count(*) FROM appointment_items x WHERE x.shop_id=p.shop_id AND x.location_id=p.location_id AND x.appointment_id=p.id)=1
+      AND a.staff_id IS DISTINCT FROM p.staff_id
+  ) THEN RAISE EXCEPTION 'Single-item parent primary compatibility mismatch'; END IF;
+  IF EXISTS (
     SELECT 1 FROM appointment_item_staff_assignments a
     LEFT JOIN appointment_items i ON i.shop_id=a.shop_id AND i.location_id=a.location_id AND i.id=a.appointment_item_id
     LEFT JOIN appointments p ON p.shop_id=i.shop_id AND p.location_id=i.location_id AND p.id=i.appointment_id
@@ -54,6 +61,48 @@ BEGIN
   ) THEN RAISE EXCEPTION 'Blocking assignment overlap detected'; END IF;
 END $guard$;
 
+CREATE OR REPLACE FUNCTION public.assignment_collision_consistency_check()
+RETURNS trigger LANGUAGE plpgsql SECURITY INVOKER SET search_path=pg_catalog,public AS $fn$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM public.appointments p
+    LEFT JOIN public.appointment_items i
+      ON i.shop_id=p.shop_id AND i.location_id=p.location_id AND i.appointment_id=p.id
+    GROUP BY p.id HAVING count(i.id)=0
+  ) OR EXISTS (
+    SELECT 1 FROM public.appointment_items i
+    LEFT JOIN public.appointment_item_staff_assignments a
+      ON a.shop_id=i.shop_id AND a.location_id=i.location_id
+     AND a.appointment_item_id=i.id AND a.role='primary'
+    GROUP BY i.id HAVING count(a.id)<>1
+  ) OR EXISTS (
+    SELECT 1 FROM public.appointment_item_staff_assignments a
+    JOIN public.appointment_items i ON i.shop_id=a.shop_id AND i.location_id=a.location_id AND i.id=a.appointment_item_id
+    JOIN public.appointments p ON p.shop_id=i.shop_id AND p.location_id=i.location_id AND p.id=i.appointment_id
+    JOIN public.staff s ON s.shop_id=a.shop_id AND s.id=a.staff_id
+    WHERE a.start_at IS DISTINCT FROM i.start_at OR a.end_at IS DISTINCT FROM i.end_at
+       OR a.blocks_time IS DISTINCT FROM (p.status IN ('pending','confirmed') AND p.override_conflict=FALSE)
+  ) OR EXISTS (
+    SELECT 1 FROM public.appointments p
+    JOIN public.appointment_items i ON i.shop_id=p.shop_id AND i.location_id=p.location_id AND i.appointment_id=p.id
+    GROUP BY p.id,p.start_at,p.end_at
+    HAVING min(i.start_at) IS DISTINCT FROM p.start_at OR max(i.end_at) IS DISTINCT FROM p.end_at
+  ) OR EXISTS (
+    SELECT 1 FROM public.appointments p
+    JOIN public.appointment_items i ON i.shop_id=p.shop_id AND i.location_id=p.location_id AND i.appointment_id=p.id
+    JOIN public.appointment_item_staff_assignments a ON a.shop_id=i.shop_id AND a.location_id=i.location_id AND a.appointment_item_id=i.id AND a.role='primary'
+    WHERE (SELECT count(*) FROM public.appointment_items x WHERE x.shop_id=p.shop_id AND x.location_id=p.location_id AND x.appointment_id=p.id)=1
+      AND a.staff_id IS DISTINCT FROM p.staff_id
+  ) THEN RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='appointment assignment projection inconsistent'; END IF;
+  RETURN NULL;
+END $fn$;
+
+DROP TRIGGER assignment_collision_parent_consistency_trigger ON public.appointments;
+CREATE CONSTRAINT TRIGGER assignment_collision_parent_consistency_trigger
+AFTER INSERT OR UPDATE ON public.appointments
+DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
+EXECUTE FUNCTION public.assignment_collision_consistency_check();
+
 ALTER TABLE public.appointments DROP CONSTRAINT prevent_staff_double_booking;
 
 DO $post$
@@ -62,6 +111,11 @@ BEGIN
      OR NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='appointments' AND column_name='staff_id' AND udt_name='uuid' AND is_nullable='NO')
      OR NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='public.appointments'::regclass AND contype='f' AND pg_get_constraintdef(oid) LIKE 'FOREIGN KEY (shop_id, staff_id) REFERENCES staff(shop_id, id) ON DELETE RESTRICT%')
      OR NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='public.appointment_item_staff_assignments'::regclass AND conname='prevent_assignment_staff_double_booking' AND contype='x')
+     OR NOT EXISTS (SELECT 1 FROM pg_trigger WHERE NOT tgisinternal AND tgenabled='O'
+       AND tgname='assignment_collision_parent_consistency_trigger' AND tgrelid='public.appointments'::regclass
+       AND tgfoid='public.assignment_collision_consistency_check()'::regprocedure
+       AND pg_get_triggerdef(oid) LIKE '%AFTER INSERT OR UPDATE ON%'
+       AND tgdeferrable AND tginitdeferred)
   THEN RAISE EXCEPTION 'Parent compatibility migration postcondition failed'; END IF;
 END $post$;
 

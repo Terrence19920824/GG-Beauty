@@ -7,6 +7,10 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawn, spawnSync } = require('node:child_process');
 const { Client } = require('pg');
+const {
+  loadAndValidatePhaseAStructure,
+  AppointmentMutationError
+} = require('../lib/appointment-multi-service');
 
 const ROOT = path.join(__dirname, '..');
 const PG_BIN = process.env.PG17_BIN || '/opt/homebrew/opt/postgresql@17/bin';
@@ -28,7 +32,7 @@ CREATE TABLE locations(id uuid PRIMARY KEY,shop_id uuid NOT NULL,UNIQUE(shop_id,
 CREATE TABLE staff(id uuid PRIMARY KEY,shop_id uuid NOT NULL,UNIQUE(shop_id,id));
 CREATE TABLE appointments(
  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),shop_id uuid NOT NULL,location_id uuid NOT NULL,
- staff_id uuid NOT NULL,start_at timestamptz NOT NULL,end_at timestamptz NOT NULL,
+ service_id uuid,staff_id uuid NOT NULL,start_at timestamptz NOT NULL,end_at timestamptz NOT NULL,
  status text NOT NULL DEFAULT 'pending',override_conflict boolean NOT NULL DEFAULT false,
  CONSTRAINT appointments_check CHECK(end_at>start_at),
  CONSTRAINT appointments_shop_location_id_uidx UNIQUE(shop_id,location_id,id),
@@ -40,7 +44,7 @@ CREATE TABLE appointments(
 );
 CREATE TABLE appointment_items(
  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),shop_id uuid NOT NULL,location_id uuid NOT NULL,
- appointment_id uuid NOT NULL,sequence_no integer NOT NULL DEFAULT 1,start_at timestamptz NOT NULL,end_at timestamptz NOT NULL,
+ appointment_id uuid NOT NULL,service_id uuid,sequence_no integer NOT NULL DEFAULT 1,start_at timestamptz NOT NULL,end_at timestamptz NOT NULL,status text NOT NULL DEFAULT 'pending',
  CONSTRAINT appointment_items_time_range_check CHECK(end_at>start_at),
  CONSTRAINT appointment_items_shop_location_id_key UNIQUE(shop_id,location_id,id),
  CONSTRAINT appointment_items_parent_fkey FOREIGN KEY(shop_id,location_id,appointment_id)
@@ -334,6 +338,15 @@ test('assignment collision migrations on real PostgreSQL 17', { timeout: 120000 
 
     await t.test('022 to 024 transfers final authority to assignments', async () => {
       await admin.query('TRUNCATE appointment_item_staff_assignments,appointment_items,appointments');
+      await admin.query('SET session_replication_role=replica');
+      const badParent = (await admin.query(`INSERT INTO appointments(shop_id,location_id,staff_id,start_at,end_at,status,override_conflict) VALUES($1,$2,$3,'2034-01-01 10:00Z','2034-01-01 11:00Z','pending',false) RETURNING id`, [ids.shop,ids.location,ids.staffA])).rows[0].id;
+      const badItem = (await admin.query(`INSERT INTO appointment_items(shop_id,location_id,appointment_id,sequence_no,start_at,end_at,status) VALUES($1,$2,$3,1,'2034-01-01 10:00Z','2034-01-01 11:00Z','pending') RETURNING id`, [ids.shop,ids.location,badParent])).rows[0].id;
+      await admin.query(`INSERT INTO appointment_item_staff_assignments(shop_id,location_id,appointment_item_id,staff_id,role,start_at,end_at,blocks_time) VALUES($1,$2,$3,$4,'primary','2034-01-01 10:00Z','2034-01-01 11:00Z',true)`, [ids.shop,ids.location,badItem,ids.staffB]);
+      await admin.query('SET session_replication_role=origin');
+      await assert.rejects(admin.query(sql(parentCompatibilityMigrations[0])), /Single-item parent primary compatibility mismatch/);
+      await admin.query('ROLLBACK');
+      assert.equal((await admin.query(`SELECT 1 FROM pg_constraint WHERE conname='prevent_staff_double_booking'`)).rows.length,1);
+      await admin.query('TRUNCATE appointment_item_staff_assignments,appointment_items,appointments');
       await createAllocation(admin, { assignedStaff: ids.staffA });
       await admin.query(sql(parentCompatibilityMigrations[0]));
       await admin.query(sql(parentCompatibilityMigrations[1]));
@@ -342,6 +355,111 @@ test('assignment collision migrations on real PostgreSQL 17', { timeout: 120000 
       const assignmentConstraint = await admin.query(`SELECT 1 FROM pg_constraint WHERE conname='prevent_assignment_staff_double_booking'`);
       assert.equal(parentConstraint.rows.length, 0);
       assert.equal(assignmentConstraint.rows.length, 1);
+    });
+
+    await t.test('real Phase A validates canonical single, multi, assistant and invalid fixtures', async () => {
+      const service = '55555555-5555-4555-8555-555555555555';
+      const insertParent = async (start, end, staff = ids.staffA) => (await admin.query(
+        `INSERT INTO appointments(shop_id,location_id,service_id,staff_id,start_at,end_at,status,override_conflict)
+         VALUES($1,$2,$3,$4,$5,$6,'pending',false) RETURNING *`,
+        [ids.shop, ids.location, service, staff, start, end]
+      )).rows[0];
+      const insertItem = async (parent, sequence, start, end) => (await admin.query(
+        `INSERT INTO appointment_items(shop_id,location_id,appointment_id,service_id,sequence_no,start_at,end_at,status)
+         VALUES($1,$2,$3,$4,$5,$6,$7,'pending') RETURNING *`,
+        [ids.shop, ids.location, parent.id, service, sequence, start, end]
+      )).rows[0];
+      const assign = (item, staff, role = 'primary', start = item.start_at, end = item.end_at) => admin.query(
+        `INSERT INTO appointment_item_staff_assignments(shop_id,location_id,appointment_item_id,staff_id,role,start_at,end_at,blocks_time)
+         VALUES($1,$2,$3,$4,$5,$6,$7,true)`,
+        [ids.shop, ids.location, item.id, staff, role, start, end]
+      );
+      const reset = () => admin.query('TRUNCATE appointment_item_staff_assignments,appointment_items,appointments');
+
+      await reset(); await admin.query('BEGIN');
+      let parent = await insertParent('2035-01-01T10:00Z','2035-01-01T11:00Z');
+      let item = await insertItem(parent,1,parent.start_at,parent.end_at); await assign(item,ids.staffA);
+      assert.equal((await loadAndValidatePhaseAStructure(admin,parent)).itemCount,1);
+      await admin.query('COMMIT');
+
+      await reset(); await admin.query('BEGIN');
+      parent = await insertParent('2035-01-02T10:00Z','2035-01-02T12:00Z');
+      const first = await insertItem(parent,1,'2035-01-02T10:00Z','2035-01-02T11:00Z');
+      const second = await insertItem(parent,2,'2035-01-02T11:00Z','2035-01-02T12:00Z');
+      await assign(first,ids.staffA); await assign(second,ids.staffB);
+      let phase = await loadAndValidatePhaseAStructure(admin,parent);
+      assert.equal(phase.primaryStaffCount,2);
+      await admin.query('COMMIT');
+
+      await reset(); await admin.query('BEGIN');
+      parent = await insertParent('2035-01-03T10:00Z','2035-01-03T12:00Z');
+      const adjacentA = await insertItem(parent,1,'2035-01-03T10:00Z','2035-01-03T11:00Z');
+      const adjacentB = await insertItem(parent,2,'2035-01-03T11:00Z','2035-01-03T12:00Z');
+      await assign(adjacentA,ids.staffA); await assign(adjacentB,ids.staffA);
+      phase = await loadAndValidatePhaseAStructure(admin,parent);
+      assert.equal(phase.primaryStaffCount,1);
+      await admin.query('COMMIT');
+
+      await reset(); await admin.query('BEGIN');
+      parent = await insertParent('2035-01-04T10:00Z','2035-01-04T11:00Z');
+      item = await insertItem(parent,1,parent.start_at,parent.end_at);
+      await assign(item,ids.staffA); await assign(item,ids.staffB,'assistant');
+      assert.equal((await loadAndValidatePhaseAStructure(admin,parent)).assignmentCount,2);
+      await admin.query('COMMIT');
+
+      await reset(); await admin.query('BEGIN');
+      parent = await insertParent('2035-01-05T10:00Z','2035-01-05T11:00Z');
+      await insertItem(parent,1,parent.start_at,parent.end_at);
+      await assert.rejects(loadAndValidatePhaseAStructure(admin,parent), e => e instanceof AppointmentMutationError);
+      await assert.rejects(admin.query('COMMIT'), e => e.code==='23514');
+      await admin.query('ROLLBACK');
+
+      await reset(); await admin.query('DROP INDEX appointment_item_staff_primary_uidx'); await admin.query('BEGIN');
+      parent = await insertParent('2035-01-06T10:00Z','2035-01-06T11:00Z');
+      item = await insertItem(parent,1,parent.start_at,parent.end_at);
+      await assign(item,ids.staffA); await assign(item,ids.staffB);
+      await assert.rejects(loadAndValidatePhaseAStructure(admin,parent), e => e instanceof AppointmentMutationError);
+      await admin.query('ROLLBACK');
+      await admin.query(`CREATE UNIQUE INDEX appointment_item_staff_primary_uidx ON appointment_item_staff_assignments(shop_id,location_id,appointment_item_id) WHERE role='primary'`);
+
+      await reset(); await admin.query('BEGIN'); await admin.query('SET LOCAL session_replication_role=replica');
+      parent = await insertParent('2035-01-07T10:00Z','2035-01-07T11:00Z');
+      item = await insertItem(parent,1,parent.start_at,parent.end_at);
+      await assign(item,ids.staffA,'primary','2035-01-07T10:15Z','2035-01-07T11:00Z');
+      await admin.query('SET LOCAL session_replication_role=origin');
+      await admin.query(`UPDATE appointments SET start_at=start_at WHERE id=$1`,[parent.id]);
+      await assert.rejects(loadAndValidatePhaseAStructure(admin,parent), e => e instanceof AppointmentMutationError);
+      await assert.rejects(admin.query('COMMIT'), e => e.code==='23514');
+      await admin.query('ROLLBACK');
+
+      await reset(); await admin.query('BEGIN'); await admin.query('SET LOCAL session_replication_role=replica');
+      parent = await insertParent('2035-01-08T10:00Z','2035-01-08T12:00Z');
+      item = await insertItem(parent,1,'2035-01-08T10:00Z','2035-01-08T11:00Z'); await assign(item,ids.staffA);
+      await admin.query('SET LOCAL session_replication_role=origin');
+      await admin.query(`UPDATE appointments SET start_at=start_at WHERE id=$1`,[parent.id]);
+      await assert.rejects(loadAndValidatePhaseAStructure(admin,parent), e => e instanceof AppointmentMutationError);
+      await assert.rejects(admin.query('COMMIT'), e => e.code==='23514');
+      await admin.query('ROLLBACK');
+
+      await reset(); await admin.query('BEGIN'); await admin.query('SET LOCAL session_replication_role=replica');
+      parent = await insertParent('2035-01-09T10:00Z','2035-01-09T11:00Z');
+      item = await insertItem(parent,1,parent.start_at,parent.end_at);
+      await admin.query(`INSERT INTO appointment_item_staff_assignments(shop_id,location_id,appointment_item_id,staff_id,role,start_at,end_at,blocks_time) VALUES($1,$2,$3,$4,'primary',$5,$6,true)`, [ids.shop2,ids.location,item.id,ids.staffOther,item.start_at,item.end_at]);
+      await admin.query('SET LOCAL session_replication_role=origin');
+      await assert.rejects(loadAndValidatePhaseAStructure(admin,parent), e => e instanceof AppointmentMutationError);
+      await admin.query('ROLLBACK');
+    });
+
+    await t.test('024 rejects an invalid canonical sequence fixture', async () => {
+      await admin.query('TRUNCATE appointment_item_staff_assignments,appointment_items,appointments');
+      await admin.query('SET session_replication_role=replica');
+      const parent=(await admin.query(`INSERT INTO appointments(shop_id,location_id,service_id,staff_id,start_at,end_at,status,override_conflict) VALUES($1,$2,$3,$4,'2037-01-01 10:00Z','2037-01-01 11:00Z','pending',false) RETURNING id`,[ids.shop,ids.location,'55555555-5555-4555-8555-555555555555',ids.staffA])).rows[0].id;
+      const item=(await admin.query(`INSERT INTO appointment_items(shop_id,location_id,appointment_id,service_id,sequence_no,start_at,end_at,status) VALUES($1,$2,$3,$4,2,'2037-01-01 10:00Z','2037-01-01 11:00Z','pending') RETURNING id`,[ids.shop,ids.location,parent,'55555555-5555-4555-8555-555555555555'])).rows[0].id;
+      await admin.query(`INSERT INTO appointment_item_staff_assignments(shop_id,location_id,appointment_item_id,staff_id,role,start_at,end_at,blocks_time) VALUES($1,$2,$3,$4,'primary','2037-01-01 10:00Z','2037-01-01 11:00Z',true)`,[ids.shop,ids.location,item,ids.staffA]);
+      await admin.query('SET session_replication_role=origin');
+      await assert.rejects(admin.query(sql(parentCompatibilityMigrations[2])), /sequence or sequential-time invariant mismatch/);
+      await admin.query('ROLLBACK');
+      await admin.query('TRUNCATE appointment_item_staff_assignments,appointment_items,appointments');
     });
   } finally {
     if (admin) await admin.end().catch(() => {});

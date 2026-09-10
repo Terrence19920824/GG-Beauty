@@ -64,6 +64,19 @@ BEGIN
   ) THEN RAISE EXCEPTION 'Item primary count invalid'; END IF;
 
   IF EXISTS (
+    SELECT 1
+    FROM appointments p
+    JOIN appointment_items i
+      ON i.shop_id=p.shop_id AND i.location_id=p.location_id AND i.appointment_id=p.id
+    JOIN appointment_item_staff_assignments a
+      ON a.shop_id=i.shop_id AND a.location_id=i.location_id
+     AND a.appointment_item_id=i.id AND a.role='primary'
+    WHERE (SELECT count(*) FROM appointment_items x
+           WHERE x.shop_id=p.shop_id AND x.location_id=p.location_id AND x.appointment_id=p.id)=1
+      AND a.staff_id IS DISTINCT FROM p.staff_id
+  ) THEN RAISE EXCEPTION 'Single-item parent primary compatibility mismatch'; END IF;
+
+  IF EXISTS (
     SELECT 1 FROM appointment_item_staff_assignments a
     LEFT JOIN appointment_items i ON i.shop_id=a.shop_id AND i.location_id=a.location_id AND i.id=a.appointment_item_id
     LEFT JOIN appointments p ON p.shop_id=i.shop_id AND p.location_id=i.location_id AND p.id=i.appointment_id

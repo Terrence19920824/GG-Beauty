@@ -95,13 +95,17 @@ test('022 is read-only and fail-closed across canonical invariants', () => {
   assert.doesNotMatch(sql, /^\s*(?:INSERT|UPDATE|DELETE|ALTER|CREATE|DROP|TRUNCATE)\b/im);
 });
 
-test('023 drops only the exact parent exclusion under bounded transaction', () => {
+test('023 hardens only the consistency function/parent trigger and drops the exact parent exclusion', () => {
   const sql = read('migrations/023_multi_service_parent_collision_compatibility.sql');
   assert.match(sql, /BEGIN;/);
   assert.match(sql, /lock_timeout='5s'/);
   assert.match(sql, /statement_timeout='30s'/);
+  assert.match(sql, /CREATE OR REPLACE FUNCTION public\.assignment_collision_consistency_check\(\)/);
+  assert.match(sql, /CREATE CONSTRAINT TRIGGER assignment_collision_parent_consistency_trigger/);
+  assert.match(sql, /AFTER INSERT OR UPDATE ON public\.appointments/);
   assert.match(sql, /ALTER TABLE public\.appointments DROP CONSTRAINT prevent_staff_double_booking/);
-  assert.doesNotMatch(sql, /DROP COLUMN|UPDATE\s+public|INSERT INTO|DELETE FROM/i);
+  assert.doesNotMatch(sql, /DROP COLUMN|DROP INDEX|UPDATE\s+public|INSERT INTO|DELETE FROM/i);
+  assert.equal((sql.match(/ALTER TABLE public\.appointments DROP CONSTRAINT/g) || []).length, 1);
 });
 
 test('024 verifies assignment authority and legacy compatibility read-only', () => {

@@ -437,7 +437,7 @@ const requireStaffAuth = async (
     hashStaffSessionToken(token);
 
   try {
-    const result = await pool.query(
+    const result = await req.app.locals.bookingPool.query(
       `
       SELECT
         ss.staff_account_id,
@@ -3507,7 +3507,7 @@ app.patch(
     };
 
     try {
-      client = await pool.connect();
+      client = await req.app.locals.bookingPool.connect();
       await client.query('BEGIN');
       transactionActive = true;
 
@@ -3724,6 +3724,13 @@ app.patch(
         return res.status(error.status).json({
           success: false,
           message: error.publicMessage
+        });
+      }
+
+      if (error instanceof StaffBookabilityError) {
+        return res.status(409).json({
+          success: false,
+          message: '新时间不符合员工可预约规则'
         });
       }
 
