@@ -53,7 +53,7 @@ test('real staff move endpoint uses canonical assignments and rolls back safely'
     await db.query(sql('migrations/014_assignment_collision_projection_schema.sql'));
     await db.query(sql('migrations/015_assignment_collision_backfill.sql'));
     await db.query(sql('migrations/016_assignment_collision_constraint.sql'));
-    await db.query(sql('migrations/023_multi_service_parent_collision_compatibility.sql'));
+    await db.query(sql('migrations/026_multi_service_parent_collision_compatibility.sql'));
     const tokenA='staff-a-token',tokenB='staff-b-token',tokenC='staff-c-token',tokenD='staff-d-token';
     await db.query(`INSERT INTO shops VALUES($1,'active'),($2,'active')`,[id.shop,id.shop2]);
     await db.query(`INSERT INTO locations VALUES($1,$2,'UTC',true),($3,$4,'UTC',true)`,[id.location,id.shop,id.location2,id.shop2]);

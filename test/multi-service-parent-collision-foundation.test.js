@@ -88,8 +88,8 @@ test('legacy customer write remains atomic parent plus item plus primary assignm
   assert.match(helper, /'primary'/);
 });
 
-test('022 is read-only and fail-closed across canonical invariants', () => {
-  const sql = read('migrations/022_multi_service_parent_collision_preflight_readonly.sql');
+test('025 is read-only and fail-closed across canonical invariants', () => {
+  const sql = read('migrations/025_multi_service_parent_collision_preflight_readonly.sql');
   assert.match(sql, /BEGIN TRANSACTION READ ONLY/);
   assert.match(sql, /Parent-only appointment detected/);
   assert.match(sql, /Item primary count invalid/);
@@ -98,8 +98,8 @@ test('022 is read-only and fail-closed across canonical invariants', () => {
   assert.doesNotMatch(sql, /^\s*(?:INSERT|UPDATE|DELETE|ALTER|CREATE|DROP|TRUNCATE)\b/im);
 });
 
-test('023 hardens only the consistency function/parent trigger and drops the exact parent exclusion', () => {
-  const sql = read('migrations/023_multi_service_parent_collision_compatibility.sql');
+test('026 hardens only the consistency function/parent trigger and drops the exact parent exclusion', () => {
+  const sql = read('migrations/026_multi_service_parent_collision_compatibility.sql');
   assert.match(sql, /BEGIN;/);
   assert.match(sql, /lock_timeout='5s'/);
   assert.match(sql, /statement_timeout='30s'/);
@@ -111,12 +111,40 @@ test('023 hardens only the consistency function/parent trigger and drops the exa
   assert.equal((sql.match(/ALTER TABLE public\.appointments DROP CONSTRAINT/g) || []).length, 1);
 });
 
-test('024 verifies assignment authority and legacy compatibility read-only', () => {
-  const sql = read('migrations/024_multi_service_parent_collision_verification_readonly.sql');
+test('027 verifies assignment authority and legacy compatibility read-only', () => {
+  const sql = read('migrations/027_multi_service_parent_collision_verification_readonly.sql');
   assert.match(sql, /BEGIN TRANSACTION READ ONLY/);
   assert.match(sql, /Parent full-span collision constraint still exists/);
   assert.match(sql, /Single-item parent primary compatibility mismatch/);
   assert.match(sql, /Blocking assignment overlap detected/);
   assert.doesNotMatch(sql, /previous_end_at|start_at IS DISTINCT FROM previous_end_at/);
   assert.doesNotMatch(sql, /^\s*(?:INSERT|UPDATE|DELETE|ALTER|CREATE|DROP|TRUNCATE)\b/im);
+});
+
+test('022 tenant FK preflight is read-only and fail-closed', () => {
+  const sql = read('migrations/022_appointments_staff_tenant_fk_preflight_readonly.sql');
+  assert.match(sql,/BEGIN TRANSACTION READ ONLY/);
+  assert.match(sql,/appointments_staff_id_fkey/);
+  assert.match(sql,/staff_shop_id_id_uidx/);
+  assert.match(sql,/Cross-shop appointment staff link detected/);
+  assert.doesNotMatch(sql,/^\s*(?:INSERT|UPDATE|DELETE|ALTER|CREATE|DROP|TRUNCATE)\b/im);
+});
+
+test('023 tenant FK repair validates composite before dropping legacy', () => {
+  const sql = read('migrations/023_appointments_staff_tenant_fk_repair.sql');
+  assert.match(sql,/BEGIN;[\s\S]*lock_timeout='5s'[\s\S]*statement_timeout='30s'/);
+  const add=sql.indexOf('ADD CONSTRAINT appointments_staff_tenant_safe_fkey');
+  const validate=sql.indexOf('VALIDATE CONSTRAINT appointments_staff_tenant_safe_fkey');
+  const drop=sql.indexOf('DROP CONSTRAINT appointments_staff_id_fkey');
+  const rename=sql.indexOf('RENAME CONSTRAINT appointments_staff_tenant_safe_fkey TO appointments_staff_id_fkey');
+  assert.ok(add<validate && validate<drop && drop<rename);
+  assert.doesNotMatch(sql,/UPDATE\s+(?:public\.)?appointments|INSERT INTO|DELETE FROM|DROP COLUMN/i);
+});
+
+test('024 tenant FK verification is read-only and exact', () => {
+  const sql = read('migrations/024_appointments_staff_tenant_fk_verification_readonly.sql');
+  assert.match(sql,/BEGIN TRANSACTION READ ONLY/);
+  assert.match(sql,/FOREIGN KEY \(shop_id, staff_id\) REFERENCES staff\(shop_id, id\) ON DELETE RESTRICT/);
+  assert.match(sql,/Legacy single-column appointments staff FK still exists/);
+  assert.doesNotMatch(sql,/^\s*(?:INSERT|UPDATE|DELETE|ALTER|CREATE|DROP|TRUNCATE)\b/im);
 });

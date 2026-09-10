@@ -18,7 +18,11 @@ const migrations = [13, 14, 15, 16, 17].map(number => {
   const name = fs.readdirSync(path.join(ROOT, 'migrations')).find(file => file.startsWith(`${String(number).padStart(3, '0')}_`));
   return path.join(ROOT, 'migrations', name);
 });
-const parentCompatibilityMigrations = [22, 23, 24].map(number => {
+const tenantFkMigrations = [22, 23, 24].map(number => {
+  const name = fs.readdirSync(path.join(ROOT, 'migrations')).find(file => file.startsWith(`${String(number).padStart(3, '0')}_`));
+  return path.join(ROOT, 'migrations', name);
+});
+const parentCompatibilityMigrations = [25, 26, 27].map(number => {
   const name = fs.readdirSync(path.join(ROOT, 'migrations')).find(file => file.startsWith(`${String(number).padStart(3, '0')}_`));
   return path.join(ROOT, 'migrations', name);
 });
@@ -29,15 +33,16 @@ CREATE EXTENSION btree_gist;
 CREATE EXTENSION pgcrypto;
 CREATE TABLE shops(id uuid PRIMARY KEY);
 CREATE TABLE locations(id uuid PRIMARY KEY,shop_id uuid NOT NULL,UNIQUE(shop_id,id));
-CREATE TABLE staff(id uuid PRIMARY KEY,shop_id uuid NOT NULL,UNIQUE(shop_id,id));
+CREATE TABLE staff(id uuid PRIMARY KEY,shop_id uuid NOT NULL);
+CREATE UNIQUE INDEX staff_shop_id_id_uidx ON staff(shop_id,id);
 CREATE TABLE appointments(
  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),shop_id uuid NOT NULL,location_id uuid NOT NULL,
  service_id uuid,staff_id uuid NOT NULL,start_at timestamptz NOT NULL,end_at timestamptz NOT NULL,
  status text NOT NULL DEFAULT 'pending',override_conflict boolean NOT NULL DEFAULT false,
  CONSTRAINT appointments_check CHECK(end_at>start_at),
  CONSTRAINT appointments_shop_location_id_uidx UNIQUE(shop_id,location_id,id),
- CONSTRAINT appointments_staff_fkey FOREIGN KEY(shop_id,staff_id)
-   REFERENCES staff(shop_id,id) ON DELETE RESTRICT,
+ CONSTRAINT appointments_staff_id_fkey FOREIGN KEY(staff_id)
+   REFERENCES staff(id) ON DELETE RESTRICT,
  CONSTRAINT prevent_staff_double_booking EXCLUDE USING gist
    (staff_id WITH =,tstzrange(start_at,end_at,'[)') WITH &&)
    WHERE(status IN ('pending','confirmed') AND override_conflict=false)
@@ -336,7 +341,57 @@ test('assignment collision migrations on real PostgreSQL 17', { timeout: 120000 
       await admin.query(sql(migrations[4]));
     });
 
-    await t.test('022 to 024 transfers final authority to assignments', async () => {
+    await t.test('022 to 024 repairs appointments staff FK fail closed', async () => {
+      await admin.query('TRUNCATE appointment_item_staff_assignments,appointment_items,appointments');
+
+      await admin.query('ALTER TABLE appointments RENAME CONSTRAINT appointments_staff_id_fkey TO appointments_staff_legacy_drift');
+      await assert.rejects(admin.query(sql(tenantFkMigrations[0])), /Legacy appointments staff FK missing or drifted/);
+      await admin.query('ROLLBACK');
+      await admin.query('ALTER TABLE appointments RENAME CONSTRAINT appointments_staff_legacy_drift TO appointments_staff_id_fkey');
+
+      await admin.query('ALTER INDEX staff_shop_id_id_uidx RENAME TO staff_shop_id_id_drift');
+      await assert.rejects(admin.query(sql(tenantFkMigrations[0])), /unique prerequisite missing or drifted/);
+      await admin.query('ROLLBACK');
+      await admin.query('ALTER INDEX staff_shop_id_id_drift RENAME TO staff_shop_id_id_uidx');
+
+      const cross=(await admin.query(`INSERT INTO appointments(shop_id,location_id,staff_id,start_at,end_at,status) VALUES($1,$2,$3,'2033-01-01 10:00Z','2033-01-01 11:00Z','pending') RETURNING id`,[ids.shop,ids.location,ids.staffOther])).rows[0].id;
+      await assert.rejects(admin.query(sql(tenantFkMigrations[0])), /Cross-shop appointment staff link detected/);
+      await admin.query('ROLLBACK');
+      await assert.rejects(admin.query(sql(tenantFkMigrations[1])), /Appointment staff data is not safe for FK validation/);
+      await admin.query('ROLLBACK');
+      assert.equal((await admin.query(`SELECT pg_get_constraintdef(oid) definition FROM pg_constraint WHERE conrelid='appointments'::regclass AND conname='appointments_staff_id_fkey'`)).rows[0].definition,'FOREIGN KEY (staff_id) REFERENCES staff(id) ON DELETE RESTRICT');
+      await admin.query('DELETE FROM appointments WHERE id=$1',[cross]);
+
+      const racer=new Client(config);
+      await racer.connect();
+      try {
+        const migrationWithTestWindow=sql(tenantFkMigrations[1]).replace(
+          'END $guard$;\n\nALTER TABLE public.appointments',
+          "END $guard$;\nSELECT pg_sleep(0.5);\n\nALTER TABLE public.appointments"
+        );
+        const migrationAttempt=admin.query(migrationWithTestWindow);
+        await new Promise(resolve=>setTimeout(resolve,100));
+        const raced=(await racer.query(`INSERT INTO appointments(shop_id,location_id,staff_id,start_at,end_at,status) VALUES($1,$2,$3,'2033-01-01 12:00Z','2033-01-01 13:00Z','pending') RETURNING id`,[ids.shop,ids.location,ids.staffOther])).rows[0].id;
+        await assert.rejects(migrationAttempt,error=>error.code==='23503');
+        await admin.query('ROLLBACK');
+        assert.equal((await admin.query(`SELECT pg_get_constraintdef(oid) definition FROM pg_constraint WHERE conrelid='appointments'::regclass AND conname='appointments_staff_id_fkey'`)).rows[0].definition,'FOREIGN KEY (staff_id) REFERENCES staff(id) ON DELETE RESTRICT');
+        assert.equal((await admin.query(`SELECT count(*)::int n FROM pg_constraint WHERE conrelid='appointments'::regclass AND conname='appointments_staff_tenant_safe_fkey'`)).rows[0].n,0);
+        await racer.query('DELETE FROM appointments WHERE id=$1',[raced]);
+      } finally {
+        await racer.end();
+      }
+
+      await admin.query(sql(tenantFkMigrations[0]));
+      await admin.query(sql(tenantFkMigrations[1]));
+      await admin.query(sql(tenantFkMigrations[2]));
+      assert.equal((await admin.query(`SELECT pg_get_constraintdef(oid) definition FROM pg_constraint WHERE conrelid='appointments'::regclass AND conname='appointments_staff_id_fkey'`)).rows[0].definition,'FOREIGN KEY (shop_id, staff_id) REFERENCES staff(shop_id, id) ON DELETE RESTRICT');
+
+      const same=(await admin.query(`INSERT INTO appointments(shop_id,location_id,staff_id,start_at,end_at,status) VALUES($1,$2,$3,'2033-01-02 10:00Z','2033-01-02 11:00Z','pending') RETURNING id`,[ids.shop,ids.location,ids.staffA])).rows[0].id;
+      await admin.query('DELETE FROM appointments WHERE id=$1',[same]);
+      await assert.rejects(admin.query(`INSERT INTO appointments(shop_id,location_id,staff_id,start_at,end_at,status) VALUES($1,$2,$3,'2033-01-03 10:00Z','2033-01-03 11:00Z','pending')`,[ids.shop,ids.location,ids.staffOther]),error=>error.code==='23503');
+    });
+
+    await t.test('025 to 027 transfers final authority to assignments', async () => {
       await admin.query('TRUNCATE appointment_item_staff_assignments,appointment_items,appointments');
       await admin.query('SET session_replication_role=replica');
       const badParent = (await admin.query(`INSERT INTO appointments(shop_id,location_id,staff_id,start_at,end_at,status,override_conflict) VALUES($1,$2,$3,'2034-01-01 10:00Z','2034-01-01 11:00Z','pending',false) RETURNING id`, [ids.shop,ids.location,ids.staffA])).rows[0].id;
