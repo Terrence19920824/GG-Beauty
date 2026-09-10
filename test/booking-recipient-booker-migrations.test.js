@@ -18,6 +18,7 @@ test('028 and 030 composite-key guards are read-only and exact', () => {
   assert.match(verification, /indisunique AND ix\.indisvalid AND ix\.indisready/);
   assert.match(verification, /ix\.indpred IS NULL AND ix\.indexprs IS NULL/);
   assert.match(verification, /ARRAY\['shop_id','id'\]/);
+  assert.match(verification, /SELECT COUNT\(\*\) AS customers_total,[\s\S]*FROM customers;\s*\n\s*ROLLBACK;/);
 });
 
 test('029 changes only the composite unique prerequisite with bounded locks', () => {

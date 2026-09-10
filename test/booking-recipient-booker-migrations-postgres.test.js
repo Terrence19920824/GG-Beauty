@@ -40,7 +40,11 @@ test('PostgreSQL 17 recipient/booker migration chain is tenant safe and legacy c
     await db.query(`INSERT INTO shops VALUES($1),($2)`, [ids.shopA,ids.shopB]);
     await db.query(`INSERT INTO customers VALUES($1,$4,'A','+65 8123-4567',NULL),($2,$4,'B','0065 81234567',NULL),($3,$5,'Other','+65 8123-4567',NULL)`, [ids.customerA,ids.customerB,ids.customerOther,ids.shopA,ids.shopB]);
     await db.query(`ALTER TABLE appointments DROP CONSTRAINT appointments_customer_id_fkey; ALTER TABLE appointments ADD CONSTRAINT appointments_customer_id_fkey FOREIGN KEY(customer_id) REFERENCES customers(id)`);
-    await db.query(sql(files[0])); await db.query(sql(files[1])); await db.query(sql(files[2]));
+    await db.query(sql(files[0])); await db.query(sql(files[1]));
+    const verificationResults = await db.query(sql(files[2]));
+    const countResult = verificationResults.find(result => result.rows?.[0]?.customers_total !== undefined);
+    assert.equal(countResult.rows[0].customers_total, '3');
+    assert.equal(countResult.rows[0].duplicate_shop_id_id_groups, '0');
     await assert.rejects(db.query(sql(files[3])), /Legacy appointments customer FK missing or drifted/);
     await db.query('ROLLBACK');
     await db.query(`ALTER TABLE appointments DROP CONSTRAINT appointments_customer_id_fkey; ALTER TABLE appointments ADD CONSTRAINT appointments_customer_id_fkey FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE RESTRICT`);

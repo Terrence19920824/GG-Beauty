@@ -15,6 +15,7 @@ BEGIN
 END $verify$;
 
 SELECT COUNT(*) AS customers_total,
-  (SELECT COUNT(*) FROM (SELECT shop_id,id FROM customers GROUP BY shop_id,id HAVING COUNT(*)>1) d) AS duplicate_shop_id_id_groups;
+  (SELECT COUNT(*) FROM (SELECT shop_id,id FROM customers GROUP BY shop_id,id HAVING COUNT(*)>1) d) AS duplicate_shop_id_id_groups
+FROM customers;
 
 ROLLBACK;
