@@ -404,6 +404,16 @@ async function renderCart() {
 
 function clearStaleTime(){selectedSlot=null;availabilityIsEmpty=false;confirmationSummary.hidden=true;timesBox.innerHTML=`<div>${customerT('chooseDate')}</div>`;}
 
+function renderLocaleDependentBookingState() {
+  if (!dateInput.value) {
+    timesBox.innerHTML = `<div>${customerT('chooseDate')}</div>`;
+  } else if (availabilityIsEmpty) {
+    renderTimes([]);
+  } else if (selectedSlot) {
+    renderConfirmation();
+  }
+}
+
 async function setLocale(locale) {
   currentLocale = localeApi.setLocale(locale, localStorage);
   document.documentElement.lang = currentLocale;
@@ -413,10 +423,10 @@ async function setLocale(locale) {
   document.getElementById('languageEn').disabled = currentLocale === 'en';
   dateInput.lang = currentLocale;
   renderSelectedDate();
+  renderLocaleDependentBookingState();
   await renderCart();
   try { await loadCustomerCatalogue(); } catch (error) { messageBox.textContent = error.message; }
-  if (availabilityIsEmpty) renderTimes([]);
-  else renderConfirmation();
+  renderLocaleDependentBookingState();
 }
 
 const dateInput =

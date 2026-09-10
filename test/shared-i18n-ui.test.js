@@ -67,7 +67,7 @@ test('customer cart uses complete shared i18n without changing service or staff 
   assert.equal(localized.staffId, 'staff-id');
   assert.equal(localized.clientItemKey, selected.clientItemKey);
   assert.match(customerHtml, /await loadCustomerCatalogue\(\)/);
-  assert.match(customerHtml, /else renderConfirmation\(\)/);
+  assert.match(customerHtml, /renderLocaleDependentBookingState\(\)/);
   assert.doesNotMatch(customerHtml, /service:\s*service\.name/);
   assert.doesNotMatch(customerCart, /serviceName|staffName/);
 });

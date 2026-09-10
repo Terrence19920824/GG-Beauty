@@ -75,6 +75,7 @@ test('customer date presentation preserves canonical ISO booking value', () => {
 
 test('existing Chinese empty availability rerenders immediately in English without availability refetch', async () => {
   const page = createCustomerContext();
+  page.elements.get('date').value = '2026-09-09';
   vm.runInContext('renderTimes([])', page.context);
   assert.match(page.elements.get('times').innerHTML, /当天暂无可预约时间/);
   await vm.runInContext("setLocale('en')", page.context);
@@ -84,10 +85,51 @@ test('existing Chinese empty availability rerenders immediately in English witho
 
 test('existing English empty availability rerenders immediately in Chinese without availability refetch', async () => {
   const page = createCustomerContext();
+  page.elements.get('date').value = '2026-09-09';
   await vm.runInContext("setLocale('en')", page.context);
   vm.runInContext('renderTimes([])', page.context);
   assert.match(page.elements.get('times').innerHTML, /No available times on this date\./);
   await vm.runInContext("setLocale('zh-CN')", page.context);
   assert.match(page.elements.get('times').innerHTML, /当天暂无可预约时间/);
   assert.equal(page.fetchUrls.some(url => url.includes('/api/available-times-db')), false);
+});
+
+test('initial choose-date state rerenders immediately in both directions without availability refetch', async () => {
+  const page = createCustomerContext();
+  vm.runInContext('clearStaleTime()', page.context);
+  assert.match(page.elements.get('times').innerHTML, /请先选择日期/);
+
+  const toEnglish = vm.runInContext("setLocale('en')", page.context);
+  assert.match(page.elements.get('times').innerHTML, /Choose a date first/);
+  await toEnglish;
+
+  const toChinese = vm.runInContext("setLocale('zh-CN')", page.context);
+  assert.match(page.elements.get('times').innerHTML, /请先选择日期/);
+  await toChinese;
+  assert.equal(page.fetchUrls.some(url => url.includes('available-times')), false);
+});
+
+test('choose-date locale rerender preserves cart and per-item staff identity', async () => {
+  const page = createCustomerContext();
+  vm.runInContext(`
+    cart = [{
+      clientItemKey: 'cart-stable',
+      categoryId: 'category-stable',
+      serviceId: 'service-stable',
+      staffSelectionType: 'specific',
+      staffId: 'staff-stable'
+    }];
+    clearStaleTime();
+  `, page.context);
+  await vm.runInContext("setLocale('en')", page.context);
+  assert.deepEqual(
+    JSON.parse(vm.runInContext('JSON.stringify(cart[0])', page.context)),
+    {
+      clientItemKey: 'cart-stable',
+      categoryId: 'category-stable',
+      serviceId: 'service-stable',
+      staffSelectionType: 'specific',
+      staffId: 'staff-stable'
+    }
+  );
 });
