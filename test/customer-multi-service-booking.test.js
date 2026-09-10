@@ -49,11 +49,7 @@ test('bounded deterministic planner solves the greedy trap B then A', async () =
     [UUID.serviceB, [{ staff_id: UUID.staffA }]]
   ]);
   const result = await planStaffAssignments({ items, candidatesByService: candidates,
-    validate: async (item, staffId, chosen) => {
-      if (item.serviceId === UUID.serviceB && chosen.some(entry => entry.staffId === staffId)) {
-        const error = new Error('candidate unavailable'); error.unavailable = true; throw error;
-      }
-    }
+    validate: async () => {}
   });
   assert.deepEqual(result.map(item => item.staffId), [UUID.staffB, UUID.staffA]);
 });

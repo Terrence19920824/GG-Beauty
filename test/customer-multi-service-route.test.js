@@ -28,7 +28,7 @@ const withServer = async operation => {
   finally { await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve())); }
 };
 
-const makeFixture = failOnSql => {
+const makeFixture = (failOnSql, candidateRows) => {
   let itemIndex = 0;
   const state = { queries: [], released: 0 };
   const client = {
@@ -41,7 +41,9 @@ const makeFixture = failOnSql => {
         { id: ID.serviceA, duration_minutes: 60, price: '88', price_is_from: false, category_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', localized_name: 'Basic Facial' },
         { id: ID.serviceB, duration_minutes: 180, price: '238', price_is_from: true, category_id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', localized_name: 'Balayage' }
       ].filter(row => params[1].includes(row.id)) };
-      if (/assigned_appointment_count/.test(sql)) return { rows: [{ staff_id: params[2] === ID.serviceA ? ID.staffA : ID.staffB, display_name: params[2] === ID.serviceA ? 'Amy' : 'Bob', assigned_appointment_count: 0 }] };
+      if (/assigned_appointment_count/.test(sql)) return { rows: candidateRows
+        ? candidateRows(params[2])
+        : [{ staff_id: params[2] === ID.serviceA ? ID.staffA : ID.staffB, display_name: params[2] === ID.serviceA ? 'Amy' : 'Bob', assigned_appointment_count: 0 }] };
       if (/TO_CHAR\(\(\(\$1::DATE\+candidate\.time::TIME\)/.test(sql)) return { rows: [
         { time: '10:00', start_at: '2030-01-07T02:00:00.000000Z' },
         { time: '10:30', start_at: '2030-01-07T02:30:00.000000Z' }
@@ -79,6 +81,43 @@ test('multi-service request writes parent, sequential items and primary assignme
   assert.equal(fixture.state.queries.filter(query => /^INSERT INTO appointment_item_staff_assignments/.test(query.sql)).length, 2);
   assert.equal(fixture.state.queries.at(-1).sql, 'COMMIT');
 });
+
+test('same staff endpoint creates exactly two sequential primary assignments', async () => {
+  delete process.env.BOOKING_WRITE_MAINTENANCE;
+  const fixture = makeFixture(); app.locals.bookingPool = fixture.pool; app.locals.bookingValidator = async () => {};
+  const body = { ...requestBody, items: requestBody.items.map(item => ({ ...item, staffId: ID.staffA })) };
+  await withServer(async base => assert.equal((await post(base, body)).status, 200));
+  const assignments = fixture.state.queries.filter(query => /^INSERT INTO appointment_item_staff_assignments/.test(query.sql));
+  assert.equal(assignments.length, 2);
+  assert.deepEqual(assignments.map(query => query.params[3]), [ID.staffA, ID.staffA]);
+});
+
+test('no-preference endpoint reserves scarce A and deterministically resolves B then A', async () => {
+  delete process.env.BOOKING_WRITE_MAINTENANCE;
+  const fixture = makeFixture(null, serviceId => serviceId === ID.serviceA
+    ? [{ staff_id: ID.staffA, display_name: 'Amy' }, { staff_id: ID.staffB, display_name: 'Bob' }]
+    : [{ staff_id: ID.staffA, display_name: 'Amy' }]);
+  app.locals.bookingPool = fixture.pool; app.locals.bookingValidator = async () => {};
+  const body = { ...requestBody, items: requestBody.items.map(item => ({ ...item, staffSelectionType: 'no_preference', staffId: undefined })) };
+  await withServer(async base => assert.equal((await post(base, body)).status, 200));
+  const assignments = fixture.state.queries.filter(query => /^INSERT INTO appointment_item_staff_assignments/.test(query.sql));
+  assert.deepEqual(assignments.map(query => query.params[3]), [ID.staffB, ID.staffA]);
+});
+
+for (const reverse of [false, true]) {
+  test(`${reverse ? 'no-preference + specific' : 'specific + no-preference'} endpoint preserves the specific staff`, async () => {
+    delete process.env.BOOKING_WRITE_MAINTENANCE;
+    const fixture = makeFixture(null, () => [{ staff_id: ID.staffA, display_name: 'Amy' }, { staff_id: ID.staffB, display_name: 'Bob' }]);
+    app.locals.bookingPool = fixture.pool; app.locals.bookingValidator = async () => {};
+    const items = requestBody.items.map((item, index) => ({ ...item,
+      staffSelectionType: index === (reverse ? 1 : 0) ? 'specific' : 'no_preference',
+      staffId: index === (reverse ? 1 : 0) ? ID.staffA : undefined
+    }));
+    await withServer(async base => assert.equal((await post(base, { ...requestBody, items })).status, 200));
+    const assignments = fixture.state.queries.filter(query => /^INSERT INTO appointment_item_staff_assignments/.test(query.sql));
+    assert.equal(assignments[reverse ? 1 : 0].params[3], ID.staffA);
+  });
+}
 
 for (const code of ['OUTSIDE_WORKING_HOURS', 'STAFF_ON_LEAVE', 'STAFF_SERVICE_NOT_ALLOWED']) {
   test(`multi-service ${code} fails the whole transaction before business writes`, async () => {
@@ -148,4 +187,44 @@ test('multi-service availability rejects client-supplied shop id before database
     assert.equal(response.status, 400);
   });
   assert.equal(connected, false);
+});
+
+test('startAt-only legacy specific request routes through canonical one-item transaction', async () => {
+  delete process.env.BOOKING_WRITE_MAINTENANCE;
+  const fixture = makeFixture(); app.locals.bookingPool = fixture.pool; app.locals.bookingValidator = async () => {};
+  const { items: _items, ...base } = requestBody;
+  const body = { ...base, serviceId: ID.serviceA, staffSelectionType: 'specific', staffId: ID.staffA };
+  await withServer(async url => assert.equal((await post(url, body)).status, 200));
+  assert.equal(fixture.state.queries.filter(query => /^INSERT INTO appointments/.test(query.sql)).length, 1);
+  assert.equal(fixture.state.queries.filter(query => /^INSERT INTO appointment_items/.test(query.sql)).length, 1);
+  assert.equal(fixture.state.queries.filter(query => /^INSERT INTO appointment_item_staff_assignments/.test(query.sql)).length, 1);
+  assert.equal(fixture.state.queries.at(-1).sql, 'COMMIT');
+});
+
+test('startAt-only legacy no-preference request resolves authoritative staff', async () => {
+  delete process.env.BOOKING_WRITE_MAINTENANCE;
+  const fixture = makeFixture(null, () => [{ staff_id: ID.staffB, display_name: 'Bob', assigned_appointment_count: 0 }]);
+  app.locals.bookingPool = fixture.pool; app.locals.bookingValidator = async () => {};
+  const { items: _items, ...base } = requestBody;
+  const body = { ...base, serviceId: ID.serviceA, staffSelectionType: 'no_preference' };
+  await withServer(async url => assert.equal((await post(url, body)).status, 200));
+  const assignment = fixture.state.queries.find(query => /^INSERT INTO appointment_item_staff_assignments/.test(query.sql));
+  assert.equal(assignment.params[3], ID.staffB);
+});
+
+test('startAt-only legacy cross-tenant service fails closed', async () => {
+  delete process.env.BOOKING_WRITE_MAINTENANCE;
+  const fixture = makeFixture(); app.locals.bookingPool = fixture.pool; app.locals.bookingValidator = async () => {};
+  const { items: _items, ...base } = requestBody;
+  await withServer(async url => assert.equal((await post(url, { ...base, serviceId: '99999999-9999-4999-8999-999999999999', staffSelectionType: 'specific', staffId: ID.staffA })).status, 400));
+  assert.equal(fixture.state.queries.at(-1).sql, 'ROLLBACK');
+});
+
+test('startAt-only legacy assignment collision returns safe 409 and rolls back', async () => {
+  delete process.env.BOOKING_WRITE_MAINTENANCE;
+  const fixture = makeFixture(sql => { if (!/INSERT INTO appointment_item_staff_assignments/.test(sql)) return null; const error = new Error('collision detail'); error.code = '23P01'; return error; });
+  app.locals.bookingPool = fixture.pool; app.locals.bookingValidator = async () => {};
+  const { items: _items, ...base } = requestBody;
+  await withServer(async url => { const response = await post(url, { ...base, serviceId: ID.serviceA, staffSelectionType: 'specific', staffId: ID.staffA }); assert.equal(response.status, 409); assert.equal((await response.json()).code, 'BOOKING_NOT_AVAILABLE'); });
+  assert.equal(fixture.state.queries.at(-1).sql, 'ROLLBACK');
 });

@@ -10,6 +10,8 @@ const root = path.resolve(__dirname, '..');
 const adminHtml = fs.readFileSync(path.join(root, 'public/admin.html'), 'utf8');
 const adminJs = fs.readFileSync(path.join(root, 'public/admin-self-service.js'), 'utf8');
 const customerHtml = fs.readFileSync(path.join(root, 'public/index.html'), 'utf8');
+const customerCart = fs.readFileSync(path.join(root, 'public/customer-multi-service-cart.js'), 'utf8');
+const customerCartApi = require('../public/customer-multi-service-cart');
 
 test('browser locale detection and manual locale precedence follow the shared rules', () => {
   assert.equal(i18n.detectBrowserLocale({ languages: ['zh-SG', 'en'] }), 'zh-CN');
@@ -44,11 +46,30 @@ test('owner services has bilingual system labels while service names remain API 
   assert.match(adminJs, /escapeHtml\(staff\.name\)/);
 });
 
-test('customer uses the shared locale and translation keys without changing serviceId identity', () => {
+test('customer cart uses complete shared i18n without changing service or staff identity', () => {
   assert.match(customerHtml, /src="\/shared-i18n\.js"/);
   assert.match(customerHtml, /globalThis\.ggI18n/);
-  assert.match(customerHtml, /serviceId: service\.id/);
+  for (const key of ['addSelectedService', 'addAnotherService', 'selectedServices', 'removeService', 'totalDuration', 'estimatedTotal', 'chooseStaffCustomer', 'customerStaffNoPreference']) {
+    assert.notEqual(i18n.t(key, 'zh-CN'), key);
+    assert.notEqual(i18n.t(key, 'en'), key);
+  }
+  assert.match(customerHtml, /data-i18n="addSelectedService"/);
+  assert.match(customerHtml, /data-i18n="addAnotherService"/);
+  assert.match(customerHtml, /customerT\('removeService'\)/);
+  assert.match(customerHtml, /customerT\('totalDuration'\)/);
+  assert.match(customerHtml, /customerT\('estimatedTotal'\)/);
+  assert.match(customerHtml, /renderConfirmation\(\)/);
+  const service = { id: 'service-id', categoryId: 'category-id' };
+  const [selected] = customerCartApi.add([], service);
+  const [localized] = customerCartApi.updateStaff([selected], selected.clientItemKey, 'specific', 'staff-id');
+  assert.equal(localized.serviceId, 'service-id');
+  assert.equal(localized.categoryId, 'category-id');
+  assert.equal(localized.staffId, 'staff-id');
+  assert.equal(localized.clientItemKey, selected.clientItemKey);
+  assert.match(customerHtml, /await loadCustomerCatalogue\(\)/);
+  assert.match(customerHtml, /else renderConfirmation\(\)/);
   assert.doesNotMatch(customerHtml, /service:\s*service\.name/);
+  assert.doesNotMatch(customerCart, /serviceName|staffName/);
 });
 
 test('shared locale persistence cannot store authentication material and database enums stay canonical', () => {

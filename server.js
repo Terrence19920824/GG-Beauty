@@ -1922,7 +1922,9 @@ app.post('/api/new-db', async (req, res) => {
     });
   }
 
-  if (Array.isArray(req.body.items)) {
+  const canonicalItemsRequest = Array.isArray(req.body.items) ||
+    (req.body.items === undefined && req.body.startAt !== undefined);
+  if (canonicalItemsRequest) {
     if (req.body.shopId !== undefined || req.body.shop_id !== undefined) {
       return res.status(400).json({ success: false, message: 'Invalid shop context' });
     }

@@ -186,8 +186,10 @@ test('availability uses tenant service id and never localized display name ident
 
 test('customer UI sends serviceId and locale and displays from-price in both languages', () => {
   const html = fs.readFileSync(path.join(root, 'public/index.html'), 'utf8');
+  const cart = fs.readFileSync(path.join(root, 'public/customer-multi-service-cart.js'), 'utf8');
   const shared = fs.readFileSync(path.join(root, 'public/shared-i18n.js'), 'utf8');
-  assert.match(html, /serviceId: service\.id/);
+  assert.match(cart, /serviceId: service\.id/);
+  assert.match(html, /items:\s*cartApi\.requestItems\(cart\)/);
   assert.match(html, /locale: currentLocale/);
   assert.match(shared, /From/);
   assert.match(shared, /起/);
