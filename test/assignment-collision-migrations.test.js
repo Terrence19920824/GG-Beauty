@@ -453,11 +453,30 @@ test('assignment collision migrations on real PostgreSQL 17', { timeout: 120000 
     await t.test('024 rejects an invalid canonical sequence fixture', async () => {
       await admin.query('TRUNCATE appointment_item_staff_assignments,appointment_items,appointments');
       await admin.query('SET session_replication_role=replica');
-      const parent=(await admin.query(`INSERT INTO appointments(shop_id,location_id,service_id,staff_id,start_at,end_at,status,override_conflict) VALUES($1,$2,$3,$4,'2037-01-01 10:00Z','2037-01-01 11:00Z','pending',false) RETURNING id`,[ids.shop,ids.location,'55555555-5555-4555-8555-555555555555',ids.staffA])).rows[0].id;
-      const item=(await admin.query(`INSERT INTO appointment_items(shop_id,location_id,appointment_id,service_id,sequence_no,start_at,end_at,status) VALUES($1,$2,$3,$4,2,'2037-01-01 10:00Z','2037-01-01 11:00Z','pending') RETURNING id`,[ids.shop,ids.location,parent,'55555555-5555-4555-8555-555555555555'])).rows[0].id;
-      await admin.query(`INSERT INTO appointment_item_staff_assignments(shop_id,location_id,appointment_item_id,staff_id,role,start_at,end_at,blocks_time) VALUES($1,$2,$3,$4,'primary','2037-01-01 10:00Z','2037-01-01 11:00Z',true)`,[ids.shop,ids.location,item,ids.staffA]);
+      const parent=(await admin.query(`INSERT INTO appointments(shop_id,location_id,service_id,staff_id,start_at,end_at,status,override_conflict) VALUES($1,$2,$3,$4,'2037-01-01 10:00Z','2037-01-01 12:00Z','pending',false) RETURNING id`,[ids.shop,ids.location,'55555555-5555-4555-8555-555555555555',ids.staffA])).rows[0].id;
+      const first=(await admin.query(`INSERT INTO appointment_items(shop_id,location_id,appointment_id,service_id,sequence_no,start_at,end_at,status) VALUES($1,$2,$3,$4,1,'2037-01-01 10:00Z','2037-01-01 11:00Z','pending') RETURNING id`,[ids.shop,ids.location,parent,'55555555-5555-4555-8555-555555555555'])).rows[0].id;
+      const second=(await admin.query(`INSERT INTO appointment_items(shop_id,location_id,appointment_id,service_id,sequence_no,start_at,end_at,status) VALUES($1,$2,$3,$4,1,'2037-01-01 11:00Z','2037-01-01 12:00Z','pending') RETURNING id`,[ids.shop,ids.location,parent,'55555555-5555-4555-8555-555555555555'])).rows[0].id;
+      await admin.query(`INSERT INTO appointment_item_staff_assignments(shop_id,location_id,appointment_item_id,staff_id,role,start_at,end_at,blocks_time) VALUES($1,$2,$3,$4,'primary','2037-01-01 10:00Z','2037-01-01 11:00Z',true),($1,$2,$5,$4,'primary','2037-01-01 11:00Z','2037-01-01 12:00Z',true)`,[ids.shop,ids.location,first,ids.staffA,second]);
       await admin.query('SET session_replication_role=origin');
-      await assert.rejects(admin.query(sql(parentCompatibilityMigrations[2])), /sequence or sequential-time invariant mismatch/);
+      await assert.rejects(admin.query(sql(parentCompatibilityMigrations[2])), /sequence invariant mismatch/);
+      await admin.query('ROLLBACK');
+      await admin.query('TRUNCATE appointment_item_staff_assignments,appointment_items,appointments');
+    });
+
+    await t.test('024 accepts legal item gaps and rejects parent span mismatch', async () => {
+      const service='55555555-5555-4555-8555-555555555555';
+      await admin.query('BEGIN');
+      const parent=(await admin.query(`INSERT INTO appointments(shop_id,location_id,service_id,staff_id,start_at,end_at,status,override_conflict) VALUES($1,$2,$3,$4,'2037-02-01 10:00Z','2037-02-01 12:30Z','pending',false) RETURNING id`,[ids.shop,ids.location,service,ids.staffA])).rows[0].id;
+      for(const [sequence,start,end,staff] of [[1,'2037-02-01 10:00Z','2037-02-01 11:00Z',ids.staffA],[2,'2037-02-01 11:30Z','2037-02-01 12:30Z',ids.staffB]]){
+        const item=(await admin.query(`INSERT INTO appointment_items(shop_id,location_id,appointment_id,service_id,sequence_no,start_at,end_at,status) VALUES($1,$2,$3,$4,$5,$6,$7,'pending') RETURNING id`,[ids.shop,ids.location,parent,service,sequence,start,end])).rows[0].id;
+        await admin.query(`INSERT INTO appointment_item_staff_assignments(shop_id,location_id,appointment_item_id,staff_id,role,start_at,end_at) VALUES($1,$2,$3,$4,'primary',$5,$6)`,[ids.shop,ids.location,item,staff,start,end]);
+      }
+      await admin.query('COMMIT');
+      await admin.query(sql(parentCompatibilityMigrations[2]));
+      await admin.query('SET session_replication_role=replica');
+      await admin.query(`UPDATE appointments SET end_at='2037-02-01 12:00Z' WHERE id=$1`,[parent]);
+      await admin.query('SET session_replication_role=origin');
+      await assert.rejects(admin.query(sql(parentCompatibilityMigrations[2])), /Parent span mismatch/);
       await admin.query('ROLLBACK');
       await admin.query('TRUNCATE appointment_item_staff_assignments,appointment_items,appointments');
     });

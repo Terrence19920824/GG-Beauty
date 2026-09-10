@@ -69,6 +69,9 @@ test('owner read model exposes canonical per-item assignment truth', () => {
 
 test('staff whole move fails closed for multiple primary staff', () => {
   const source = read('server.js');
+  assert.match(source, /JOIN appointment_item_staff_assignments participant_assignment/);
+  assert.match(source, /participant_assignment\.staff_id = \$3/);
+  assert.doesNotMatch(source, /WHERE id = \$1\s+AND shop_id = \$2\s+AND staff_id = \$3\s+AND location_id = \$4/);
   assert.match(source, /phaseAStructure\.primaryStaffCount !== 1/);
   assert.match(source, /phaseAStructure\.solePrimaryStaffId !==\s*req\.staffAuth\.staffId/);
   assert.match(source, /多员工预约不能由员工移动整笔时间/);
@@ -114,5 +117,6 @@ test('024 verifies assignment authority and legacy compatibility read-only', () 
   assert.match(sql, /Parent full-span collision constraint still exists/);
   assert.match(sql, /Single-item parent primary compatibility mismatch/);
   assert.match(sql, /Blocking assignment overlap detected/);
+  assert.doesNotMatch(sql, /previous_end_at|start_at IS DISTINCT FROM previous_end_at/);
   assert.doesNotMatch(sql, /^\s*(?:INSERT|UPDATE|DELETE|ALTER|CREATE|DROP|TRUNCATE)\b/im);
 });

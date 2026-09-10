@@ -13,9 +13,10 @@ const ROOT = path.join(__dirname, '..');
 const PG_BIN = process.env.PG17_BIN || '/opt/homebrew/opt/postgresql@17/bin';
 const sql = file => fs.readFileSync(path.join(ROOT, file), 'utf8');
 const id = {
-  shop:'11111111-1111-4111-8111-111111111111', location:'22222222-2222-4222-8222-222222222222',
-  staffA:'33333333-3333-4333-8333-111111111111', staffB:'33333333-3333-4333-8333-222222222222',
-  accountA:'44444444-4444-4444-8444-111111111111', accountB:'44444444-4444-4444-8444-222222222222',
+  shop:'11111111-1111-4111-8111-111111111111', shop2:'11111111-1111-4111-8111-222222222222',
+  location:'22222222-2222-4222-8222-222222222222', location2:'22222222-2222-4222-8222-333333333333',
+  staffA:'33333333-3333-4333-8333-111111111111', staffB:'33333333-3333-4333-8333-222222222222', staffC:'33333333-3333-4333-8333-333333333333', staffD:'33333333-3333-4333-8333-444444444444',
+  accountA:'44444444-4444-4444-8444-111111111111', accountB:'44444444-4444-4444-8444-222222222222', accountC:'44444444-4444-4444-8444-333333333333', accountD:'44444444-4444-4444-8444-444444444444',
   service:'55555555-5555-4555-8555-555555555555'
 };
 
@@ -53,21 +54,22 @@ test('real staff move endpoint uses canonical assignments and rolls back safely'
     await db.query(sql('migrations/015_assignment_collision_backfill.sql'));
     await db.query(sql('migrations/016_assignment_collision_constraint.sql'));
     await db.query(sql('migrations/023_multi_service_parent_collision_compatibility.sql'));
-    const tokenA='staff-a-token',tokenB='staff-b-token';
-    await db.query(`INSERT INTO shops VALUES($1,'active')`,[id.shop]);
-    await db.query(`INSERT INTO locations VALUES($1,$2,'UTC',true)`,[id.location,id.shop]);
-    await db.query(`INSERT INTO staff VALUES($1,$3,true,true,true),($2,$3,true,true,true)`,[id.staffA,id.staffB,id.shop]);
-    await db.query(`INSERT INTO staff_accounts VALUES($1,$3,$4,1,'active'),($2,$3,$5,1,'active')`,[id.accountA,id.accountB,id.shop,id.staffA,id.staffB]);
-    for(const [account,staff,token] of [[id.accountA,id.staffA,tokenA],[id.accountB,id.staffB,tokenB]]){
-      await db.query(`INSERT INTO staff_sessions VALUES($1,$2,$3,$4,$5,NULL,now()+interval '1 day',1)`,[account,id.shop,staff,id.location,crypto.createHash('sha256').update(token).digest('hex')]);
-      await db.query(`INSERT INTO staff_permissions VALUES($1,$2,false,false,false,false,false,true)`,[id.shop,account]);
+    const tokenA='staff-a-token',tokenB='staff-b-token',tokenC='staff-c-token',tokenD='staff-d-token';
+    await db.query(`INSERT INTO shops VALUES($1,'active'),($2,'active')`,[id.shop,id.shop2]);
+    await db.query(`INSERT INTO locations VALUES($1,$2,'UTC',true),($3,$4,'UTC',true)`,[id.location,id.shop,id.location2,id.shop2]);
+    await db.query(`INSERT INTO staff VALUES($1,$5,true,true,true),($2,$5,true,true,true),($3,$5,true,true,true),($4,$6,true,true,true)`,[id.staffA,id.staffB,id.staffC,id.staffD,id.shop,id.shop2]);
+    await db.query(`INSERT INTO staff_accounts VALUES($1,$5,$6,1,'active'),($2,$5,$7,1,'active'),($3,$5,$8,1,'active'),($4,$9,$10,1,'active')`,[id.accountA,id.accountB,id.accountC,id.accountD,id.shop,id.staffA,id.staffB,id.staffC,id.shop2,id.staffD]);
+    for(const [account,shop,location,staff,token] of [[id.accountA,id.shop,id.location,id.staffA,tokenA],[id.accountB,id.shop,id.location,id.staffB,tokenB],[id.accountC,id.shop,id.location,id.staffC,tokenC],[id.accountD,id.shop2,id.location2,id.staffD,tokenD]]){
+      await db.query(`INSERT INTO staff_sessions VALUES($1,$2,$3,$4,$5,NULL,now()+interval '1 day',1)`,[account,shop,staff,location,crypto.createHash('sha256').update(token).digest('hex')]);
+      await db.query(`INSERT INTO staff_permissions VALUES($1,$2,false,false,false,false,false,true)`,[shop,account]);
     }
     await db.query(`INSERT INTO services VALUES($1,$2,'Service',60,true,true)`,[id.service,id.shop]);
-    for(const staff of [id.staffA,id.staffB]){
+    for(const staff of [id.staffA,id.staffB,id.staffC]){
       await db.query(`INSERT INTO staff_services(shop_id,staff_id,service_id,is_active) VALUES($1,$2,$3,true)`,[id.shop,staff,id.service]);
       await db.query(`INSERT INTO staff_location_assignments(shop_id,location_id,staff_id,is_active) VALUES($1,$2,$3,true)`,[id.shop,id.location,staff]);
       for(let day=1;day<=7;day++) await db.query(`INSERT INTO staff_location_working_hours(shop_id,location_id,staff_id,day_of_week,start_time,end_time,is_active) VALUES($1,$2,$3,$4,'00:00','23:59',true)`,[id.shop,id.location,staff,day]);
     }
+    await db.query(`INSERT INTO staff_location_assignments(shop_id,location_id,staff_id,is_active) VALUES($1,$2,$3,true)`,[id.shop2,id.location2,id.staffD]);
     process.env.DATABASE_URL=url;
     delete require.cache[require.resolve('../server')];
     const {app}=require('../server');
@@ -83,7 +85,8 @@ test('real staff move endpoint uses canonical assignments and rolls back safely'
       await db.query('COMMIT'); return parent;
     };
     const move=async(parent,token,newStartAt)=>fetch(`${base}/api/staff/appointments/${parent.id}/time`,{method:'PATCH',headers:{'content-type':'application/json','cookie':`gg_beauty_staff_session=${token}`,'origin':base},body:JSON.stringify({newStartAt})});
-    const times=async parent=>(await db.query(`SELECT p.start_at,p.end_at,(SELECT json_agg(json_build_array(i.start_at,i.end_at) ORDER BY i.sequence_no) FROM appointment_items i WHERE i.appointment_id=p.id) items,(SELECT json_agg(json_build_array(a.start_at,a.end_at) ORDER BY a.id) FROM appointment_item_staff_assignments a JOIN appointment_items i ON i.id=a.appointment_item_id WHERE i.appointment_id=p.id) assignments FROM appointments p WHERE id=$1`,[parent.id])).rows[0];
+    const addAssistant=async(parent,staff)=>{const item=(await db.query(`SELECT id,start_at,end_at FROM appointment_items WHERE appointment_id=$1 ORDER BY sequence_no LIMIT 1`,[parent.id])).rows[0];await db.query(`INSERT INTO appointment_item_staff_assignments(shop_id,location_id,appointment_item_id,staff_id,role,start_at,end_at) VALUES($1,$2,$3,$4,'assistant',$5,$6)`,[id.shop,id.location,item.id,staff,item.start_at,item.end_at]);};
+    const times=async parent=>(await db.query(`SELECT p.start_at,p.end_at,(SELECT json_agg(json_build_array(i.start_at,i.end_at) ORDER BY i.sequence_no) FROM appointment_items i WHERE i.appointment_id=p.id) items,(SELECT json_agg(json_build_array(a.start_at,a.end_at) ORDER BY i.sequence_no,a.id) FROM appointment_item_staff_assignments a JOIN appointment_items i ON i.id=a.appointment_item_id WHERE i.appointment_id=p.id) assignments FROM appointments p WHERE id=$1`,[parent.id])).rows[0];
     const auditCount=async parent=>(await db.query(`SELECT count(*)::int n FROM appointment_time_change_history WHERE appointment_id=$1`,[parent.id])).rows[0].n;
     const expectMovedOnce=async(parent,start,itemCount)=>{
       const actual=await times(parent),baseMs=new Date(start).getTime();
@@ -97,7 +100,8 @@ test('real staff move endpoint uses canonical assignments and rolls back safely'
     };
 
     await t.test('single and same-owner multi-item moves pass without double-shifting assignments',async()=>{let p=await create('2036-01-07T10:00:00Z',[id.staffA]);assert.equal((await move(p,tokenA,'2036-01-07T12:00:00Z')).status,200);await expectMovedOnce(p,'2036-01-07T12:00:00Z',1);assert.equal(await auditCount(p),1);p=await create('2036-01-08T10:00:00Z',[id.staffA,id.staffA]);assert.equal((await move(p,tokenA,'2036-01-08T13:00:00Z')).status,200);await expectMovedOnce(p,'2036-01-08T13:00:00Z',2);assert.equal(await auditCount(p),1);});
-    await t.test('both staff fail closed for multi-primary appointment',async()=>{const p=await create('2036-01-09T10:00:00Z',[id.staffA,id.staffB]),before=JSON.stringify(await times(p));assert.equal((await move(p,tokenA,'2036-01-09T14:00:00Z')).status,409);assert.equal((await move(p,tokenB,'2036-01-09T14:00:00Z')).status,404);assert.equal(JSON.stringify(await times(p)),before);assert.equal(await auditCount(p),0);});
+    await t.test('both canonical primary staff fail closed consistently for multi-primary appointment',async()=>{const p=await create('2036-01-09T10:00:00Z',[id.staffA,id.staffB]),before=JSON.stringify(await times(p));assert.equal((await move(p,tokenA,'2036-01-09T14:00:00Z')).status,409);assert.equal((await move(p,tokenB,'2036-01-09T14:00:00Z')).status,409);assert.equal(JSON.stringify(await times(p)),before);assert.equal(await auditCount(p),0);});
+    await t.test('unrelated, assistant-only, and cross-tenant staff remain least-privileged',async()=>{let p=await create('2036-01-13T10:00:00Z',[id.staffA]);let before=JSON.stringify(await times(p));assert.equal((await move(p,tokenC,'2036-01-13T12:00:00Z')).status,404);assert.equal((await move(p,tokenD,'2036-01-13T12:00:00Z')).status,404);assert.equal(JSON.stringify(await times(p)),before);assert.equal(await auditCount(p),0);p=await create('2036-01-14T10:00:00Z',[id.staffA]);await addAssistant(p,id.staffC);before=JSON.stringify(await times(p));assert.equal((await move(p,tokenC,'2036-01-14T12:00:00Z')).status,409);assert.equal(JSON.stringify(await times(p)),before);assert.equal(await auditCount(p),0);});
     await t.test('collision, schedule, and leave failures roll back all rows and audit history',async()=>{await create('2036-01-10T14:00:00Z',[id.staffA]);let p=await create('2036-01-10T10:00:00Z',[id.staffA,id.staffA]),before=JSON.stringify(await times(p));assert.equal((await move(p,tokenA,'2036-01-10T13:00:00Z')).status,409);assert.equal(JSON.stringify(await times(p)),before);assert.equal(await auditCount(p),0);p=await create('2036-01-11T10:00:00Z',[id.staffA]);before=JSON.stringify(await times(p));assert.equal((await move(p,tokenA,'2036-01-11T23:30:00Z')).status,409);assert.equal(JSON.stringify(await times(p)),before);assert.equal(await auditCount(p),0);p=await create('2036-01-12T10:00:00Z',[id.staffA]);before=JSON.stringify(await times(p));await db.query(`INSERT INTO staff_schedule_overrides(shop_id,location_id,staff_id,schedule_date,is_active,approval_status,override_type) VALUES($1,$2,$3,'2036-01-12',true,'approved','leave')`,[id.shop,id.location,id.staffA]);assert.equal((await move(p,tokenA,'2036-01-12T14:00:00Z')).status,409);assert.equal(JSON.stringify(await times(p)),before);assert.equal(await auditCount(p),0);});
     await new Promise((r,j)=>server.close(e=>e?j(e):r())); await testPool.end(); await originalPool.end();
   } finally {if(db)await db.end().catch(()=>{});pg.kill('SIGTERM');await new Promise(r=>pg.once('exit',r));fs.rmSync(temp,{recursive:true,force:true});}

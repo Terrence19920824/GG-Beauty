@@ -72,16 +72,14 @@ BEGIN
   IF EXISTS (
     SELECT 1 FROM (
       SELECT i.*,
-        row_number() OVER(PARTITION BY shop_id,location_id,appointment_id ORDER BY sequence_no,id) expected_sequence,
-        lag(end_at) OVER(PARTITION BY shop_id,location_id,appointment_id ORDER BY sequence_no,id) previous_end_at
+        row_number() OVER(PARTITION BY shop_id,location_id,appointment_id ORDER BY sequence_no,id) expected_sequence
       FROM appointment_items i
     ) ordered
     WHERE sequence_no IS NULL OR sequence_no<1 OR sequence_no<>expected_sequence
-       OR (expected_sequence>1 AND start_at IS DISTINCT FROM previous_end_at)
   ) OR EXISTS (
     SELECT 1 FROM appointment_items
     GROUP BY shop_id,location_id,appointment_id,sequence_no HAVING count(*)>1
-  ) THEN RAISE EXCEPTION 'Item sequence or sequential-time invariant mismatch'; END IF;
+  ) THEN RAISE EXCEPTION 'Item sequence invariant mismatch'; END IF;
   IF EXISTS (
     SELECT 1 FROM appointments p JOIN appointment_items i ON i.shop_id=p.shop_id AND i.location_id=p.location_id AND i.appointment_id=p.id
     JOIN appointment_item_staff_assignments a ON a.shop_id=i.shop_id AND a.location_id=i.location_id AND a.appointment_item_id=i.id AND a.role='primary'

@@ -3528,8 +3528,19 @@ app.patch(
         FROM appointments
         WHERE id = $1
           AND shop_id = $2
-          AND staff_id = $3
           AND location_id = $4
+          AND EXISTS (
+            SELECT 1
+            FROM appointment_items participant_item
+            JOIN appointment_item_staff_assignments participant_assignment
+              ON participant_assignment.shop_id = participant_item.shop_id
+             AND participant_assignment.location_id = participant_item.location_id
+             AND participant_assignment.appointment_item_id = participant_item.id
+            WHERE participant_item.shop_id = appointments.shop_id
+              AND participant_item.location_id = appointments.location_id
+              AND participant_item.appointment_id = appointments.id
+              AND participant_assignment.staff_id = $3
+          )
         FOR UPDATE
         `,
         [
