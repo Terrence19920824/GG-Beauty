@@ -49,7 +49,7 @@ const makeFixture = (failOnSql, candidateRows) => {
         { time: '10:30', start_at: '2030-01-07T02:30:00.000000Z' }
       ] };
       if (/SELECT id FROM customers/.test(sql)) return { rows: [{ id: ID.customer }] };
-      if (/INSERT INTO appointments/.test(sql)) return { rows: [{ id: ID.appointment, shop_id: ID.shop, location_id: ID.location, customer_id: ID.customer, service_id: params[3], staff_id: params[4], appointment_no: 'GG-MULTI', start_at: params[5], end_at: params[6], status: 'pending', created_at: '2030-01-01T00:00:00.000Z' }] };
+      if (/INSERT INTO appointments/.test(sql)) return { rows: [{ id: ID.appointment, shop_id: ID.shop, location_id: ID.location, customer_id: ID.customer, service_id: params[6], staff_id: params[7], appointment_no: 'GG-MULTI', start_at: params[8], end_at: params[9], status: 'pending', created_at: '2030-01-01T00:00:00.000Z' }] };
       if (/INSERT INTO appointment_items/.test(sql)) return { rows: [{ id: `77777777-7777-4777-8777-${String(++itemIndex).padStart(12, '0')}` }] };
       if (/INSERT INTO appointment_item_staff_assignments/.test(sql)) return { rows: [{ id: `88888888-8888-4888-8888-${String(itemIndex).padStart(12, '0')}` }] };
       throw new Error(`Unexpected SQL: ${normalized}`);
@@ -72,7 +72,7 @@ test('multi-service request writes parent, sequential items and primary assignme
     [ID.staffB, '2030-01-07T03:00:00.000Z', '2030-01-07T06:00:00.000Z']
   ]);
   const parent = fixture.state.queries.find(query => /^INSERT INTO appointments/.test(query.sql));
-  assert.deepEqual(parent.params.slice(3, 7), [ID.serviceA, ID.staffA, '2030-01-07T02:00:00.000Z', '2030-01-07T06:00:00.000Z']);
+  assert.deepEqual(parent.params.slice(6, 10), [ID.serviceA, ID.staffA, '2030-01-07T02:00:00.000Z', '2030-01-07T06:00:00.000Z']);
   const items = fixture.state.queries.filter(query => /^INSERT INTO appointment_items/.test(query.sql));
   assert.deepEqual(items.map(query => [query.params[4], query.params[5], query.params[7], query.params[8], query.params[9], query.params[10]]), [
     [1, 'Basic Facial', 60, '88', '2030-01-07T02:00:00.000Z', '2030-01-07T03:00:00.000Z'],

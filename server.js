@@ -42,6 +42,10 @@ const { createOwnerServiceCategoryManagement } = require('./lib/owner-service-ca
 const {
   normalizeLocale
 } = require('./public/service-locale');
+const {
+  CustomerIdentityError,
+  resolveOrCreateCustomer
+} = require('./lib/customer-identity');
 
 const app = express();
 
@@ -1892,18 +1896,32 @@ const createMultiServiceBooking = async (req) => {
       date: businessDate, timeline, validator: req.app.locals.bookingValidator });
     if (!planned) throw new StaffBookabilityError('NO_AVAILABLE_STAFF');
 
-    let customerResult = await client.query('SELECT id FROM customers WHERE shop_id=$1 AND phone=$2 LIMIT 1', [scope.shop_id, body.phone]);
-    if (!customerResult.rows.length) customerResult = await client.query(
-      'INSERT INTO customers (shop_id,name,phone,email) VALUES ($1,$2,$3,$4) RETURNING id',
-      [scope.shop_id, body.customerName, body.phone, body.email || null]
-    );
+    let customer;
+    try {
+      customer = await resolveOrCreateCustomer(client, {
+        shopId: scope.shop_id,
+        name: body.customerName,
+        phone: body.phone,
+        email: body.email
+      });
+    } catch (error) {
+      if (error instanceof CustomerIdentityError) {
+        throw new AppointmentMutationError(error.code, 409, '顾客联系方式无法唯一识别');
+      }
+      throw error;
+    }
     const first = planned[0], last = planned[planned.length - 1];
     const appointmentResult = await client.query(
-      `INSERT INTO appointments (shop_id,location_id,customer_id,service_id,staff_id,start_at,end_at,status,booking_source)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,'pending','online')
+      `INSERT INTO appointments (
+         shop_id,location_id,customer_id,booker_customer_id,recipient_customer_id,
+         booker_name_snapshot,booker_phone_snapshot,booker_email_snapshot,
+         recipient_name_snapshot,recipient_phone_snapshot,recipient_email_snapshot,
+         service_id,staff_id,start_at,end_at,status,booking_source
+       )
+       VALUES ($1,$2,$3,$3,$3,$4,$5,$6,$4,$5,$6,$7,$8,$9,$10,'pending','online')
        RETURNING id,shop_id,location_id,customer_id,service_id,staff_id,appointment_no,start_at,end_at,status,created_at`,
-      [scope.shop_id, scope.location_id, customerResult.rows[0].id, first.serviceId,
-       first.staffId, first.startAt, last.endAt]
+      [scope.shop_id, scope.location_id, customer.customerId, body.customerName.trim(),
+       customer.phone, body.email || null, first.serviceId, first.staffId, first.startAt, last.endAt]
     );
     if (appointmentResult.rows.length !== 1) throw new AppointmentMutationError('appointment_insert_mismatch', 500, '预约创建失败');
     await createMultiServiceRows(client, { appointment: appointmentResult.rows[0], items: planned, serviceLocale: locale });
@@ -2214,43 +2232,21 @@ app.post('/api/new-db', async (req, res) => {
         }
 
         // 6. Validator passed before any customer or appointment write.
-        let customerResult = await client.query(
-          `
-          SELECT id
-          FROM customers
-          WHERE shop_id = $1
-            AND phone = $2
-          LIMIT 1
-          `,
-          [shopId, phone]
-        );
-
-        let customerId;
-
-        if (customerResult.rows.length > 0) {
-          customerId = customerResult.rows[0].id;
-        } else {
-          customerResult = await client.query(
-            `
-            INSERT INTO customers (
-              shop_id,
-              name,
-              phone,
-              email
-            )
-            VALUES ($1, $2, $3, $4)
-            RETURNING id
-            `,
-            [
-              shopId,
-              customerName,
-              phone,
-              email || null
-            ]
-          );
-
-          customerId = customerResult.rows[0].id;
+        let customer;
+        try {
+          customer = await resolveOrCreateCustomer(client, {
+            shopId,
+            name: customerName,
+            phone,
+            email
+          });
+        } catch (error) {
+          if (error instanceof CustomerIdentityError) {
+            throw new AppointmentMutationError(error.code, 409, '顾客联系方式无法唯一识别');
+          }
+          throw error;
         }
+        const customerId = customer.customerId;
 
         // 7. 原子创建 parent + item + primary assignment. The parent DB
         // exclusion constraint remains the final concurrency guard.
@@ -2260,6 +2256,14 @@ app.post('/api/new-db', async (req, res) => {
             shop_id,
             location_id,
             customer_id,
+            booker_customer_id,
+            recipient_customer_id,
+            booker_name_snapshot,
+            booker_phone_snapshot,
+            booker_email_snapshot,
+            recipient_name_snapshot,
+            recipient_phone_snapshot,
+            recipient_email_snapshot,
             service_id,
             staff_id,
             start_at,
@@ -2268,7 +2272,7 @@ app.post('/api/new-db', async (req, res) => {
             booking_source
           )
           VALUES (
-            $1, $2, $3, $4, $5, $6, $7,
+            $1, $2, $3, $3, $3, $4, $5, $6, $4, $5, $6, $7, $8, $9, $10,
             'pending',
             'online'
           )
@@ -2289,6 +2293,9 @@ app.post('/api/new-db', async (req, res) => {
             shopId,
             locationId,
             customerId,
+            customerName.trim(),
+            customer.phone,
+            email || null,
             selectedService.id,
             staffId,
             startAt,
