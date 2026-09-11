@@ -44,7 +44,7 @@ const {
 } = require('./public/service-locale');
 const {
   CustomerIdentityError,
-  resolveOrCreateCustomer
+  resolveBookingParties
 } = require('./lib/customer-identity');
 
 const app = express();
@@ -1896,14 +1896,9 @@ const createMultiServiceBooking = async (req) => {
       date: businessDate, timeline, validator: req.app.locals.bookingValidator });
     if (!planned) throw new StaffBookabilityError('NO_AVAILABLE_STAFF');
 
-    let customer;
+    let parties;
     try {
-      customer = await resolveOrCreateCustomer(client, {
-        shopId: scope.shop_id,
-        name: body.customerName,
-        phone: body.phone,
-        email: body.email
-      });
+      parties = await resolveBookingParties(client, { shopId: scope.shop_id, body });
     } catch (error) {
       if (error instanceof CustomerIdentityError) {
         throw new AppointmentMutationError(error.code, 409, '顾客联系方式无法唯一识别');
@@ -1918,10 +1913,12 @@ const createMultiServiceBooking = async (req) => {
          recipient_name_snapshot,recipient_phone_snapshot,recipient_email_snapshot,
          service_id,staff_id,start_at,end_at,status,booking_source
        )
-       VALUES ($1,$2,$3,$3,$3,$4,$5,$6,$4,$5,$6,$7,$8,$9,$10,'pending','online')
+       VALUES ($1,$2,$3,$4,$3,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'pending','online')
        RETURNING id,shop_id,location_id,customer_id,service_id,staff_id,appointment_no,start_at,end_at,status,created_at`,
-      [scope.shop_id, scope.location_id, customer.customerId, body.customerName.trim(),
-       customer.phone, body.email || null, first.serviceId, first.staffId, first.startAt, last.endAt]
+      [scope.shop_id, scope.location_id, parties.recipient.customerId, parties.booker.customerId,
+       parties.bookerDraft.name, parties.booker.phone, parties.bookerDraft.email,
+       parties.recipientDraft.name, parties.recipient.phone, parties.recipientDraft.email,
+       first.serviceId, first.staffId, first.startAt, last.endAt]
     );
     if (appointmentResult.rows.length !== 1) throw new AppointmentMutationError('appointment_insert_mismatch', 500, '预约创建失败');
     await createMultiServiceRows(client, { appointment: appointmentResult.rows[0], items: planned, serviceLocale: locale });
@@ -1938,6 +1935,12 @@ app.post('/api/new-db', async (req, res) => {
       error: 'Booking temporarily unavailable',
       code: 'BOOKING_MAINTENANCE'
     });
+  }
+
+  if (['customerId', 'customer_id', 'bookerCustomerId', 'booker_customer_id',
+    'recipientCustomerId', 'recipient_customer_id'].some(key => req.body?.[key] !== undefined ||
+      req.body?.recipient?.[key] !== undefined || req.body?.booker?.[key] !== undefined)) {
+    return res.status(400).json({ success: false, message: 'Invalid customer identity' });
   }
 
   const canonicalItemsRequest = Array.isArray(req.body.items) ||
@@ -2232,22 +2235,15 @@ app.post('/api/new-db', async (req, res) => {
         }
 
         // 6. Validator passed before any customer or appointment write.
-        let customer;
+        let parties;
         try {
-          customer = await resolveOrCreateCustomer(client, {
-            shopId,
-            name: customerName,
-            phone,
-            email
-          });
+          parties = await resolveBookingParties(client, { shopId, body: req.body });
         } catch (error) {
           if (error instanceof CustomerIdentityError) {
             throw new AppointmentMutationError(error.code, 409, '顾客联系方式无法唯一识别');
           }
           throw error;
         }
-        const customerId = customer.customerId;
-
         // 7. 原子创建 parent + item + primary assignment. The parent DB
         // exclusion constraint remains the final concurrency guard.
         const appointmentResult = await client.query(
@@ -2272,7 +2268,7 @@ app.post('/api/new-db', async (req, res) => {
             booking_source
           )
           VALUES (
-            $1, $2, $3, $3, $3, $4, $5, $6, $4, $5, $6, $7, $8, $9, $10,
+            $1, $2, $3, $4, $3, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
             'pending',
             'online'
           )
@@ -2292,10 +2288,14 @@ app.post('/api/new-db', async (req, res) => {
           [
             shopId,
             locationId,
-            customerId,
-            customerName.trim(),
-            customer.phone,
-            email || null,
+            parties.recipient.customerId,
+            parties.booker.customerId,
+            parties.bookerDraft.name,
+            parties.booker.phone,
+            parties.bookerDraft.email,
+            parties.recipientDraft.name,
+            parties.recipient.phone,
+            parties.recipientDraft.email,
             selectedService.id,
             staffId,
             startAt,

@@ -165,6 +165,12 @@
     .cart-item h3 { margin: 0 0 6px; }
     .cart-meta, .cart-total { color: #555; line-height: 1.6; }
     .remove-item { background: #eee; color: #222; margin-top: 8px; padding: 9px; }
+    .recipient-options { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
+    .recipient-option { margin: 0; padding: 13px 10px; background: #fff; color: #222; border: 1px solid #ddd; font-size: 14px; }
+    .recipient-option.selected { background: #111; color: #fff; border-color: #111; }
+    .phone-row { display: grid; grid-template-columns: 145px 1fr; gap: 8px; }
+    .language-switch { display: inline-flex; padding: 3px; border: 1px solid #ddd; border-radius: 999px; background: #fff; }
+    .language-switch button { width: auto; margin: 0; padding: 7px 12px; border-radius: 999px; font-size: 13px; }
   </style>
 </head>
 
@@ -175,7 +181,7 @@
   <div class="header">
     <h1>GG-Beauty</h1>
     <p data-i18n="onlineAppointment">在线预约</p>
-    <div><button id="languageZh" type="button">中文</button> <button id="languageEn" type="button">EN</button></div>
+    <div class="language-switch"><button id="languageZh" type="button">中文</button><button id="languageEn" type="button">EN</button></div>
   </div>
 
   <div id="categoryStep" class="card" hidden>
@@ -193,6 +199,25 @@
     <button id="addServiceBtn" type="button" data-i18n="addSelectedService">添加该项目</button>
     <div id="cartPanel" hidden>
       <label data-i18n="selectedServices">已选项目</label>
+      <div id="recipientChoice">
+        <label data-i18n="bookingRecipient">预约给谁？</label>
+        <div class="recipient-options">
+          <button id="bookForMyself" class="recipient-option selected" type="button" data-i18n="bookForMyself">为自己预约</button>
+          <button id="bookForSomeoneElse" class="recipient-option" type="button" data-i18n="bookForSomeoneElse">为别人预约</button>
+        </div>
+      </div>
+      <div id="recipientFields" hidden>
+        <label data-i18n="recipientDetails">服务接收人资料</label>
+        <label data-i18n="recipientName">服务接收人姓名</label>
+        <input id="recipientName" type="text" data-i18n-placeholder="enterRecipientName" placeholder="请输入服务接收人姓名">
+        <label data-i18n="countryRegion">国家 / 地区</label>
+        <div class="phone-row">
+          <select id="recipientCountryCode" aria-label="Recipient country or region"></select>
+          <input id="recipientPhone" type="tel" data-i18n-placeholder="enterPhone" placeholder="请输入手机号码">
+        </div>
+        <label data-i18n="recipientEmail">服务接收人 Email（选填）</label>
+        <input id="recipientEmail" type="email" placeholder="example@email.com">
+      </div>
       <div id="cartItems"></div>
       <div id="cartTotals" class="cart-total"></div>
       <button id="addAnotherBtn" type="button" data-i18n="addAnotherService">＋ 继续添加项目</button>
@@ -214,6 +239,7 @@
 
   <div id="contactStep" class="card" hidden>
 
+    <label data-i18n="yourDetails">您的联系方式</label>
     <label data-i18n="name">姓名</label>
     <input
       type="text"
@@ -222,13 +248,11 @@
       data-i18n-placeholder="enterName"
     >
 
-    <label data-i18n="customerPhone">手机号码</label>
-    <input
-      type="tel"
-      id="phone"
-      placeholder="请输入手机号码"
-      data-i18n-placeholder="enterPhone"
-    >
+    <label data-i18n="countryRegion">国家 / 地区</label>
+    <div class="phone-row">
+      <select id="bookerCountryCode" aria-label="Country or region"></select>
+      <input type="tel" id="phone" placeholder="请输入手机号码" data-i18n-placeholder="enterPhone">
+    </div>
 
     <label data-i18n="optionalEmail">Email（选填）</label>
     <input
@@ -264,6 +288,7 @@ let availableServices = [];
 let customerShopSlug = '';
 let selectedCategoryId = '';
 let cart = globalThis.ggCustomerMultiServiceCart.create();
+let bookingFor = 'myself';
 const staffByItem = new Map();
 const NO_PREFERENCE_VALUE = '__no_preference__';
 const localeApi = globalThis.ggI18n;
@@ -271,6 +296,29 @@ const shopContextApi = globalThis.ggCustomerShopContext;
 const categoryFlowApi = globalThis.ggCustomerCategoryFlow;
 const cartApi = globalThis.ggCustomerMultiServiceCart;
 const customerT = key => localeApi.t(key, currentLocale);
+const COUNTRY_CODES = [
+  ['+65', 'countrySingapore'], ['+60', 'countryMalaysia'], ['+62', 'countryIndonesia'],
+  ['+86', 'countryChina'], ['+1', 'countryUnitedStates']
+];
+
+function renderCountryOptions(select) {
+  const selected = select.value || '+65';
+  select.innerHTML = COUNTRY_CODES.map(([code, countryKey]) => `<option value="${code}">${code} ${customerT(countryKey)}</option>`).join('');
+  select.value = selected;
+}
+
+function explicitContactPhone(countryCode, value) {
+  const phone = typeof value === 'string' ? value.trim() : '';
+  if (!phone) return '';
+  if (phone.startsWith('+') || phone.startsWith('00')) return phone;
+  return `${countryCode}${phone}`;
+}
+
+function renderRecipientChoice() {
+  bookForMyself.classList.toggle('selected', bookingFor === 'myself');
+  bookForSomeoneElse.classList.toggle('selected', bookingFor === 'someone_else');
+  recipientFields.hidden = bookingFor !== 'someone_else';
+}
 
 function initialLocale() {
   return localeApi.getStoredLocale(localStorage, navigator);
@@ -421,6 +469,9 @@ async function setLocale(locale) {
   document.querySelectorAll('[data-i18n-placeholder]').forEach(element => { element.placeholder = customerT(element.dataset.i18nPlaceholder); });
   document.getElementById('languageZh').disabled = currentLocale === 'zh-CN';
   document.getElementById('languageEn').disabled = currentLocale === 'en';
+  renderCountryOptions(bookerCountryCode);
+  renderCountryOptions(recipientCountryCode);
+  renderRecipientChoice();
   dateInput.lang = currentLocale;
   renderSelectedDate();
   renderLocaleDependentBookingState();
@@ -451,6 +502,13 @@ const messageBox =
   document.getElementById('message');
 
 const confirmationSummary = document.getElementById('confirmationSummary');
+const bookForMyself = document.getElementById('bookForMyself');
+const bookForSomeoneElse = document.getElementById('bookForSomeoneElse');
+const recipientFields = document.getElementById('recipientFields');
+const bookerCountryCode = document.getElementById('bookerCountryCode');
+const recipientCountryCode = document.getElementById('recipientCountryCode');
+renderCountryOptions(bookerCountryCode);
+renderCountryOptions(recipientCountryCode);
 
 
 // 不允许选择过去日期
@@ -480,6 +538,8 @@ serviceInput.addEventListener(
 
 document.getElementById('addServiceBtn').addEventListener('click',async()=>{const service=selectedService();if(!service)return;cart=cartApi.add(cart,service);clearStaleTime();await renderCart();});
 document.getElementById('addAnotherBtn').addEventListener('click',()=>{selectedCategoryId='';categoryStep.hidden=false;categoryStep.scrollIntoView({behavior:'smooth'});});
+bookForMyself.addEventListener('click', () => { bookingFor = 'myself'; renderRecipientChoice(); });
+bookForSomeoneElse.addEventListener('click', () => { bookingFor = 'someone_else'; renderRecipientChoice(); });
 
 
 // 获取数据库可预约时间
@@ -603,11 +663,12 @@ document
           .value
           .trim();
 
-      const phone =
+      const phone = explicitContactPhone(
+        bookerCountryCode.value,
         document
           .getElementById('phone')
           .value
-          .trim();
+      );
 
       const email =
         document
@@ -618,10 +679,17 @@ document
       const date =
         dateInput.value;
 
+      const recipient = bookingFor === 'someone_else' ? {
+        name: document.getElementById('recipientName').value.trim(),
+        phone: explicitContactPhone(recipientCountryCode.value, document.getElementById('recipientPhone').value),
+        email: document.getElementById('recipientEmail').value.trim()
+      } : null;
+
       if (
         !cart.length ||
         !customerName ||
         !phone ||
+        (bookingFor === 'someone_else' && (!recipient.name || !recipient.phone)) ||
         !date ||
         !selectedSlot
       ) {
@@ -665,6 +733,8 @@ document
                 customerName,
                 phone,
                 email,
+                bookingFor,
+                ...(recipient ? { recipient } : {}),
                 date,
                 startAt: selectedSlot.startAt
               })

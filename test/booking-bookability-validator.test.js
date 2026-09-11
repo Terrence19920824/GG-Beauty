@@ -244,8 +244,8 @@ test('valid booking atomically writes customer, parent, item, assignment', async
   const parentWrite = fixture.state.queries.find(
     ({ sql }) => /^INSERT INTO appointments/i.test(sql)
   );
-  assert.equal(parentWrite.params[8], '2030-01-07T02:00:00.000000Z');
-  assert.equal(parentWrite.params[9], '2030-01-07T03:00:00.000000Z');
+  assert.equal(parentWrite.params[12], '2030-01-07T02:00:00.000000Z');
+  assert.equal(parentWrite.params[13], '2030-01-07T03:00:00.000000Z');
   const itemWrite = fixture.state.queries.find(
     ({ sql }) => /^INSERT INTO appointment_items/i.test(sql)
   );
@@ -298,7 +298,7 @@ test('no preference revalidates ordered candidates inside transaction and assign
   });
   assert.deepEqual(seen, [ID.staff, ID.staff2]);
   const parentWrite = fixture.state.queries.find(({ sql }) => /^INSERT INTO appointments/i.test(sql));
-  assert.equal(parentWrite.params[7], ID.staff2);
+  assert.equal(parentWrite.params[11], ID.staff2);
   assert.equal(fixture.state.queries.at(-1).sql, 'COMMIT');
 });
 

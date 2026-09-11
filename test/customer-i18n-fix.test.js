@@ -18,10 +18,10 @@ const createCustomerContext = () => {
   const elements = new Map();
   const makeElement = () => ({
     value: '', innerHTML: '', textContent: '', disabled: false, lang: '',
-    options: [], dataset: {}, classList: { add() {}, remove() {} },
+    options: [], dataset: {}, hidden: false, classList: { add() {}, remove() {}, toggle() {} },
     addEventListener() {}, appendChild(child) { this.options.push(child); }
   });
-  for (const id of ['date', 'dateDisplay', 'service', 'times', 'message', 'languageZh', 'languageEn', 'submitBtn', 'customerName', 'phone', 'email', 'categoryStep', 'categoryGrid', 'bookingStep', 'contactStep', 'cartPanel', 'cartItems', 'cartTotals', 'confirmationSummary', 'addServiceBtn', 'addAnotherBtn']) {
+  for (const id of ['date', 'dateDisplay', 'service', 'times', 'message', 'languageZh', 'languageEn', 'submitBtn', 'customerName', 'phone', 'email', 'categoryStep', 'categoryGrid', 'bookingStep', 'contactStep', 'cartPanel', 'cartItems', 'cartTotals', 'confirmationSummary', 'addServiceBtn', 'addAnotherBtn', 'bookForMyself', 'bookForSomeoneElse', 'recipientFields', 'recipientName', 'recipientPhone', 'recipientEmail', 'bookerCountryCode', 'recipientCountryCode']) {
     elements.set(id, makeElement());
   }
   const fetchUrls = [];
@@ -69,7 +69,7 @@ test('customer empty-time message comes from the bilingual shared dictionary', (
 });
 
 test('customer date presentation preserves canonical ISO booking value', () => {
-  assert.match(customerHtml, /email,\s*date,\s*startAt: selectedSlot\.startAt/);
+  assert.match(customerHtml, /email,\s*bookingFor,[\s\S]*date,\s*startAt: selectedSlot\.startAt/);
   assert.doesNotMatch(customerHtml, /date:\s*localeApi\.formatDate/);
 });
 
@@ -132,4 +132,57 @@ test('choose-date locale rerender preserves cart and per-item staff identity', a
       staffId: 'staff-stable'
     }
   );
+});
+
+test('recipient choice and draft survive locale switching without an availability refetch', async () => {
+  const page = createCustomerContext();
+  vm.runInContext(`
+    bookingFor = 'someone_else';
+    document.getElementById('recipientName').value = 'Recipient B';
+    document.getElementById('recipientPhone').value = '9123 4567';
+    document.getElementById('recipientEmail').value = 'b@example.invalid';
+    recipientCountryCode.value = '+65';
+    dateInput.value = '2030-01-07';
+    selectedSlot = { time: '10:00', startAt: '2030-01-07T02:00:00Z' };
+    cart = [{ clientItemKey: 'stable', categoryId: 'beauty', serviceId: 'facial', staffSelectionType: 'specific', staffId: 'staff-a' }];
+  `, page.context);
+  await vm.runInContext("setLocale('en')", page.context);
+  await vm.runInContext("setLocale('zh-CN')", page.context);
+  assert.deepEqual(JSON.parse(vm.runInContext(`JSON.stringify({
+    bookingFor, name: document.getElementById('recipientName').value, phone: document.getElementById('recipientPhone').value,
+    email: document.getElementById('recipientEmail').value, country: recipientCountryCode.value,
+    date: dateInput.value, slot: selectedSlot, cart: cart[0]
+  })`, page.context)), {
+    bookingFor: 'someone_else', name: 'Recipient B', phone: '9123 4567',
+    email: 'b@example.invalid', country: '+65', date: '2030-01-07',
+    slot: { time: '10:00', startAt: '2030-01-07T02:00:00Z' },
+    cart: { clientItemKey: 'stable', categoryId: 'beauty', serviceId: 'facial', staffSelectionType: 'specific', staffId: 'staff-a' }
+  });
+  assert.equal(page.fetchUrls.some(url => url.includes('available-times')), false);
+});
+
+test('recipient fields toggle without clearing their draft and Singapore is the default', () => {
+  const page = createCustomerContext();
+  vm.runInContext(`
+    document.getElementById('recipientName').value = 'Recipient B';
+    bookingFor = 'someone_else'; renderRecipientChoice();
+  `, page.context);
+  assert.equal(page.elements.get('recipientFields').hidden, false);
+  vm.runInContext(`bookingFor = 'myself'; renderRecipientChoice();`, page.context);
+  assert.equal(page.elements.get('recipientFields').hidden, true);
+  vm.runInContext(`bookingFor = 'someone_else'; renderRecipientChoice();`, page.context);
+  assert.equal(page.elements.get('recipientName').value, 'Recipient B');
+  assert.equal(page.elements.get('bookerCountryCode').value, '+65');
+  assert.equal(page.elements.get('recipientCountryCode').value, '+65');
+});
+
+test('recipient UI is bilingual, has explicit country selection, and sends no customer id', () => {
+  for (const key of ['bookingRecipient', 'bookForMyself', 'bookForSomeoneElse', 'recipientDetails', 'recipientName', 'countryRegion', 'recipientPhone', 'recipientEmail']) {
+    assert.notEqual(i18n.t(key, 'zh-CN'), key);
+    assert.notEqual(i18n.t(key, 'en'), key);
+  }
+  assert.match(customerHtml, /\['\+65', 'countrySingapore'\]/);
+  assert.match(customerHtml, /\['\+60', 'countryMalaysia'\]/);
+  assert.match(customerHtml, /bookingFor,\s*\.\.\.\(recipient \? \{ recipient \}/);
+  assert.doesNotMatch(customerHtml, /customerId\s*:/);
 });

@@ -9,7 +9,8 @@ const ID = {
   shop: '11111111-1111-4111-8111-111111111111', location: '22222222-2222-4222-8222-222222222222',
   serviceA: '33333333-3333-4333-8333-111111111111', serviceB: '33333333-3333-4333-8333-222222222222',
   staffA: '44444444-4444-4444-8444-111111111111', staffB: '44444444-4444-4444-8444-222222222222',
-  customer: '55555555-5555-4555-8555-555555555555', appointment: '66666666-6666-4666-8666-666666666666'
+  customer: '55555555-5555-4555-8555-555555555555', recipient: '55555555-5555-4555-8555-666666666666',
+  appointment: '66666666-6666-4666-8666-666666666666'
 };
 
 const requestBody = {
@@ -28,7 +29,7 @@ const withServer = async operation => {
   finally { await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve())); }
 };
 
-const makeFixture = (failOnSql, candidateRows) => {
+const makeFixture = (failOnSql, candidateRows, customerRows) => {
   let itemIndex = 0;
   const state = { queries: [], released: 0 };
   const client = {
@@ -48,8 +49,10 @@ const makeFixture = (failOnSql, candidateRows) => {
         { time: '10:00', start_at: '2030-01-07T02:00:00.000000Z' },
         { time: '10:30', start_at: '2030-01-07T02:30:00.000000Z' }
       ] };
-      if (/SELECT id FROM customers/.test(sql)) return { rows: [{ id: ID.customer }] };
-      if (/INSERT INTO appointments/.test(sql)) return { rows: [{ id: ID.appointment, shop_id: ID.shop, location_id: ID.location, customer_id: ID.customer, service_id: params[6], staff_id: params[7], appointment_no: 'GG-MULTI', start_at: params[8], end_at: params[9], status: 'pending', created_at: '2030-01-01T00:00:00.000Z' }] };
+      if (/SELECT id FROM customers/.test(sql)) return { rows: customerRows
+        ? customerRows(params[1])
+        : [{ id: params[1] === '+6599999999' ? ID.recipient : ID.customer }] };
+      if (/INSERT INTO appointments/.test(sql)) return { rows: [{ id: ID.appointment, shop_id: ID.shop, location_id: ID.location, customer_id: params[2], service_id: params[10], staff_id: params[11], appointment_no: 'GG-MULTI', start_at: params[12], end_at: params[13], status: 'pending', created_at: '2030-01-01T00:00:00.000Z' }] };
       if (/INSERT INTO appointment_items/.test(sql)) return { rows: [{ id: `77777777-7777-4777-8777-${String(++itemIndex).padStart(12, '0')}` }] };
       if (/INSERT INTO appointment_item_staff_assignments/.test(sql)) return { rows: [{ id: `88888888-8888-4888-8888-${String(itemIndex).padStart(12, '0')}` }] };
       throw new Error(`Unexpected SQL: ${normalized}`);
@@ -72,7 +75,7 @@ test('multi-service request writes parent, sequential items and primary assignme
     [ID.staffB, '2030-01-07T03:00:00.000Z', '2030-01-07T06:00:00.000Z']
   ]);
   const parent = fixture.state.queries.find(query => /^INSERT INTO appointments/.test(query.sql));
-  assert.deepEqual(parent.params.slice(6, 10), [ID.serviceA, ID.staffA, '2030-01-07T02:00:00.000Z', '2030-01-07T06:00:00.000Z']);
+  assert.deepEqual(parent.params.slice(10, 14), [ID.serviceA, ID.staffA, '2030-01-07T02:00:00.000Z', '2030-01-07T06:00:00.000Z']);
   const items = fixture.state.queries.filter(query => /^INSERT INTO appointment_items/.test(query.sql));
   assert.deepEqual(items.map(query => [query.params[4], query.params[5], query.params[7], query.params[8], query.params[9], query.params[10]]), [
     [1, 'Basic Facial', 60, '88', '2030-01-07T02:00:00.000Z', '2030-01-07T03:00:00.000Z'],
@@ -80,6 +83,51 @@ test('multi-service request writes parent, sequential items and primary assignme
   ]);
   assert.equal(fixture.state.queries.filter(query => /^INSERT INTO appointment_item_staff_assignments/.test(query.sql)).length, 2);
   assert.equal(fixture.state.queries.at(-1).sql, 'COMMIT');
+});
+
+test('someone-else endpoint writes recipient as customer authority and keeps booker snapshots separate', async () => {
+  delete process.env.BOOKING_WRITE_MAINTENANCE;
+  const fixture = makeFixture(); app.locals.bookingPool = fixture.pool; app.locals.bookingValidator = async () => {};
+  const body = { ...requestBody, bookingFor: 'someone_else',
+    recipient: { name: 'Recipient B', phone: '+65 9999 9999', email: 'b@example.invalid' } };
+  await withServer(async base => assert.equal((await post(base, body)).status, 200));
+  const parent = fixture.state.queries.find(query => /^INSERT INTO appointments/.test(query.sql));
+  assert.deepEqual(parent.params.slice(2, 10), [
+    ID.recipient, ID.customer,
+    'Customer', '00000000', 'customer@example.invalid',
+    'Recipient B', '+65 9999 9999', 'b@example.invalid'
+  ]);
+  assert.equal(fixture.state.queries.filter(query => /^INSERT INTO appointment_items/.test(query.sql)).length, 2);
+});
+
+test('endpoint rejects every client-forged party id before database access', async () => {
+  delete process.env.BOOKING_WRITE_MAINTENANCE;
+  for (const body of [
+    { ...requestBody, customerId: ID.recipient },
+    { ...requestBody, bookingFor: 'someone_else', recipient: { name: 'B', phone: '+6599999999', customerId: ID.recipient } }
+  ]) {
+    let connected = false;
+    app.locals.bookingPool = { connect: async () => { connected = true; throw new Error('must not connect'); } };
+    await withServer(async base => assert.equal((await post(base, body)).status, 400));
+    assert.equal(connected, false);
+  }
+});
+
+test('ambiguous same-shop phone fails closed and rolls back before appointment creation', async () => {
+  delete process.env.BOOKING_WRITE_MAINTENANCE;
+  const fixture = makeFixture(null, null, () => [{ id: ID.customer }, { id: ID.recipient }]);
+  app.locals.bookingPool = fixture.pool; app.locals.bookingValidator = async () => {};
+  await withServer(async base => assert.equal((await post(base)).status, 409));
+  assert.equal(fixture.state.queries.some(query => /^INSERT INTO appointments/.test(query.sql)), false);
+  assert.equal(fixture.state.queries.at(-1).sql, 'ROLLBACK');
+});
+
+test('unsupported existing local phone is handled safely without country guessing', async () => {
+  delete process.env.BOOKING_WRITE_MAINTENANCE;
+  const fixture = makeFixture(); app.locals.bookingPool = fixture.pool; app.locals.bookingValidator = async () => {};
+  await withServer(async base => assert.equal((await post(base, { ...requestBody, phone: '123' })).status, 200));
+  const lookup = fixture.state.queries.find(query => /BTRIM\(phone\)/.test(query.sql));
+  assert.deepEqual(lookup.params, [ID.shop, '123']);
 });
 
 test('same staff endpoint creates exactly two sequential primary assignments', async () => {

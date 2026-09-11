@@ -13,6 +13,7 @@ const PG_BIN = process.env.PG17_BIN || '/opt/homebrew/opt/postgresql@17/bin';
 const migration = name => fs.readFileSync(path.join(ROOT, 'migrations', name), 'utf8');
 const id = {
   shop: '11111111-1111-4111-8111-111111111111', location: '22222222-2222-4222-8222-222222222222',
+  shopB: '11111111-1111-4111-8111-222222222222', customerB: '99999999-9999-4999-8999-999999999999',
   category: '33333333-3333-4333-8333-333333333333',
   serviceA: '44444444-4444-4444-8444-111111111111', serviceB: '44444444-4444-4444-8444-222222222222',
   staffA: '55555555-5555-4555-8555-111111111111', staffB: '55555555-5555-4555-8555-222222222222'
@@ -59,6 +60,8 @@ test('real PostgreSQL customer endpoint creates canonical multi-service and lega
     await db.query(migration('016_assignment_collision_constraint.sql'));
     await db.query(migration('026_multi_service_parent_collision_compatibility.sql'));
     await db.query(`INSERT INTO shops VALUES($1,'tenant-a','active')`, [id.shop]);
+    await db.query(`INSERT INTO shops VALUES($1,'tenant-b','active')`, [id.shopB]);
+    await db.query(`INSERT INTO customers(id,shop_id,name,phone,phone_normalized) VALUES($1,$2,'Foreign customer','+60123456789','+60123456789')`, [id.customerB, id.shopB]);
     await db.query(`INSERT INTO locations(id,shop_id,timezone,is_active) VALUES($1,$2,'Asia/Singapore',true)`, [id.location, id.shop]);
     await db.query(`INSERT INTO service_categories VALUES($1,$2,true)`, [id.category, id.shop]);
     await db.query(`INSERT INTO staff VALUES($1,$3,'Amy',true,true),($2,$3,'Bob',true,true)`, [id.staffA, id.staffB, id.shop]);
@@ -87,6 +90,32 @@ test('real PostgreSQL customer endpoint creates canonical multi-service and lega
       await t.test('no preference endpoint solves scarce-staff fixture as B then A', async () => {
         const response = await post(base, { ...baseBody, phone: 'greedy', startAt: '2030-01-08T02:00:00Z', items: [{ serviceId: id.serviceA, staffSelectionType: 'no_preference' }, { serviceId: id.serviceB, staffSelectionType: 'no_preference' }] });
         assert.equal(response.status, 200); const saved = await inspect((await response.json()).data.id); assert.deepEqual(saved.items.map(item => item.staff), [id.staffB, id.staffA]);
+      });
+      await t.test('someone else uses recipient as customer authority with separate snapshots for all items', async () => {
+        const response = await post(base, { ...baseBody, phone: '+6581111111', email: 'a@example.invalid',
+          bookingFor: 'someone_else', recipient: { name: 'Recipient B', phone: '+6592222222', email: 'b@example.invalid' },
+          startAt: '2030-01-13T02:00:00Z', items: [
+            { serviceId: id.serviceA, staffSelectionType: 'specific', staffId: id.staffA },
+            { serviceId: id.serviceB, staffSelectionType: 'specific', staffId: id.staffA }
+          ] });
+        assert.equal(response.status, 200);
+        const saved = await inspect((await response.json()).data.id);
+        assert.notEqual(saved.booker_customer_id, saved.recipient_customer_id);
+        assert.equal(saved.customer_id, saved.recipient_customer_id);
+        assert.equal(saved.booker_name_snapshot, 'Customer');
+        assert.equal(saved.booker_phone_snapshot, '+6581111111');
+        assert.equal(saved.recipient_name_snapshot, 'Recipient B');
+        assert.equal(saved.recipient_phone_snapshot, '+6592222222');
+        assert.equal(saved.items.length, 2);
+      });
+      await t.test('cross-shop forged booker or recipient identities fail before transaction writes', async () => {
+        for (const forged of [{ bookerCustomerId: id.customerB }, { recipient: { name: 'B', phone: '+6592222222', customerId: id.customerB } }]) {
+          const before = Number((await db.query('SELECT COUNT(*) FROM appointments')).rows[0].count);
+          const response = await post(base, { ...baseBody, ...forged, startAt: '2030-01-14T02:00:00Z',
+            items: [{ serviceId: id.serviceA, staffSelectionType: 'specific', staffId: id.staffA }] });
+          assert.equal(response.status, 400);
+          assert.equal(Number((await db.query('SELECT COUNT(*) FROM appointments')).rows[0].count), before);
+        }
       });
       for (const reverse of [false, true]) await t.test(reverse ? 'no preference then specific' : 'specific then no preference', async () => {
         const specificIndex = reverse ? 1 : 0; const services = reverse ? [id.serviceA, id.serviceB] : [id.serviceA, id.serviceB];

@@ -49,7 +49,7 @@ test('owner services has bilingual system labels while service names remain API 
 test('customer cart uses complete shared i18n without changing service or staff identity', () => {
   assert.match(customerHtml, /src="\/shared-i18n\.js"/);
   assert.match(customerHtml, /globalThis\.ggI18n/);
-  for (const key of ['addSelectedService', 'addAnotherService', 'selectedServices', 'removeService', 'totalDuration', 'estimatedTotal', 'chooseStaffCustomer', 'customerStaffNoPreference']) {
+  for (const key of ['addSelectedService', 'addAnotherService', 'selectedServices', 'removeService', 'totalDuration', 'estimatedTotal', 'chooseStaffCustomer', 'customerStaffNoPreference', 'bookingRecipient', 'bookForMyself', 'bookForSomeoneElse', 'recipientName', 'countryRegion']) {
     assert.notEqual(i18n.t(key, 'zh-CN'), key);
     assert.notEqual(i18n.t(key, 'en'), key);
   }
