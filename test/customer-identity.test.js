@@ -21,9 +21,10 @@ test('phone normalization is deterministic and never guesses a country', () => {
 
 test('booking parties resolve myself and someone else independently inside one trusted shop', async () => {
   const calls = [];
-  const client = { query: async (_sql, params) => {
+  const client = { query: async (sql, params) => {
     calls.push(params);
-    return { rows: [{ id: params[1] === '+6599999999' ? 'recipient-b' : 'booker-a' }] };
+    if (/identity_status/.test(sql)) return { rows: [{ id: 'recipient-b' }] };
+    return { rows: [{ id: 'booker-a' }] };
   } };
   const myself = await resolveBookingParties(client, { shopId: 'shop-a', body: {
     customerName: 'A', phone: '+6581234567', email: 'a@example.invalid'
@@ -38,7 +39,17 @@ test('booking parties resolve myself and someone else independently inside one t
   } });
   assert.equal(someoneElse.booker.customerId, 'booker-a');
   assert.equal(someoneElse.recipient.customerId, 'recipient-b');
+  assert.equal(someoneElse.recipient.verified, false);
   assert.ok(calls.every(params => params[0] === 'shop-a'));
+});
+
+test('unverified someone-else recipient never looks up or claims an existing member phone', async () => {
+  const sql=[];
+  const client={query:async(statement)=>{sql.push(statement);return{rows:[{id:'contact-only'}]};}};
+  const result=await resolveBookingParties(client,{shopId:'shop-a',body:{bookingFor:'someone_else',customerName:'A',phone:'+6581111111',recipient:{name:'B',phone:'+6582222222'}}});
+  assert.equal(result.recipient.customerId,'contact-only');
+  assert.match(sql.at(-1),/phone_normalized,identity_status/);
+  assert.doesNotMatch(sql.at(-1),/SELECT .*phone_normalized/i);
 });
 
 test('booking parties reject forged customer ids and safely retain unsupported local phones without guessing', async () => {
@@ -65,6 +76,7 @@ test('phone lookup is shop scoped and ambiguous matches fail closed', async () =
 });
 
 test('benefit authority is recipient, never booker', () => {
-  assert.equal(recipientCustomerIdForBenefits({ recipient_customer_id: 'recipient', booker_customer_id: 'booker' }), 'recipient');
+  assert.equal(recipientCustomerIdForBenefits({ recipient_customer_id: 'recipient', recipient_identity_status: 'verified_member', booker_customer_id: 'booker' }), 'recipient');
   assert.throws(() => recipientCustomerIdForBenefits({ booker_customer_id: 'booker' }), /RECIPIENT_CUSTOMER_REQUIRED/);
+  assert.throws(() => recipientCustomerIdForBenefits({ recipient_customer_id: 'unverified-contact', recipient_identity_status: 'unverified_contact' }), /VERIFIED_RECIPIENT_REQUIRED/);
 });

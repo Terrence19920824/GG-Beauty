@@ -52,6 +52,7 @@ const makeFixture = (failOnSql, candidateRows, customerRows) => {
       if (/SELECT id FROM customers/.test(sql)) return { rows: customerRows
         ? customerRows(params[1])
         : [{ id: params[1] === '+6599999999' ? ID.recipient : ID.customer }] };
+      if (/INSERT INTO customers/.test(sql)) return { rows: [{ id: ID.recipient }] };
       if (/INSERT INTO appointments/.test(sql)) return { rows: [{ id: ID.appointment, shop_id: ID.shop, location_id: ID.location, customer_id: params[2], service_id: params[10], staff_id: params[11], appointment_no: 'GG-MULTI', start_at: params[12], end_at: params[13], status: 'pending', created_at: '2030-01-01T00:00:00.000Z' }] };
       if (/INSERT INTO appointment_items/.test(sql)) return { rows: [{ id: `77777777-7777-4777-8777-${String(++itemIndex).padStart(12, '0')}` }] };
       if (/INSERT INTO appointment_item_staff_assignments/.test(sql)) return { rows: [{ id: `88888888-8888-4888-8888-${String(itemIndex).padStart(12, '0')}` }] };

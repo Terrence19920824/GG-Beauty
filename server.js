@@ -46,6 +46,11 @@ const {
   CustomerIdentityError,
   resolveBookingParties
 } = require('./lib/customer-identity');
+const {
+  COOKIE: CUSTOMER_SESSION_COOKIE,
+  CustomerMemberError,
+  createCustomerMemberIdentity
+} = require('./lib/customer-member-identity');
 
 const app = express();
 
@@ -64,6 +69,7 @@ const pool = new Pool({
 app.locals.bookingPool = pool;
 app.locals.bookingValidator = validateStaffBookability;
 app.locals.ownerAuthPool = pool;
+app.locals.customerOtpProvider = null;
 
 // ==================================================
 // 中间件
@@ -71,6 +77,65 @@ app.locals.ownerAuthPool = pool;
 
 app.use(express.json());
 app.use(express.static('public'));
+
+const customerMemberIdentity = createCustomerMemberIdentity({
+  pool,
+  getProvider: () => app.locals.customerOtpProvider
+});
+
+const customerCookie = request => {
+  const header=request.headers.cookie||'';
+  for (const part of header.split(';')) {
+    const [name,...rest]=part.trim().split('=');
+    if (name===CUSTOMER_SESSION_COOKIE) {
+      try { return decodeURIComponent(rest.join('=')); } catch (_) { return ''; }
+    }
+  }
+  return '';
+};
+const customerCookieOptions = maxAge => `Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${process.env.NODE_ENV==='production'?'; Secure':''}`;
+const customerIdentityError = (res,error) => {
+  const status=error instanceof CustomerMemberError?error.status:500;
+  const code=error instanceof CustomerMemberError?error.code:'CUSTOMER_IDENTITY_FAILED';
+  return res.status(status).json({success:false,code});
+};
+const rejectCustomerAuthority = body => ['shopId','shop_id','customerId','customer_id'].some(key=>body?.[key]!==undefined);
+
+app.post('/api/customer/auth/otp/request',async(req,res)=>{
+  if(rejectCustomerAuthority(req.body)) return res.status(400).json({success:false,code:'INVALID_IDENTITY_CONTEXT'});
+  try { const data=await customerMemberIdentity.requestOtp({shopSlug:req.body.shopSlug,countryCode:req.body.countryCode,
+    phone:req.body.phone,purpose:'sign_in',ip:req.ip,userAgent:req.headers['user-agent']}); return res.json({success:true,data}); }
+  catch(error){ return customerIdentityError(res,error); }
+});
+app.post('/api/customer/auth/otp/verify',async(req,res)=>{
+  if(rejectCustomerAuthority(req.body)) return res.status(400).json({success:false,code:'INVALID_IDENTITY_CONTEXT'});
+  try { const data=await customerMemberIdentity.verifySignIn({challengeId:req.body.challengeId,code:req.body.code,name:req.body.name,email:req.body.email,
+    dateOfBirth:req.body.dateOfBirth,gender:req.body.gender});
+    res.setHeader('Set-Cookie',`${CUSTOMER_SESSION_COOKIE}=${encodeURIComponent(data.token)}; ${customerCookieOptions(30*24*60*60)}`);
+    return res.json({success:true,data:{customerId:data.customerId}}); }
+  catch(error){ return customerIdentityError(res,error); }
+});
+app.get('/api/customer/me',async(req,res)=>{
+  try { const data=await customerMemberIdentity.authenticate(customerCookie(req)); return res.json({success:true,data}); }
+  catch(error){ return customerIdentityError(res,error); }
+});
+app.post('/api/customer/phone-change/request',async(req,res)=>{
+  if(rejectCustomerAuthority(req.body)) return res.status(400).json({success:false,code:'INVALID_IDENTITY_CONTEXT'});
+  try { const session=await customerMemberIdentity.authenticate(customerCookie(req));
+    const data=await customerMemberIdentity.requestOtp({shopSlug:req.body.shopSlug,countryCode:req.body.countryCode,phone:req.body.phone,
+      purpose:'phone_change',customerId:session.customer_id,ip:req.ip,userAgent:req.headers['user-agent']}); return res.json({success:true,data}); }
+  catch(error){ return customerIdentityError(res,error); }
+});
+app.post('/api/customer/phone-change/confirm',async(req,res)=>{
+  if(rejectCustomerAuthority(req.body)) return res.status(400).json({success:false,code:'INVALID_IDENTITY_CONTEXT'});
+  try { const session=await customerMemberIdentity.authenticate(customerCookie(req));
+    await customerMemberIdentity.confirmPhoneChange({session,challengeId:req.body.challengeId,code:req.body.code}); return res.json({success:true}); }
+  catch(error){ return customerIdentityError(res,error); }
+});
+app.post('/api/customer/logout',async(req,res)=>{
+  const token=customerCookie(req); if(token) await pool.query('UPDATE customer_sessions SET revoked_at=NOW() WHERE token_hash=$1',[require('./lib/customer-member-identity').tokenHash(token)]);
+  res.setHeader('Set-Cookie',`${CUSTOMER_SESSION_COOKIE}=; ${customerCookieOptions(0)}`); return res.json({success:true});
+});
 
 
 // ==================================================
