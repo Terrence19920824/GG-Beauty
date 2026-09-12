@@ -10,6 +10,7 @@ const {createCustomerMemberIdentity,CustomerMemberError,normalizeSelectedPhone}=
 
 const ROOT=path.join(__dirname,'..');
 const PG_BIN=process.env.PG17_BIN||'/opt/homebrew/opt/postgresql@17/bin';
+const OTP_TEST_WINDOW_MS=11*60*1000;
 const migration=name=>fs.readFileSync(path.join(ROOT,'migrations',name),'utf8');
 const chain=[
   '036_customer_member_identity_preflight_readonly.sql','037_customer_member_profile_schema.sql',
@@ -87,6 +88,25 @@ test('PostgreSQL 17 member identity, OTP, tenant, and phone-change foundation', 
       clock=new Date(clock.getTime()+61000);
     }
     await assert.rejects(service.requestOtp({shopSlug:'a',countryCode:'+65',phone:'8777 7777',ip:'127.0.0.5',userAgent:'rate'}),e=>e.code==='OTP_RATE_LIMITED');
+
+    clock=new Date(clock.getTime()+OTP_TEST_WINDOW_MS);
+    const phoneRaceSentBefore=sent.length;
+    const phoneRace=await Promise.allSettled(Array.from({length:6},(_,index)=>service.requestOtp({
+      shopSlug:'a',countryCode:'+65',phone:'8999 9999',ip:`127.0.1.${index}`,userAgent:'phone-race'
+    })));
+    assert.equal(phoneRace.filter(result=>result.status==='fulfilled').length,1);
+    assert.equal(phoneRace.filter(result=>result.status==='rejected' && result.reason.code==='OTP_RESEND_TOO_SOON').length,5);
+    assert.equal(sent.length-phoneRaceSentBefore,1);
+    assert.equal(Number((await db.query(`SELECT COUNT(*) FROM customer_otp_challenges WHERE shop_id=$1 AND phone_normalized='+6589999999'`,[ID.shopA])).rows[0].count),1);
+
+    clock=new Date(clock.getTime()+OTP_TEST_WINDOW_MS);
+    const fingerprintRaceSentBefore=sent.length;
+    const fingerprintRace=await Promise.allSettled(Array.from({length:12},(_,index)=>service.requestOtp({
+      shopSlug:'a',countryCode:'+65',phone:`90${String(index).padStart(2,'0')} 0000`,ip:'127.0.2.1',userAgent:'fingerprint-race'
+    })));
+    assert.equal(fingerprintRace.filter(result=>result.status==='fulfilled').length,10);
+    assert.equal(fingerprintRace.filter(result=>result.status==='rejected' && result.reason.code==='OTP_RATE_LIMITED').length,2);
+    assert.equal(sent.length-fingerprintRaceSentBefore,10);
 
     const change=await service.requestOtp({shopSlug:'a',countryCode:'+60',phone:'1234 5678',purpose:'phone_change',customerId:signedIn.customerId,ip:'127.0.0.2',userAgent:'test'});
     const oldCode=member.member_code;
