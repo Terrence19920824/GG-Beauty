@@ -46,8 +46,8 @@ const makeFixture = (failOnSql, candidateRows, customerRows) => {
         ? candidateRows(params[2])
         : [{ staff_id: params[2] === ID.serviceA ? ID.staffA : ID.staffB, display_name: params[2] === ID.serviceA ? 'Amy' : 'Bob', assigned_appointment_count: 0 }] };
       if (/TO_CHAR\(\(\(\$1::DATE\+candidate\.time::TIME\)/.test(sql)) return { rows: [
-        { time: '10:00', start_at: '2030-01-07T02:00:00.000000Z' },
-        { time: '10:30', start_at: '2030-01-07T02:30:00.000000Z' }
+        { time: '10:00', start_at: `${params[0]}T02:00:00.000000Z` },
+        { time: '10:30', start_at: `${params[0]}T02:30:00.000000Z` }
       ] };
       if (/SELECT id FROM customers/.test(sql)) return { rows: customerRows
         ? customerRows(params[1])
@@ -233,6 +233,58 @@ test('multi-service availability rejects client-supplied shop id before database
       body: JSON.stringify({ shopSlug: 'tenant-a', shopId: ID.shop, date: '2030-01-07', items: requestBody.items })
     });
     assert.equal(response.status, 400);
+  });
+  assert.equal(connected, false);
+});
+
+test('date-range summary evaluates each date with the whole multi-service planner', async () => {
+  const fixture = makeFixture(); app.locals.bookingPool = fixture.pool;
+  app.locals.bookingValidator = async input => {
+    if (input.requestedStartAt.startsWith('2030-01-08')) throw new StaffBookabilityError('STAFF_ON_LEAVE');
+  };
+  await withServer(async base => {
+    const response = await fetch(`${base}/api/booking/multi-service-available-dates`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ shopSlug: 'tenant-a', startDate: '2030-01-07', endDate: '2030-01-09', locale: 'en', items: requestBody.items })
+    });
+    assert.equal(response.status, 200);
+    assert.deepEqual((await response.json()).data, [
+      { date: '2030-01-07', hasAvailability: true, earliestStartAt: '2030-01-07T02:00:00.000Z' },
+      { date: '2030-01-08', hasAvailability: false, earliestStartAt: null },
+      { date: '2030-01-09', hasAvailability: true, earliestStartAt: '2030-01-09T02:00:00.000Z' }
+    ]);
+  });
+  assert.equal(fixture.state.queries.filter(query => /service\.id=ANY/.test(query.sql)).length, 1);
+});
+
+test('date-range No Preference uses bounded whole-cart search and trusted tenant context', async () => {
+  const fixture = makeFixture(null, serviceId => serviceId === ID.serviceA
+    ? [{ staff_id: ID.staffA, display_name: 'Amy' }, { staff_id: ID.staffB, display_name: 'Bob' }]
+    : [{ staff_id: ID.staffA, display_name: 'Amy' }]);
+  app.locals.bookingPool = fixture.pool; app.locals.bookingValidator = async () => {};
+  await withServer(async base => {
+    const response = await fetch(`${base}/api/booking/multi-service-available-dates`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({
+        shopSlug: 'tenant-a', startDate: '2030-01-07', endDate: '2030-01-07',
+        items: requestBody.items.map(item => ({ ...item, staffSelectionType: 'no_preference', staffId: undefined }))
+      })
+    });
+    assert.equal(response.status, 200); assert.equal((await response.json()).data[0].hasAvailability, true);
+  });
+  const scope = fixture.state.queries.find(query => /SELECT shop\.id AS shop_id/.test(query.sql));
+  assert.deepEqual(scope.params, ['tenant-a']);
+});
+
+test('date-range summary rejects tenant and unbounded range injection before DB access', async () => {
+  let connected = false; app.locals.bookingPool = { connect: async () => { connected = true; throw new Error('must not connect'); } };
+  await withServer(async base => {
+    for (const body of [
+      { shopSlug: 'tenant-a', shopId: ID.shop, startDate: '2030-01-01', endDate: '2030-01-02', items: requestBody.items },
+      { shopSlug: 'tenant-a', startDate: '2030-01-01', endDate: '2030-03-01', items: requestBody.items }
+    ]) {
+      const response = await fetch(`${base}/api/booking/multi-service-available-dates`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+      assert.equal(response.status, 400);
+    }
   });
   assert.equal(connected, false);
 });

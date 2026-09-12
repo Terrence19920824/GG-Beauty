@@ -8,6 +8,7 @@ const vm = require('node:vm');
 const i18n = require('../public/shared-i18n');
 const shopContext = require('../public/customer-shop-context');
 const categoryFlow = require('../public/customer-category-flow');
+const bookingCalendar = require('../public/customer-booking-calendar');
 
 const customerHtml = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'index.html'),
@@ -19,9 +20,9 @@ const createCustomerContext = () => {
   const makeElement = () => ({
     value: '', innerHTML: '', textContent: '', disabled: false, lang: '',
     options: [], dataset: {}, hidden: false, classList: { add() {}, remove() {}, toggle() {} },
-    addEventListener() {}, appendChild(child) { this.options.push(child); }
+    addEventListener() {}, setAttribute() {}, appendChild(child) { this.options.push(child); }
   });
-  for (const id of ['date', 'dateDisplay', 'service', 'times', 'message', 'languageZh', 'languageEn', 'submitBtn', 'customerName', 'phone', 'email', 'categoryStep', 'categoryGrid', 'bookingStep', 'contactStep', 'cartPanel', 'cartItems', 'cartTotals', 'confirmationSummary', 'addServiceBtn', 'addAnotherBtn', 'bookForMyself', 'bookForSomeoneElse', 'recipientFields', 'recipientName', 'recipientPhone', 'recipientEmail', 'bookerCountryCode', 'recipientCountryCode']) {
+  for (const id of ['date', 'dateDisplay', 'service', 'times', 'message', 'languageZh', 'languageEn', 'submitBtn', 'customerName', 'phone', 'email', 'categoryStep', 'categoryGrid', 'bookingStep', 'contactStep', 'cartPanel', 'cartItems', 'cartTotals', 'confirmationSummary', 'addServiceBtn', 'addAnotherBtn', 'bookForMyself', 'bookForSomeoneElse', 'recipientFields', 'recipientName', 'recipientPhone', 'recipientEmail', 'bookerCountryCode', 'recipientCountryCode', 'previousMonth', 'nextMonth', 'calendarTitle', 'calendarGrid', 'nextAvailableDates']) {
     elements.set(id, makeElement());
   }
   const fetchUrls = [];
@@ -37,6 +38,7 @@ const createCustomerContext = () => {
       ggCustomerShopContext: shopContext,
       ggCustomerCategoryFlow: categoryFlow,
       ggCustomerMultiServiceCart: require('../public/customer-multi-service-cart'),
+      ggCustomerBookingCalendar: bookingCalendar,
       location: { hostname: 'localhost', pathname: '/', search: '' }
     },
     localStorage: { getItem: () => 'zh-CN', setItem() {} },

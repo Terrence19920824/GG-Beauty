@@ -93,20 +93,17 @@
       background: white;
     }
 
-    .date-picker {
-      position: relative;
-    }
-
-    .date-picker-display {
-      min-height: 49px;
-    }
-
-    .date-picker input[type="date"] {
-      position: absolute;
-      inset: 0;
-      opacity: 0;
-      cursor: pointer;
-    }
+    .date-picker-display { min-height: 24px; color: #555; }
+    .calendar-header { display: grid; grid-template-columns: 42px 1fr 42px; align-items: center; gap: 8px; margin-top: 10px; }
+    .calendar-header button { margin: 0; padding: 9px; background: #eee; color: #222; font-size: 17px; }
+    .calendar-title { text-align: center; font-weight: 700; }
+    .calendar-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; margin-top: 10px; }
+    .calendar-weekday { text-align: center; color: #777; font-size: 12px; padding: 4px 0; }
+    .calendar-day { aspect-ratio: 1; margin: 0; padding: 0; border: 1px solid #ddd; border-radius: 10px; background: #fff; color: #222; font-size: 14px; }
+    .calendar-day:disabled { background: #f1f1f1; color: #aaa; border-color: #eee; opacity: 1; }
+    .calendar-day.selected { background: #111; color: #fff; border-color: #111; }
+    .next-available { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 10px; }
+    .next-available button { width: auto; margin: 0; padding: 8px 11px; background: #eee; color: #222; font-size: 13px; }
 
     button {
       width: 100%;
@@ -224,9 +221,17 @@
     </div>
 
     <label data-i18n="appointmentDate">预约日期</label>
-    <div class="date-picker">
-      <input type="text" id="dateDisplay" class="date-picker-display" readonly aria-hidden="true">
-      <input type="date" id="date" aria-label="预约日期">
+    <input type="hidden" id="date">
+    <div id="dateDisplay" class="date-picker-display"></div>
+    <div id="bookingCalendar">
+      <div class="calendar-header">
+        <button id="previousMonth" type="button" aria-label="Previous month">‹</button>
+        <div id="calendarTitle" class="calendar-title"></div>
+        <button id="nextMonth" type="button" aria-label="Next month">›</button>
+      </div>
+      <div id="calendarGrid" class="calendar-grid"></div>
+      <label data-i18n="nextAvailable">最快可预约</label>
+      <div id="nextAvailableDates" class="next-available"></div>
     </div>
 
     <label data-i18n="availableTimes">可预约时间</label>
@@ -278,6 +283,7 @@
 <script src="/customer-shop-context.js"></script>
 <script src="/customer-category-flow.js"></script>
 <script src="/customer-multi-service-cart.js"></script>
+<script src="/customer-booking-calendar.js"></script>
 <script>
 /* Legacy single-service behavior is preserved server-side. This UI sends the
    canonical multi-item request even when the cart contains one item. */
@@ -289,12 +295,16 @@ let customerShopSlug = '';
 let selectedCategoryId = '';
 let cart = globalThis.ggCustomerMultiServiceCart.create();
 let bookingFor = 'myself';
+let calendarMonth = '';
+let calendarAvailability = new Map();
+let availabilityRequestId = 0;
 const staffByItem = new Map();
 const NO_PREFERENCE_VALUE = '__no_preference__';
 const localeApi = globalThis.ggI18n;
 const shopContextApi = globalThis.ggCustomerShopContext;
 const categoryFlowApi = globalThis.ggCustomerCategoryFlow;
 const cartApi = globalThis.ggCustomerMultiServiceCart;
+const calendarApi = globalThis.ggCustomerBookingCalendar;
 const customerT = key => localeApi.t(key, currentLocale);
 const COUNTRY_CODES = [
   ['+65', 'countrySingapore'], ['+60', 'countryMalaysia'], ['+62', 'countryIndonesia'],
@@ -318,6 +328,72 @@ function renderRecipientChoice() {
   bookForMyself.classList.toggle('selected', bookingFor === 'myself');
   bookForSomeoneElse.classList.toggle('selected', bookingFor === 'someone_else');
   recipientFields.hidden = bookingFor !== 'someone_else';
+}
+
+const singaporeToday = () => new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Asia/Singapore', year: 'numeric', month: '2-digit', day: '2-digit'
+}).format(new Date());
+
+function renderBookingCalendar() {
+  if (!calendarMonth) calendarMonth = singaporeToday().slice(0, 7);
+  const model = calendarApi.monthModel({ monthValue: calendarMonth, locale: currentLocale,
+    availability: calendarAvailability, selectedDate: dateInput.value, today: singaporeToday() });
+  calendarTitle.textContent = model.title;
+  previousMonth.setAttribute('aria-label', customerT('previousMonth'));
+  nextMonth.setAttribute('aria-label', customerT('nextMonth'));
+  calendarGrid.innerHTML = '';
+  for (const weekday of model.weekdays) {
+    const label = document.createElement('div'); label.className = 'calendar-weekday'; label.textContent = weekday; calendarGrid.appendChild(label);
+  }
+  for (const cell of model.cells) {
+    if (!cell) { calendarGrid.appendChild(document.createElement('span')); continue; }
+    const button = document.createElement('button'); button.type = 'button'; button.className = `calendar-day${cell.selected ? ' selected' : ''}`;
+    button.textContent = String(cell.day); button.disabled = cell.past || !cell.available; button.dataset.date = cell.date;
+    button.setAttribute('aria-label', `${localeApi.formatDate(cell.date, currentLocale)} · ${customerT(cell.available ? 'calendarAvailable' : 'calendarUnavailable')}`);
+    button.addEventListener('click', () => selectCalendarDate(cell.date)); calendarGrid.appendChild(button);
+  }
+  const nextDates = model.cells.filter(cell => cell && cell.available && !cell.past).slice(0, 3);
+  nextAvailableDates.innerHTML = '';
+  for (const cell of nextDates) {
+    const button = document.createElement('button'); button.type = 'button';
+    button.textContent = localeApi.formatDate(cell.date, currentLocale); button.addEventListener('click', () => selectCalendarDate(cell.date));
+    nextAvailableDates.appendChild(button);
+  }
+}
+
+async function loadAvailableDates({ changed = false } = {}) {
+  const requestId = ++availabilityRequestId;
+  if (!cart.length) { calendarAvailability = new Map(); renderBookingCalendar(); return; }
+  const range = calendarApi.monthRange(calendarMonth || singaporeToday().slice(0, 7));
+  const response = await fetch('/api/booking/multi-service-available-dates', { method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ shopSlug: customerShopSlug, ...range, locale: currentLocale, items: cartApi.requestItems(cart) }) });
+  const result = await response.json();
+  if (requestId !== availabilityRequestId) return;
+  if (!response.ok || result.success === false) throw new Error(result.message || customerT('availabilityFailed'));
+  calendarAvailability = new Map((result.data || []).map(day => [day.date, day]));
+  const reconciledDate = calendarApi.reconcileSelectedDate({ selectedDate: dateInput.value,
+    monthValue: calendarMonth, availability: calendarAvailability });
+  if (dateInput.value && !reconciledDate) {
+    dateInput.value = reconciledDate; selectedSlot = null; renderSelectedDate();
+    timesBox.innerHTML = `<div>${customerT('chooseDate')}</div>`;
+    if (changed) { messageBox.className = 'message'; messageBox.textContent = customerT('availabilitySelectionCleared'); }
+  }
+  renderBookingCalendar();
+}
+
+async function refreshAvailabilityAfterCartChange() {
+  selectedSlot = null; availabilityIsEmpty = false; confirmationSummary.hidden = true;
+  try {
+    await loadAvailableDates({ changed: true });
+    if (dateInput.value) await loadAvailableTimes();
+  } catch (error) {
+    messageBox.className = 'message error'; messageBox.textContent = error.message;
+  }
+}
+
+async function selectCalendarDate(date) {
+  if (calendarAvailability.get(date)?.hasAvailability !== true) return;
+  dateInput.value = date; selectedSlot = null; renderSelectedDate(); renderBookingCalendar(); await loadAvailableTimes();
 }
 
 function initialLocale() {
@@ -439,10 +515,10 @@ async function renderCart() {
     const select = document.createElement('select');
     select.innerHTML = `<option value="${NO_PREFERENCE_VALUE}">${customerT('customerStaffNoPreference')}</option>` + members.map(member => `<option value="${member.staffId}">${member.displayName}</option>`).join('');
     select.value = item.staffSelectionType === 'specific' ? item.staffId : NO_PREFERENCE_VALUE;
-    select.addEventListener('change', () => { cart = cartApi.updateStaff(cart,item.clientItemKey,select.value===NO_PREFERENCE_VALUE?'no_preference':'specific',select.value); clearStaleTime(); });
+    select.addEventListener('change', async () => { cart = cartApi.updateStaff(cart,item.clientItemKey,select.value===NO_PREFERENCE_VALUE?'no_preference':'specific',select.value); clearStaleTime(); await refreshAvailabilityAfterCartChange(); });
     card.appendChild(select);
     const remove = document.createElement('button'); remove.type='button'; remove.className='remove-item'; remove.textContent=customerT('removeService');
-    remove.addEventListener('click', async()=>{cart=cartApi.remove(cart,item.clientItemKey);staffByItem.delete(item.clientItemKey);clearStaleTime();await renderCart();}); card.appendChild(remove);
+    remove.addEventListener('click', async()=>{cart=cartApi.remove(cart,item.clientItemKey);staffByItem.delete(item.clientItemKey);clearStaleTime();await renderCart();await refreshAvailabilityAfterCartChange();}); card.appendChild(remove);
     cartItems.appendChild(card);
   }
   const total=cartApi.totals(cart,availableServices);
@@ -472,11 +548,10 @@ async function setLocale(locale) {
   renderCountryOptions(bookerCountryCode);
   renderCountryOptions(recipientCountryCode);
   renderRecipientChoice();
-  dateInput.lang = currentLocale;
   renderSelectedDate();
+  renderBookingCalendar();
   renderLocaleDependentBookingState();
   await renderCart();
-  try { await loadCustomerCatalogue(); } catch (error) { messageBox.textContent = error.message; }
   renderLocaleDependentBookingState();
 }
 
@@ -485,6 +560,11 @@ const dateInput =
 
 const dateDisplay =
   document.getElementById('dateDisplay');
+const calendarTitle = document.getElementById('calendarTitle');
+const calendarGrid = document.getElementById('calendarGrid');
+const nextAvailableDates = document.getElementById('nextAvailableDates');
+const previousMonth = document.getElementById('previousMonth');
+const nextMonth = document.getElementById('nextMonth');
 
 const serviceInput =
   document.getElementById('service');
@@ -511,35 +591,21 @@ renderCountryOptions(bookerCountryCode);
 renderCountryOptions(recipientCountryCode);
 
 
-// 不允许选择过去日期
-const today =
-  new Date().toISOString().split('T')[0];
-
-dateInput.min = today;
-
 function renderSelectedDate() {
-  dateDisplay.value = localeApi.formatDate(dateInput.value, currentLocale);
+  dateDisplay.textContent = dateInput.value ? localeApi.formatDate(dateInput.value, currentLocale) : customerT('chooseDate');
 }
-
-
-// 日期 / 员工 / 项目变化时重新读取时间
-dateInput.addEventListener(
-  'change',
-  () => {
-    renderSelectedDate();
-    loadAvailableTimes();
-  }
-);
 
 serviceInput.addEventListener(
   'change',
   clearStaleTime
 );
 
-document.getElementById('addServiceBtn').addEventListener('click',async()=>{const service=selectedService();if(!service)return;cart=cartApi.add(cart,service);clearStaleTime();await renderCart();});
+document.getElementById('addServiceBtn').addEventListener('click',async()=>{const service=selectedService();if(!service)return;cart=cartApi.add(cart,service);clearStaleTime();await renderCart();await refreshAvailabilityAfterCartChange();});
 document.getElementById('addAnotherBtn').addEventListener('click',()=>{selectedCategoryId='';categoryStep.hidden=false;categoryStep.scrollIntoView({behavior:'smooth'});});
 bookForMyself.addEventListener('click', () => { bookingFor = 'myself'; renderRecipientChoice(); });
 bookForSomeoneElse.addEventListener('click', () => { bookingFor = 'someone_else'; renderRecipientChoice(); });
+document.getElementById('previousMonth').addEventListener('click', async () => { calendarMonth = calendarApi.shiftMonth(calendarMonth, -1); await loadAvailableDates(); });
+document.getElementById('nextMonth').addEventListener('click', async () => { calendarMonth = calendarApi.shiftMonth(calendarMonth, 1); await loadAvailableDates(); });
 
 
 // 获取数据库可预约时间
@@ -785,6 +851,8 @@ document.getElementById('languageEn').addEventListener('click', () => setLocale(
   try {
     await loadCustomerShopContext();
     await setLocale(currentLocale);
+    await loadCustomerCatalogue();
+    renderBookingCalendar();
   } catch (error) {
     messageBox.className = 'message error';
     messageBox.textContent = error.message;

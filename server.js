@@ -2651,6 +2651,36 @@ const filterAnyStaffCandidateSlots = async ({
   return availableTimes;
 };
 
+const CUSTOMER_BOOKING_TIMES = [
+  '10:00','10:30','11:00','11:30','12:00','12:30','13:00','13:30',
+  '14:00','14:30','15:00','15:30','16:00','16:30','17:00','17:30',
+  '18:00','18:30','19:00','19:30','20:00','20:30'
+];
+
+const loadMultiServiceAvailableTimes = async ({ client, context, date, validator }) => {
+  const instantResult = await client.query(
+    `SELECT candidate.time,
+       TO_CHAR((($1::DATE+candidate.time::TIME) AT TIME ZONE location.timezone) AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS start_at
+     FROM locations location CROSS JOIN UNNEST($2::TEXT[]) WITH ORDINALITY candidate(time,position)
+     WHERE location.shop_id=$3 AND location.id=$4 AND location.is_active=TRUE ORDER BY candidate.position`,
+    [date, CUSTOMER_BOOKING_TIMES, context.scope.shop_id, context.scope.location_id]
+  );
+  const candidatesByService = new Map();
+  for (const serviceId of [...new Set(context.services.map(item => item.serviceId))]) {
+    candidatesByService.set(serviceId, await loadEligibleBookingStaff(client, {
+      shopId: context.scope.shop_id, locationId: context.scope.location_id, serviceId, date
+    }));
+  }
+  const available = [];
+  for (const candidate of instantResult.rows) {
+    const timeline = buildSequentialTimeline(context.services, candidate.start_at);
+    const plan = await planMultiServiceStaff({ client, scope: context.scope, date,
+      timeline, validator, candidatesByService });
+    if (plan) available.push({ time: candidate.time, startAt: new Date(candidate.start_at).toISOString() });
+  }
+  return available;
+};
+
 app.post('/api/booking/multi-service-available-times', async (req, res) => {
   if (req.body.shopId !== undefined || req.body.shop_id !== undefined) {
     return res.status(400).json({ success: false, message: 'Invalid shop context' });
@@ -2664,28 +2694,8 @@ app.post('/api/booking/multi-service-available-times', async (req, res) => {
     client = await req.app.locals.bookingPool.connect();
     const locale = normalizeLocale(req.body.locale);
     const context = await loadMultiServiceContext(client, { shopSlug: req.body.shopSlug, items, locale });
-    const times = ['10:00','10:30','11:00','11:30','12:00','12:30','13:00','13:30','14:00','14:30','15:00','15:30','16:00','16:30','17:00','17:30','18:00','18:30','19:00','19:30','20:00','20:30'];
-    const instantResult = await client.query(
-      `SELECT candidate.time,
-         TO_CHAR((($1::DATE+candidate.time::TIME) AT TIME ZONE location.timezone) AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS start_at
-       FROM locations location CROSS JOIN UNNEST($2::TEXT[]) WITH ORDINALITY candidate(time,position)
-       WHERE location.shop_id=$3 AND location.id=$4 AND location.is_active=TRUE ORDER BY candidate.position`,
-      [req.body.date, times, context.scope.shop_id, context.scope.location_id]
-    );
-    const available = [];
-    const candidatesByService = new Map();
-    for (const serviceId of [...new Set(context.services.map(item => item.serviceId))]) {
-      candidatesByService.set(serviceId, await loadEligibleBookingStaff(client, {
-        shopId: context.scope.shop_id, locationId: context.scope.location_id,
-        serviceId, date: req.body.date
-      }));
-    }
-    for (const candidate of instantResult.rows) {
-      const timeline = buildSequentialTimeline(context.services, candidate.start_at);
-      const plan = await planMultiServiceStaff({ client, scope: context.scope, date: req.body.date,
-        timeline, validator: req.app.locals.bookingValidator, candidatesByService });
-      if (plan) available.push({ time: candidate.time, startAt: new Date(candidate.start_at).toISOString() });
-    }
+    const available = await loadMultiServiceAvailableTimes({ client, context, date: req.body.date,
+      validator: req.app.locals.bookingValidator });
     return res.json({ success: true, data: available });
   } catch (error) {
     console.error('Multi-service available times error:', safeStaffAuthErrorCode(error));
@@ -2693,6 +2703,47 @@ app.post('/api/booking/multi-service-available-times', async (req, res) => {
       return res.status(error.status || 400).json({ success: false, message: error.publicMessage || '预约选项无效' });
     }
     return res.status(500).json({ success: false, message: '获取可预约时间失败' });
+  } finally {
+    if (client) client.release();
+  }
+});
+
+app.post('/api/booking/multi-service-available-dates', async (req, res) => {
+  if (req.body.shopId !== undefined || req.body.shop_id !== undefined || req.body.locationId !== undefined) {
+    return res.status(400).json({ success: false, message: 'Invalid shop context' });
+  }
+  let client;
+  try {
+    const items = normalizeBookingItems(req.body, isUuid);
+    const { startDate, endDate } = req.body;
+    if (!isValidCalendarDate(startDate) || !isValidCalendarDate(endDate) || typeof req.body.shopSlug !== 'string') {
+      return res.status(400).json({ success: false, message: '预约日期范围无效' });
+    }
+    const start = new Date(`${startDate}T00:00:00.000Z`);
+    const end = new Date(`${endDate}T00:00:00.000Z`);
+    const dayCount = Math.floor((end - start) / 86400000) + 1;
+    if (dayCount < 1 || dayCount > 42) {
+      return res.status(400).json({ success: false, message: '预约日期范围无效' });
+    }
+    client = await req.app.locals.bookingPool.connect();
+    const context = await loadMultiServiceContext(client, {
+      shopSlug: req.body.shopSlug, items, locale: normalizeLocale(req.body.locale)
+    });
+    const data = [];
+    for (let offset = 0; offset < dayCount; offset += 1) {
+      const date = new Date(start.getTime() + offset * 86400000).toISOString().slice(0, 10);
+      const available = await loadMultiServiceAvailableTimes({ client, context, date,
+        validator: req.app.locals.bookingValidator });
+      data.push({ date, hasAvailability: available.length > 0,
+        earliestStartAt: available[0]?.startAt || null });
+    }
+    return res.json({ success: true, data });
+  } catch (error) {
+    console.error('Multi-service available dates error:', safeStaffAuthErrorCode(error));
+    if (error instanceof AppointmentMutationError || error instanceof MultiServicePlanningError) {
+      return res.status(error.status || 400).json({ success: false, message: error.publicMessage || '预约选项无效' });
+    }
+    return res.status(500).json({ success: false, message: '获取可预约日期失败' });
   } finally {
     if (client) client.release();
   }
