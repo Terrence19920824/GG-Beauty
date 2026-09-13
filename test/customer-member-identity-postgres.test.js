@@ -30,10 +30,10 @@ test('PostgreSQL 17 member identity, OTP, tenant, and phone-change foundation', 
   try{
     for(let n=0;n<50;n+=1){try{db=new Client({connectionString:url});await db.connect();break;}catch{if(db)await db.end().catch(()=>{});await new Promise(r=>setTimeout(r,100));}}
     assert.ok(db);
-    await db.query(`CREATE EXTENSION pgcrypto; CREATE TABLE shops(id uuid PRIMARY KEY,slug text UNIQUE NOT NULL,status text NOT NULL);
+    await db.query(`CREATE EXTENSION pgcrypto; CREATE TABLE shops(id uuid PRIMARY KEY,slug text UNIQUE NOT NULL,name text NOT NULL,status text NOT NULL);
       CREATE TABLE customers(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),shop_id uuid NOT NULL,name text NOT NULL,phone text NOT NULL,email text,
       phone_normalized text,UNIQUE(shop_id,id));`);
-    await db.query(`INSERT INTO shops VALUES($1,'a','active'),($2,'b','active')`,[ID.shopA,ID.shopB]);
+    await db.query(`INSERT INTO shops VALUES($1,'a','Shop A','active'),($2,'b','Shop B','active')`,[ID.shopA,ID.shopB]);
     await db.query(`INSERT INTO customers(id,shop_id,name,phone,phone_normalized) VALUES
       ($1,$3,'Legacy A','+6581111111','+6581111111'),($2,$4,'Legacy B','+6581111111','+6581111111')`,
       [ID.customerA,ID.customerB,ID.shopA,ID.shopB]);
@@ -72,8 +72,21 @@ test('PostgreSQL 17 member identity, OTP, tenant, and phone-change foundation', 
     const signedIn=await service.verifySignIn({challengeId:requested.challengeId,code:requestedCode,name:'Verified'});
     const member=(await db.query('SELECT id,member_code,identity_status FROM customers WHERE id=$1',[signedIn.customerId])).rows[0];
     assert.equal(member.identity_status,'verified_member'); assert.match(member.member_code,/^NEW-/);
+    const config=await service.getPublicConfig('a');
+    assert.deepEqual(config,{shopName:'Shop A',defaultPhoneCountryCode:'+65',dobRequirement:'optional'});
     assert.equal((await service.authenticate(signedIn.token)).customer_id,signedIn.customerId);
+    await service.updateProfile({session:{shop_id:ID.shopA,customer_id:signedIn.customerId},name:'Verified Member',email:'member@example.invalid',dateOfBirth:'2001-02-03',gender:'female'});
+    const updatedProfile=await service.authenticate(signedIn.token);
+    assert.equal(updatedProfile.name,'Verified Member');assert.equal(updatedProfile.email,'member@example.invalid');assert.equal(updatedProfile.gender,'female');
     await assert.rejects(service.verifySignIn({challengeId:requested.challengeId,code:requestedCode,name:'Again'}),e=>e.code==='OTP_INVALID');
+
+    clock=new Date(clock.getTime()+61000);
+    const customersBeforeReturn=Number((await db.query('SELECT COUNT(*) FROM customers WHERE shop_id=$1',[ID.shopA])).rows[0].count);
+    const returning=await service.requestOtp({shopSlug:'a',countryCode:'+65',phone:'8444 4444',ip:'127.0.0.8',userAgent:'returning'});
+    const returningSession=await service.verifySignIn({challengeId:returning.challengeId,code:sent.at(-1).code});
+    assert.equal(returningSession.customerId,signedIn.customerId);
+    assert.equal((await service.authenticate(returningSession.token)).member_code,member.member_code);
+    assert.equal(Number((await db.query('SELECT COUNT(*) FROM customers WHERE shop_id=$1',[ID.shopA])).rows[0].count),customersBeforeReturn);
 
     clock=new Date(clock.getTime()+61000);
     const locked=await service.requestOtp({shopSlug:'a',countryCode:'+65',phone:'8666 6666',ip:'127.0.0.4',userAgent:'attempts'});

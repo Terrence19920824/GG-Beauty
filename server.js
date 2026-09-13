@@ -101,6 +101,12 @@ const customerIdentityError = (res,error) => {
 };
 const rejectCustomerAuthority = body => ['shopId','shop_id','customerId','customer_id'].some(key=>body?.[key]!==undefined);
 
+app.get('/api/customer/member/config',async(req,res)=>{
+  if(rejectCustomerAuthority(req.query)) return res.status(400).json({success:false,code:'INVALID_IDENTITY_CONTEXT'});
+  try { const data=await customerMemberIdentity.getPublicConfig(req.query.shopSlug); return res.json({success:true,data}); }
+  catch(error){ return customerIdentityError(res,error); }
+});
+
 app.post('/api/customer/auth/otp/request',async(req,res)=>{
   if(rejectCustomerAuthority(req.body)) return res.status(400).json({success:false,code:'INVALID_IDENTITY_CONTEXT'});
   try { const data=await customerMemberIdentity.requestOtp({shopSlug:req.body.shopSlug,countryCode:req.body.countryCode,
@@ -117,6 +123,13 @@ app.post('/api/customer/auth/otp/verify',async(req,res)=>{
 });
 app.get('/api/customer/me',async(req,res)=>{
   try { const data=await customerMemberIdentity.authenticate(customerCookie(req)); return res.json({success:true,data}); }
+  catch(error){ return customerIdentityError(res,error); }
+});
+app.patch('/api/customer/me',async(req,res)=>{
+  if(rejectCustomerAuthority(req.body)) return res.status(400).json({success:false,code:'INVALID_IDENTITY_CONTEXT'});
+  try { const session=await customerMemberIdentity.authenticate(customerCookie(req));
+    await customerMemberIdentity.updateProfile({session,name:req.body.name,email:req.body.email,dateOfBirth:req.body.dateOfBirth,gender:req.body.gender});
+    const data=await customerMemberIdentity.authenticate(customerCookie(req)); return res.json({success:true,data}); }
   catch(error){ return customerIdentityError(res,error); }
 });
 app.post('/api/customer/phone-change/request',async(req,res)=>{

@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title data-i18n="myMembership">VIP / My Membership</title>
+  <style>
+    *{box-sizing:border-box}body{margin:0;background:#f5f5f5;color:#161616;font-family:Arial,"PingFang SC",sans-serif}
+    .shell{max-width:520px;margin:auto;padding:18px 18px 48px}.top{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px}
+    .back{color:#222;text-decoration:none;font-size:14px}.language-switch{display:inline-flex;padding:3px;border:1px solid #ddd;border-radius:999px;background:#fff}
+    .language-switch button{border:0;border-radius:999px;background:transparent;padding:7px 12px}.language-switch button:disabled{background:#111;color:#fff}
+    .panel{background:#fff;border-radius:18px;padding:20px;box-shadow:0 5px 22px rgba(0,0,0,.06);margin-bottom:14px}
+    h1{font-size:26px;margin:0 0 7px}p{color:#666;line-height:1.5}label{display:block;font-weight:600;margin:14px 0 6px}
+    input,select{width:100%;padding:13px;border:1px solid #ddd;border-radius:11px;background:#fff;font-size:16px}.phone-row{display:grid;grid-template-columns:145px 1fr;gap:8px}
+    button{width:100%;border:0;border-radius:12px;padding:14px;margin-top:16px;background:#111;color:#fff;font-size:16px;font-weight:650}
+    button:disabled{opacity:.5}.secondary{background:#eee;color:#222}.message{min-height:23px;margin-top:12px;text-align:center;color:#b42318}
+    .member-card{position:relative;overflow:hidden;background:linear-gradient(145deg,#050505,#252525);color:#fff;border-radius:22px;padding:24px;min-height:220px;box-shadow:0 14px 35px rgba(0,0,0,.22)}
+    .member-card:after{content:"";position:absolute;width:190px;height:190px;border:1px solid #555;border-radius:50%;right:-70px;top:-65px}
+    .brand{display:flex;align-items:center;gap:11px}.logo{display:grid;place-items:center;width:42px;height:42px;border:1px solid #777;border-radius:50%;font-weight:800}
+    .tier{margin-top:36px;color:#bbb;font-size:12px;letter-spacing:.15em}.member-name{font-size:24px;margin-top:8px}.member-code{margin-top:24px;letter-spacing:.12em;color:#ddd}
+    .member-phone{font-size:13px;color:#aaa;margin-top:7px}.profile-actions{display:grid;grid-template-columns:1fr 1fr;gap:10px}.profile-actions button{margin-top:12px}
+    [hidden]{display:none!important}@media(max-width:380px){.phone-row{grid-template-columns:125px 1fr}}
+  </style>
+</head>
+<body><main class="shell">
+  <div class="top"><a class="back" href="/" data-i18n="backToBooking">← Booking</a><div class="language-switch"><button id="languageZh" type="button">中文</button><button id="languageEn" type="button">EN</button></div></div>
+  <section id="loadingPanel" class="panel"><p data-i18n="loadingMembership">Loading membership...</p></section>
+  <section id="authPanel" class="panel" hidden>
+    <h1 data-i18n="myMembership">VIP / My Membership</h1><p data-i18n="memberSignInHelp">Use your mobile number to sign in or register.</p>
+    <div id="phoneStep"><label data-i18n="countryRegion">Country / Region</label><div class="phone-row"><select id="countryCode" aria-label="Country or region"></select><input id="memberPhone" type="tel" data-i18n-placeholder="enterPhone"></div><button id="sendCode" type="button" data-i18n="sendCode">Send code</button></div>
+    <div id="codeStep" hidden><label data-i18n="verificationCode">Verification code</label><input id="otpCode" inputmode="numeric" maxlength="6" autocomplete="one-time-code"><button id="verifyCode" type="button" data-i18n="verifyCode">Verify code</button><button id="resendCode" class="secondary" type="button" disabled></button></div>
+    <div id="registrationStep" hidden><label data-i18n="name">Name</label><input id="registrationName" type="text"><label data-i18n="optionalEmail">Email (optional)</label><input id="registrationEmail" type="email"><label id="dobLabel" data-i18n="dateOfBirth">Date of birth</label><input id="registrationDob" type="date"><label data-i18n="genderOptional">Gender (optional)</label><select id="registrationGender"><option value="" data-i18n="notSpecified">Not specified</option><option value="female" data-i18n="genderFemale">Female</option><option value="male" data-i18n="genderMale">Male</option><option value="non_binary" data-i18n="genderNonBinary">Non-binary</option><option value="prefer_not_to_say" data-i18n="preferNotToSay">Prefer not to say</option></select><button id="completeMembership" type="button" data-i18n="completeMembership">Complete membership</button></div>
+    <div id="authMessage" class="message" aria-live="polite"></div>
+  </section>
+  <section id="memberPanel" hidden>
+    <div class="member-card"><div class="brand"><div id="shopLogo" class="logo">GG</div><strong id="shopName"></strong></div><div class="tier">VIP MEMBER</div><div id="memberName" class="member-name"></div><div id="memberCode" class="member-code"></div><div id="memberVerifiedPhone" class="member-phone"></div></div>
+    <div class="panel"><h2 data-i18n="profile">Profile</h2><div id="profileView"><p id="profileEmail"></p><p id="profileDob"></p><p id="profileGender"></p></div><div id="profileEdit" hidden><label data-i18n="name">Name</label><input id="profileName"><label data-i18n="optionalEmail">Email (optional)</label><input id="profileEmailInput" type="email"><label data-i18n="dateOfBirth">Date of birth</label><input id="profileDobInput" type="date"><label data-i18n="genderOptional">Gender (optional)</label><select id="profileGenderInput"><option value="" data-i18n="notSpecified">Not specified</option><option value="female" data-i18n="genderFemale">Female</option><option value="male" data-i18n="genderMale">Male</option><option value="non_binary" data-i18n="genderNonBinary">Non-binary</option><option value="prefer_not_to_say" data-i18n="preferNotToSay">Prefer not to say</option></select><button id="saveMemberProfile" type="button" data-i18n="save">Save</button></div><div class="profile-actions"><button id="editMemberProfile" type="button" class="secondary" data-i18n="editProfile">Edit profile</button><button id="logoutMember" type="button" class="secondary" data-i18n="logout">Log Out</button></div><div id="memberMessage" class="message" aria-live="polite"></div></div>
+  </section>
+</main><script src="/shared-i18n.js"></script><script src="/customer-shop-context.js"></script><script src="/customer-member-ui.js"></script></body>
+</html>

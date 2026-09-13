@@ -168,6 +168,7 @@
     .phone-row { display: grid; grid-template-columns: 145px 1fr; gap: 8px; }
     .language-switch { display: inline-flex; padding: 3px; border: 1px solid #ddd; border-radius: 999px; background: #fff; }
     .language-switch button { width: auto; margin: 0; padding: 7px 12px; border-radius: 999px; font-size: 13px; }
+    .member-entry { display: inline-block; margin-top: 12px; padding: 9px 14px; border-radius: 999px; background: #111; color: #fff; text-decoration: none; font-size: 13px; font-weight: 700; }
   </style>
 </head>
 
@@ -179,6 +180,7 @@
     <h1>GG-Beauty</h1>
     <p data-i18n="onlineAppointment">在线预约</p>
     <div class="language-switch"><button id="languageZh" type="button">中文</button><button id="languageEn" type="button">EN</button></div>
+    <div><a id="memberEntry" class="member-entry" href="/member.html" data-i18n="membershipEntry">VIP / 我的会员</a></div>
   </div>
 
   <div id="categoryStep" class="card" hidden>
@@ -411,6 +413,7 @@ async function loadCustomerShopContext() {
     throw new Error(result.message || 'Shop is unavailable');
   }
   customerShopSlug = result.data.shopSlug;
+  memberEntry.href = `/member.html?shop=${encodeURIComponent(customerShopSlug)}`;
 }
 
 const selectedService = () => availableServices.find(item => item.id === serviceInput.value) || null;
