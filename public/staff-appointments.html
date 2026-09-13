@@ -374,6 +374,17 @@
       background: #e5f3f1;
     }
 
+    .calendar-appointment.status-arrived,
+    .calendar-appointment.status-in_service {
+      border-left-color: #23865b;
+      background: #e3f5eb;
+    }
+
+    .calendar-appointment.status-no_show {
+      border-left-color: #b33f45;
+      background: #fbe9e9;
+    }
+
     .calendar-appointment.status-completed {
       border-left-color: #84919a;
       background: #eceff1;
@@ -454,6 +465,10 @@
       background: var(--accent-soft);
       color: var(--accent);
     }
+
+    .status-arrived,
+    .status-in_service { background: #e3f5eb; color: #1c704c; }
+    .status-no_show { background: #fbe9e9; color: #a33b40; }
 
     .status-completed {
       background: #eceff1;
@@ -1000,8 +1015,11 @@
         statuses: {
           pending: 'Pending',
           confirmed: 'Confirmed',
+          arrived: 'Arrived',
+          in_service: 'In service',
           completed: 'Completed',
-          cancelled: 'Cancelled'
+          cancelled: 'Cancelled',
+          no_show: 'No Show'
         }
       },
       zh: {
@@ -1042,8 +1060,11 @@
         statuses: {
           pending: '待确认',
           confirmed: '已确认',
+          arrived: '已到店',
+          in_service: '服务中',
           completed: '已完成',
-          cancelled: '已取消'
+          cancelled: '已取消',
+          no_show: '未到店'
         }
       }
     };

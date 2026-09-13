@@ -931,9 +931,10 @@ function renderAppointments(appointments) {
 
         
       <td>
-  <button onclick="updateAppointmentStatus('${item.id}', 'confirmed')">${adminT('confirm')}</button>
-  <button onclick="updateAppointmentStatus('${item.id}', 'completed')">${adminT('complete')}</button>
-  <button onclick="updateAppointmentStatus('${item.id}', 'cancelled')">${adminT('cancel')}</button>
+  ${item.status === 'pending' ? `<button onclick="updateAppointmentStatus('${item.id}', 'confirmed')">${adminT('confirm')}</button><button onclick="updateAppointmentStatus('${item.id}', 'cancelled')">${adminT('cancel')}</button>` : ''}
+  ${item.status === 'confirmed' ? `<button onclick="updateAppointmentStatus('${item.id}', 'arrived')">${adminT('arrived')}</button><button onclick="updateAppointmentStatus('${item.id}', 'cancelled')">${adminT('cancel')}</button>` : ''}
+  ${item.status === 'arrived' ? `<button onclick="updateAppointmentStatus('${item.id}', 'in_service')">${adminT('in_service')}</button>` : ''}
+  ${item.status === 'in_service' ? `<button onclick="updateAppointmentStatus('${item.id}', 'completed')">${adminT('complete')}</button>` : ''}
 </td>
 </tr>
 `;
@@ -963,7 +964,7 @@ function renderAppointments(appointments) {
   `;
 }
 async function updateAppointmentStatus(id, status) {
-  const promptKey = { confirmed: 'confirmAppointmentPrompt', completed: 'completeAppointmentPrompt', cancelled: 'cancelAppointmentPrompt' }[status];
+  const promptKey = { confirmed: 'confirmAppointmentPrompt', arrived: 'arrivedAppointmentPrompt', in_service: 'startServicePrompt', completed: 'completeAppointmentPrompt', cancelled: 'cancelAppointmentPrompt' }[status];
 
   if (!confirm(adminT(promptKey))) {
     return;

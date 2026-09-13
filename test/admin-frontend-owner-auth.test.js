@@ -222,8 +222,8 @@ test('rendering and status action buttons remain available', () => {
   const rendered = page.elements.get('content').innerHTML;
   assert.match(rendered, /Customer A/);
   assert.match(rendered, /updateAppointmentStatus\('[^']+', 'confirmed'\)/);
-  assert.match(rendered, /updateAppointmentStatus\('[^']+', 'completed'\)/);
   assert.match(rendered, /updateAppointmentStatus\('[^']+', 'cancelled'\)/);
+  assert.doesNotMatch(rendered, /updateAppointmentStatus\('[^']+', 'completed'\)/);
 });
 
 test('admin frontend has no legacy auth fallback or browser auth storage', () => {

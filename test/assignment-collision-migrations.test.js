@@ -26,6 +26,10 @@ const parentCompatibilityMigrations = [25, 26, 27].map(number => {
   const name = fs.readdirSync(path.join(ROOT, 'migrations')).find(file => file.startsWith(`${String(number).padStart(3, '0')}_`));
   return path.join(ROOT, 'migrations', name);
 });
+const arrivalCollisionMigrations = [44, 45, 46].map(number => {
+  const name = fs.readdirSync(path.join(ROOT, 'migrations')).find(file => file.startsWith(`${String(number).padStart(3, '0')}_`));
+  return path.join(ROOT, 'migrations', name);
+});
 const sql = file => fs.readFileSync(file, 'utf8');
 
 const BASE_SCHEMA = `
@@ -534,6 +538,18 @@ test('assignment collision migrations on real PostgreSQL 17', { timeout: 120000 
       await assert.rejects(admin.query(sql(parentCompatibilityMigrations[2])), /Parent span mismatch/);
       await admin.query('ROLLBACK');
       await admin.query('TRUNCATE appointment_item_staff_assignments,appointment_items,appointments');
+    });
+
+    await t.test('044 to 046 extends only canonical assignment occupancy', async () => {
+      await admin.query(sql(arrivalCollisionMigrations[0]));
+      await admin.query(sql(arrivalCollisionMigrations[1]));
+      await admin.query(sql(arrivalCollisionMigrations[2]));
+      const row = await createAllocation(admin, { assignedStaff: ids.staffA, status: 'confirmed' });
+      const blocks = async () => (await admin.query('SELECT blocks_time FROM appointment_item_staff_assignments WHERE id=$1',[row.assignment.id])).rows[0].blocks_time;
+      await admin.query('UPDATE appointments SET status=$1 WHERE id=$2',['arrived',row.parent]); assert.equal(await blocks(), true);
+      await assert.rejects(createAllocation(admin,{assignedStaff:ids.staffA,status:'pending'}), error=>error.code==='23P01');
+      await admin.query('UPDATE appointments SET status=$1 WHERE id=$2',['in_service',row.parent]); assert.equal(await blocks(), true);
+      await admin.query('UPDATE appointments SET status=$1 WHERE id=$2',['completed',row.parent]); assert.equal(await blocks(), false);
     });
   } finally {
     if (admin) await admin.end().catch(() => {});

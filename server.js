@@ -51,6 +51,7 @@ const {
   CustomerMemberError,
   createCustomerMemberIdentity
 } = require('./lib/customer-member-identity');
+const { isKnownStatus, canTransition, recordStatusHistory } = require('./lib/appointment-status');
 
 const app = express();
 
@@ -180,7 +181,8 @@ const STAFF_PERMISSION_NAMES = [
   'can_view_own_sales',
   'can_view_own_commission',
   'can_view_full_customer_phone',
-  'can_move_own_appointments'
+  'can_move_own_appointments',
+  'can_update_own_appointment_status'
 ];
 
 const DUMMY_STAFF_PASSWORD_HASH =
@@ -538,7 +540,8 @@ const requireStaffAuth = async (
         sp.can_view_own_sales,
         sp.can_view_own_commission,
         sp.can_view_full_customer_phone,
-        sp.can_move_own_appointments
+        sp.can_move_own_appointments,
+        sp.can_update_own_appointment_status
       FROM staff_sessions ss
       JOIN staff_accounts sa
         ON sa.id = ss.staff_account_id
@@ -3743,6 +3746,38 @@ app.get(
   }
 );
 
+app.patch('/api/staff/appointments/:appointmentId/status', requireStaffAuth, async (req, res) => {
+  if (req.staffAuth.permissions.can_update_own_appointment_status !== true) {
+    return res.status(403).json({ success: false, message: '没有修改预约状态的权限' });
+  }
+  if (!isSameOriginRequest(req) || !isUuid(req.params.appointmentId)) {
+    return res.status(400).json({ success: false, message: '预约ID或请求来源不正确' });
+  }
+  const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : null;
+  if (!body || !isKnownStatus(body.status)) return res.status(400).json({ success: false, message: '预约状态不正确' });
+  try {
+    const data = await runInTransaction(req.app.locals.bookingPool, async client => {
+      await client.query("SET LOCAL lock_timeout = '5s'");
+      const result = await client.query(`SELECT id,shop_id,location_id,service_id,staff_id,start_at,end_at,status,cancelled_at,service_completed_at,updated_at FROM appointments a WHERE id=$1 AND shop_id=$2 AND location_id=$4 AND EXISTS (SELECT 1 FROM appointment_items i JOIN appointment_item_staff_assignments x ON x.shop_id=i.shop_id AND x.location_id=i.location_id AND x.appointment_item_id=i.id WHERE i.shop_id=a.shop_id AND i.location_id=a.location_id AND i.appointment_id=a.id AND x.staff_id=$3) FOR UPDATE`, [req.params.appointmentId, req.staffAuth.shopId, req.staffAuth.staffId, req.staffAuth.locationId]);
+      if (result.rows.length !== 1) throw new AppointmentMutationError('appointment_not_found', 404, '找不到预约');
+      const appointment = result.rows[0];
+      if (!isKnownStatus(appointment.status) || !canTransition(appointment.status, body.status)) throw new AppointmentMutationError('appointment_status_transition_invalid', 409, '不允许进行该预约状态变更');
+      if (appointment.status === body.status) return { id: appointment.id, status: appointment.status };
+      const structure = await loadAndValidatePhaseAStructure(client, appointment);
+      const updated = await client.query(`UPDATE appointments SET status=$1,cancelled_at=CASE WHEN $1='cancelled' THEN NOW() ELSE cancelled_at END,service_completed_at=CASE WHEN $1='completed' THEN NOW() ELSE service_completed_at END,updated_at=NOW() WHERE id=$2 AND shop_id=$3 AND location_id=$4 RETURNING id,status,start_at,end_at,updated_at`, [body.status, appointment.id, appointment.shop_id, appointment.location_id]);
+      if (updated.rows.length !== 1) throw new AppointmentMutationError('appointment_status_update_mismatch', 500, '更新预约状态失败');
+      await syncAppointmentItemStatus(client, { appointment, status: body.status, expectedItemCount: structure.itemCount });
+      await recordStatusHistory(client, { appointment, fromStatus: appointment.status, toStatus: body.status, operatorType: 'staff', operatorId: req.staffAuth.accountId, source: 'staff_portal', reason: typeof body.reason === 'string' ? body.reason.trim() || null : null });
+      return updated.rows[0];
+    });
+    res.json({ success: true, data });
+  } catch (error) {
+    const code = safeStaffAuthErrorCode(error);
+    const status = ['23P01', '55P03'].includes(code) ? 409 : error instanceof AppointmentMutationError ? error.status : 500;
+    res.status(status).json({ success: false, message: error instanceof AppointmentMutationError ? error.publicMessage : '更新预约状态失败' });
+  }
+});
+
 
 app.patch(
   '/api/staff/appointments/:appointmentId/time',
@@ -4184,6 +4219,8 @@ app.post(
     const allowedStatuses = [
       'pending',
       'confirmed',
+      'arrived',
+      'in_service',
       'cancelled',
       'completed',
       'no_show'
@@ -4267,24 +4304,7 @@ app.post(
                 appointment
               );
 
-            const allowedTransitions = {
-              pending: ['confirmed', 'cancelled'],
-              confirmed: [
-                'completed',
-                'cancelled',
-                'no_show'
-              ],
-              completed: [],
-              cancelled: [],
-              no_show: []
-            };
-
-            if (
-              !Object.prototype.hasOwnProperty.call(
-                allowedTransitions,
-                appointment.status
-              )
-            ) {
+            if (!isKnownStatus(appointment.status)) {
               throw new AppointmentMutationError(
                 'unsupported_current_status',
                 409,
@@ -4302,7 +4322,7 @@ app.post(
               };
             }
 
-            if (!allowedTransitions[appointment.status].includes(status)) {
+            if (!canTransition(appointment.status, status)) {
               throw new AppointmentMutationError(
                 'appointment_status_transition_invalid',
                 409,
@@ -4363,6 +4383,18 @@ app.post(
                   phaseAStructure.itemCount
               }
             );
+
+            await recordStatusHistory(client, {
+              appointment,
+              fromStatus: appointment.status,
+              toStatus: status,
+              operatorType: 'owner',
+              operatorId: req.ownerAuth.ownerAccountId,
+              source: 'owner_dashboard',
+              reason: typeof body.reason === 'string'
+                ? body.reason.trim() || null
+                : null
+            });
 
             return result.rows[0];
           }

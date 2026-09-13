@@ -52,7 +52,8 @@ const makePool = ({
     rolledBack: false,
     assignmentsChanged: false,
     customerChanged: false,
-    snapshot: null
+    snapshot: null,
+    history: []
   };
 
   const client = {
@@ -145,6 +146,10 @@ const makePool = ({
         return {
           rows: Array.from({ length: returnedItemCount }, (_, index) => ({ id: `item-${index}` }))
         };
+      }
+      if (/^INSERT INTO appointment_status_history/.test(normalized)) {
+        state.history.push({ from: params[2], to: params[3], operatorType: params[4], operatorId: params[5] });
+        return { rows: [] };
       }
       throw new Error(`Unexpected SQL: ${normalized}`);
     },
@@ -343,14 +348,28 @@ for (const [from, to] of [
   });
 }
 
-test('confirmed may transition to completed cancelled or no_show', async () => {
-  for (const status of ['completed', 'cancelled', 'no_show']) {
+test('confirmed may transition to arrived cancelled or no_show', async () => {
+  for (const status of ['arrived', 'cancelled', 'no_show']) {
     const fixture = makePool({ currentStatus: 'confirmed' });
     const response = await runRequest(fixture, { id: ID.appointmentA, status });
     assert.equal(response.status, 200);
     assert.equal(fixture.state.parentStatus, status);
     assert.deepEqual(fixture.state.itemStatuses, [status, status]);
   }
+});
+
+test('arrival lifecycle is guarded and records exactly one immutable history entry per change', async () => {
+  const fixture = makePool({ currentStatus: 'confirmed' });
+  for (const status of ['arrived', 'in_service', 'completed']) {
+    const response = await runRequest(fixture, { id: ID.appointmentA, status });
+    assert.equal(response.status, 200);
+  }
+  assert.deepEqual(fixture.state.history.map(entry => [entry.from, entry.to]), [
+    ['confirmed', 'arrived'], ['arrived', 'in_service'], ['in_service', 'completed']
+  ]);
+  const duplicate = await runRequest(fixture, { id: ID.appointmentA, status: 'completed' });
+  assert.equal(duplicate.status, 200);
+  assert.equal(fixture.state.history.length, 3);
 });
 
 test('transaction configures lock timeout and locks tenant-scoped parent', async () => {

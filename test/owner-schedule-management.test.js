@@ -37,7 +37,7 @@ const makePool = ({ role = 'owner', validSession = true, scopeValid = true, futu
     if (/^SELECT day_of_week, start_time, end_time/.test(q)) return { rows: state.hours.filter(h => h.is_active).map(h => ({ day_of_week: h.day_of_week, start_time: h.start_time, end_time: h.end_time, effective_from: h.effective_from, effective_to: h.effective_to })) };
     if (/^SELECT id, day_of_week, start_time/.test(q)) return { rows: structuredClone(state.hours) };
     if (/^SELECT item\.id/.test(q)) {
-      const conflicts = futureConflict || (['pending', 'confirmed'].includes(futureStatus) && ['primary', 'assistant'].includes(futureRole));
+      const conflicts = futureConflict || (['pending', 'confirmed', 'arrived', 'in_service'].includes(futureStatus) && ['primary', 'assistant'].includes(futureRole));
       return { rows: conflicts ? [{ id: 'future' }] : [] };
     }
     if (/^UPDATE staff_location_working_hours SET start_time/.test(q)) {
@@ -177,8 +177,8 @@ for (const typeBody of [override('day_off'), override('leave'), override('leave'
 const invalidOverrides = [override('working', { startTime: '10:00', endTime: '18:00' }), override('day_off', { startTime: '10:00' }), override('leave', { startTime: '20:00', endTime: '10:00' }), override('custom_hours', { startTime: '10:00', endTime: '10:00' }), { ...override('day_off'), scheduleDate: '2030-02-30' }, { ...override('day_off'), shop_id: ID.shopB }];
 for (const body of invalidOverrides) test('invalid override input returns 400', async () => { const f = makePool(); assert.equal((await run(f, `/api/owner/staff/${ID.staffA}/schedule-overrides`, { method: 'POST', body })).status, 400); });
 
-for (const status of ['pending', 'confirmed']) {
-  for (const role of ['primary', 'assistant']) test(`future ${status} ${role} conflict rolls schedule back with 409`, async () => { const f = makePool({ futureStatus: status, futureRole: role }); const before = structuredClone(f.state.hours); const r = await run(f, `/api/owner/staff/${ID.staffA}/schedule`, { method: 'PUT', body: weekly([]) }); assert.equal(r.status, 409); assert.equal((await r.json()).code, 'SCHEDULE_CONFLICTS_WITH_FUTURE_APPOINTMENTS'); assert.deepEqual(f.state.hours, before); assert.equal(f.state.rolledBack, true); const conflictQuery = f.state.queries.find(q => /^SELECT item\.id/.test(q.sql)); assert.match(conflictQuery.sql, /appointment\.status IN \('pending', 'confirmed'\)/); assert.match(conflictQuery.sql, /item_assignment\.role IN \('primary', 'assistant'\)/); });
+for (const status of ['pending', 'confirmed', 'arrived', 'in_service']) {
+  for (const role of ['primary', 'assistant']) test(`future ${status} ${role} conflict rolls schedule back with 409`, async () => { const f = makePool({ futureStatus: status, futureRole: role }); const before = structuredClone(f.state.hours); const r = await run(f, `/api/owner/staff/${ID.staffA}/schedule`, { method: 'PUT', body: weekly([]) }); assert.equal(r.status, 409); assert.equal((await r.json()).code, 'SCHEDULE_CONFLICTS_WITH_FUTURE_APPOINTMENTS'); assert.deepEqual(f.state.hours, before); assert.equal(f.state.rolledBack, true); const conflictQuery = f.state.queries.find(q => /^SELECT item\.id/.test(q.sql)); assert.match(conflictQuery.sql, /appointment\.status IN \('pending', 'confirmed', 'arrived', 'in_service'\)/); assert.match(conflictQuery.sql, /item_assignment\.role IN \('primary', 'assistant'\)/); });
 }
 
 test('future conflict rolls override creation back with 409', async () => { const f = makePool({ futureConflict: true }); const r = await run(f, `/api/owner/staff/${ID.staffA}/schedule-overrides`, { method: 'POST', body: override('day_off') }); assert.equal(r.status, 409); assert.deepEqual(f.state.overrides, []); assert.equal(f.state.rolledBack, true); });
