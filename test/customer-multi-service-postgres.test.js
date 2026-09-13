@@ -21,7 +21,7 @@ const id = {
 
 const SCHEMA = `
 CREATE EXTENSION btree_gist; CREATE EXTENSION pgcrypto;
-CREATE TABLE shops(id uuid PRIMARY KEY,slug text UNIQUE NOT NULL,status text NOT NULL);
+CREATE TABLE shops(id uuid PRIMARY KEY,slug text UNIQUE NOT NULL,name text NOT NULL,status text NOT NULL);
 CREATE TABLE locations(id uuid PRIMARY KEY,shop_id uuid NOT NULL,timezone text NOT NULL,is_active boolean NOT NULL,created_at timestamptz NOT NULL DEFAULT now(),UNIQUE(shop_id,id));
 CREATE TABLE staff(id uuid PRIMARY KEY,shop_id uuid NOT NULL,name text NOT NULL,is_active boolean NOT NULL,bookable boolean NOT NULL,UNIQUE(shop_id,id));
 CREATE TABLE service_categories(id uuid PRIMARY KEY,shop_id uuid NOT NULL,is_active boolean NOT NULL,UNIQUE(shop_id,id));
@@ -59,8 +59,8 @@ test('real PostgreSQL customer endpoint creates canonical multi-service and lega
     await db.query(migration('015_assignment_collision_backfill.sql'));
     await db.query(migration('016_assignment_collision_constraint.sql'));
     await db.query(migration('026_multi_service_parent_collision_compatibility.sql'));
-    await db.query(`INSERT INTO shops VALUES($1,'tenant-a','active')`, [id.shop]);
-    await db.query(`INSERT INTO shops VALUES($1,'tenant-b','active')`, [id.shopB]);
+    await db.query(`INSERT INTO shops VALUES($1,'tenant-a','Tenant A','active')`, [id.shop]);
+    await db.query(`INSERT INTO shops VALUES($1,'tenant-b','Tenant B','active')`, [id.shopB]);
     await db.query(`INSERT INTO customers(id,shop_id,name,phone,phone_normalized) VALUES($1,$2,'Foreign customer','+60123456789','+60123456789')`, [id.customerB, id.shopB]);
     await db.query(`INSERT INTO locations(id,shop_id,timezone,is_active) VALUES($1,$2,'Asia/Singapore',true)`, [id.location, id.shop]);
     await db.query(`INSERT INTO service_categories VALUES($1,$2,true)`, [id.category, id.shop]);
