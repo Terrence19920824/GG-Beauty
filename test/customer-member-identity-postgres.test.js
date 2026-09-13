@@ -73,7 +73,8 @@ test('PostgreSQL 17 member identity, OTP, tenant, and phone-change foundation', 
     const member=(await db.query('SELECT id,member_code,identity_status FROM customers WHERE id=$1',[signedIn.customerId])).rows[0];
     assert.equal(member.identity_status,'verified_member'); assert.match(member.member_code,/^NEW-/);
     const config=await service.getPublicConfig('a');
-    assert.deepEqual(config,{shopName:'Shop A',defaultPhoneCountryCode:'+65',dobRequirement:'optional'});
+    assert.deepEqual(config,{shopName:'Shop A',defaultPhoneCountryCode:'+65',dobRequirement:'optional',
+      memberModules:{singleSale:true,membershipTier:false,points:false,storedValue:false,packages:false,referral:false},memberTheme:{key:'premium-black'}});
     assert.equal((await service.authenticate(signedIn.token)).customer_id,signedIn.customerId);
     await service.updateProfile({session:{shop_id:ID.shopA,customer_id:signedIn.customerId},name:'Verified Member',email:'member@example.invalid',dateOfBirth:'2001-02-03',gender:'female'});
     const updatedProfile=await service.authenticate(signedIn.token);
@@ -87,6 +88,12 @@ test('PostgreSQL 17 member identity, OTP, tenant, and phone-change foundation', 
     assert.equal(returningSession.customerId,signedIn.customerId);
     assert.equal((await service.authenticate(returningSession.token)).member_code,member.member_code);
     assert.equal(Number((await db.query('SELECT COUNT(*) FROM customers WHERE shop_id=$1',[ID.shopA])).rows[0].count),customersBeforeReturn);
+
+    const crossShop=await service.requestOtp({shopSlug:'b',countryCode:'+65',phone:'8444 4444',ip:'127.0.0.8',userAgent:'cross-shop'});
+    const crossShopSession=await service.verifySignIn({challengeId:crossShop.challengeId,code:sent.at(-1).code,name:'Independent B'});
+    assert.notEqual(crossShopSession.customerId,signedIn.customerId);
+    const crossShopMember=await service.authenticate(crossShopSession.token);
+    assert.equal(crossShopMember.shop_id,ID.shopB);assert.notEqual(crossShopMember.member_code,member.member_code);
 
     clock=new Date(clock.getTime()+61000);
     const locked=await service.requestOtp({shopSlug:'a',countryCode:'+65',phone:'8666 6666',ip:'127.0.0.4',userAgent:'attempts'});

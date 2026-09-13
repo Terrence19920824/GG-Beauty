@@ -52,6 +52,18 @@ test('unverified someone-else recipient never looks up or claims an existing mem
   assert.doesNotMatch(sql.at(-1),/SELECT .*phone_normalized/i);
 });
 
+test('verified session is the authoritative same-shop booker while someone-else stays unverified',async()=>{
+  const statements=[];
+  const client={query:async(sql,params)=>{statements.push({sql,params});if(/identity_status='verified_member'/.test(sql))return{rows:[{id:'member-a',phone:'+6581111111',phone_normalized:'+6581111111'}]};if(/INSERT INTO customers/.test(sql))return{rows:[{id:'recipient-b'}]};return{rows:[]};}};
+  const session={shop_id:'shop-a',customer_id:'member-a'};
+  const myself=await resolveBookingParties(client,{shopId:'shop-a',verifiedSession:session,body:{customerName:'Changed display',phone:'+6599999999'}});
+  assert.equal(myself.booker.customerId,'member-a');assert.equal(myself.recipient.customerId,'member-a');
+  assert.equal(statements.filter(call=>/INSERT INTO customers/.test(call.sql)).length,0);
+  const someoneElse=await resolveBookingParties(client,{shopId:'shop-a',verifiedSession:session,body:{bookingFor:'someone_else',customerName:'A',phone:'+6581111111',recipient:{name:'B',phone:'+6582222222'}}});
+  assert.equal(someoneElse.booker.customerId,'member-a');assert.equal(someoneElse.recipient.customerId,'recipient-b');assert.equal(someoneElse.recipient.verified,false);
+  await assert.rejects(resolveBookingParties(client,{shopId:'shop-b',verifiedSession:session,body:{customerName:'A',phone:'+6581111111'}}),error=>error.code==='CUSTOMER_SESSION_SHOP_MISMATCH');
+});
+
 test('booking parties reject forged customer ids and safely retain unsupported local phones without guessing', async () => {
   const noMatches = { query: async sql => /INSERT INTO customers/.test(sql)
     ? { rows: [{ id: 'new-customer' }] } : { rows: [] } };

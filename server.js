@@ -135,7 +135,7 @@ app.patch('/api/customer/me',async(req,res)=>{
 app.post('/api/customer/phone-change/request',async(req,res)=>{
   if(rejectCustomerAuthority(req.body)) return res.status(400).json({success:false,code:'INVALID_IDENTITY_CONTEXT'});
   try { const session=await customerMemberIdentity.authenticate(customerCookie(req));
-    const data=await customerMemberIdentity.requestOtp({shopSlug:req.body.shopSlug,countryCode:req.body.countryCode,phone:req.body.phone,
+    const data=await customerMemberIdentity.requestOtp({shopSlug:session.shop_slug,countryCode:req.body.countryCode,phone:req.body.phone,
       purpose:'phone_change',customerId:session.customer_id,ip:req.ip,userAgent:req.headers['user-agent']}); return res.json({success:true,data}); }
   catch(error){ return customerIdentityError(res,error); }
 });
@@ -1956,7 +1956,7 @@ const planMultiServiceStaff = async ({ client, scope, date, timeline, validator,
   });
 };
 
-const createMultiServiceBooking = async (req) => {
+const createMultiServiceBooking = async (req,verifiedSession=null) => {
   const body = req.body;
   const items = normalizeBookingItems(body, isUuid);
   const locale = normalizeLocale(body.locale);
@@ -1976,7 +1976,7 @@ const createMultiServiceBooking = async (req) => {
 
     let parties;
     try {
-      parties = await resolveBookingParties(client, { shopId: scope.shop_id, body });
+      parties = await resolveBookingParties(client, { shopId: scope.shop_id, body,verifiedSession });
     } catch (error) {
       if (error instanceof CustomerIdentityError) {
         throw new AppointmentMutationError(error.code, 409, '顾客联系方式无法唯一识别');
@@ -2021,6 +2021,13 @@ app.post('/api/new-db', async (req, res) => {
     return res.status(400).json({ success: false, message: 'Invalid customer identity' });
   }
 
+  let verifiedSession=null;
+  const sessionToken=customerCookie(req);
+  if(sessionToken){
+    try{verifiedSession=await customerMemberIdentity.authenticate(sessionToken);}
+    catch(error){return customerIdentityError(res,error);}
+  }
+
   const canonicalItemsRequest = Array.isArray(req.body.items) ||
     (req.body.items === undefined && req.body.startAt !== undefined);
   if (canonicalItemsRequest) {
@@ -2028,7 +2035,7 @@ app.post('/api/new-db', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Invalid shop context' });
     }
     try {
-      const created = await createMultiServiceBooking(req);
+      const created = await createMultiServiceBooking(req,verifiedSession);
       return res.json({ success: true, message: '预约成功', data: {
         id: created.appointment.id, appointment_no: created.appointment.appointment_no,
         start_at: created.appointment.start_at, end_at: created.appointment.end_at,
@@ -2315,7 +2322,7 @@ app.post('/api/new-db', async (req, res) => {
         // 6. Validator passed before any customer or appointment write.
         let parties;
         try {
-          parties = await resolveBookingParties(client, { shopId, body: req.body });
+          parties = await resolveBookingParties(client, { shopId, body: req.body,verifiedSession });
         } catch (error) {
           if (error instanceof CustomerIdentityError) {
             throw new AppointmentMutationError(error.code, 409, '顾客联系方式无法唯一识别');

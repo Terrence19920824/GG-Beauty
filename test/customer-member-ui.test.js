@@ -17,11 +17,28 @@ test('customer booking exposes a bilingual VIP membership entry',()=>{
   assert.match(booking,/memberEntry\.href = `\/member\.html\?shop=/);
 });
 
-test('member UI covers OTP registration returning member profile and logout without empty benefit modules',()=>{
-  for(const id of ['authPanel','countryCode','memberPhone','sendCode','codeStep','otpCode','verifyCode','resendCode','registrationStep','registrationName','registrationEmail','registrationDob','registrationGender','memberPanel','memberCode','memberVerifiedPhone','editMemberProfile','logoutMember']) assert.match(html,new RegExp(`id="${id}"`));
-  for(const endpoint of ['/api/customer/auth/otp/request','/api/customer/auth/otp/verify','/api/customer/me','/api/customer/logout']) assert.ok(ui.includes(endpoint));
+test('member UI covers OTP registration returning member profile phone change and logout without empty benefit modules',()=>{
+  for(const id of ['authPanel','countryCode','memberPhone','sendCode','codeStep','otpCode','verifyCode','resendCode','registrationStep','registrationName','registrationEmail','registrationDob','registrationGender','memberPanel','memberCode','memberVerifiedPhone','editMemberProfile','changeMemberPhone','phoneChangePanel','changeCountryCode','changePhone','sendPhoneChangeCode','phoneChangeCode','confirmPhoneChange','logoutMember']) assert.match(html,new RegExp(`id="${id}"`));
+  for(const endpoint of ['/api/customer/auth/otp/request','/api/customer/auth/otp/verify','/api/customer/me','/api/customer/phone-change/request','/api/customer/phone-change/confirm','/api/customer/logout']) assert.ok(ui.includes(endpoint));
   assert.doesNotMatch(html,/points|stored value|package|referral/i);
   assert.match(html,/class="member-card"/);assert.match(html,/class="logo"/);
+});
+
+test('member modules are shop-policy flags and render only with enabled real payload while theme stays shop scoped',()=>{
+  const config=require('../lib/customer-member-config');
+  assert.deepEqual(config.normalizeMemberModules(),{singleSale:true,membershipTier:false,points:false,storedValue:false,packages:false,referral:false});
+  assert.deepEqual(config.memberPresentationFromShopSettings({points_enabled:true,stored_value_enabled:false}).memberModules,
+    {singleSale:true,membershipTier:false,points:true,storedValue:false,packages:false,referral:false});
+  assert.equal(config.normalizeMemberTheme().key,'premium-black');
+  assert.match(html,/data-member-theme="premium-black"/);assert.match(html,/id="memberDynamicSections" hidden/);
+  assert.match(ui,/modules\[key\]===true&&payload\[key\]!=null/);
+  assert.match(ui,/panel\.dataset\.shop=state\.shopSlug/);
+});
+
+test('phone change uses verified session endpoints and never sends shop or customer authority',()=>{
+  const request=ui.match(/async function requestPhoneChange\(\)\{([\s\S]*?)\}\n  async function confirmPhoneChange/)[1];
+  assert.match(request,/countryCode/);assert.match(request,/phone/);assert.doesNotMatch(request,/shopSlug|shopId|customerId/);
+  assert.match(server,/shopSlug:session\.shop_slug/);
 });
 
 test('OTP UI uses explicit countries generic messages and keeps shared locale state',()=>{
@@ -49,6 +66,6 @@ test('member API trusts session and shop slug, rejects client authority, and use
 });
 
 test('member UI dictionary is complete in Chinese and English',()=>{
-  const keys=['myMembership','backToBooking','memberSignInHelp','sendCode','verificationCode','verifyCode','resendCode','completeMembership','dateOfBirth','genderOptional','profile','editProfile','profileSaved'];
+  const keys=['myMembership','memberLabel','backToBooking','memberSignInHelp','sendCode','verificationCode','verifyCode','resendCode','completeMembership','dateOfBirth','genderOptional','profile','editProfile','profileSaved','changePhone','newPhone','verifyNewPhone','phoneChanged'];
   for(const key of keys){assert.notEqual(i18n.t(key,'zh-CN'),key);assert.notEqual(i18n.t(key,'en'),key);}
 });
