@@ -226,6 +226,23 @@ test('rendering and status action buttons remain available', () => {
   assert.doesNotMatch(rendered, /updateAppointmentStatus\('[^']+', 'completed'\)/);
 });
 
+test('owner status actions expose only the canonical lifecycle transitions', () => {
+  const page = createPage([]);
+  const render = status => {
+    page.context.renderAppointments([{ ...appointment, status }]);
+    return page.elements.get('content').innerHTML;
+  };
+  const pending = render('pending');
+  assert.match(pending, /'confirmed'/); assert.match(pending, /'cancelled'/);
+  assert.doesNotMatch(pending, /'arrived'|'no_show'|'in_service'|'completed'/);
+  const confirmed = render('confirmed');
+  assert.match(confirmed, /'arrived'/); assert.match(confirmed, /'no_show'/); assert.match(confirmed, /'cancelled'/);
+  assert.doesNotMatch(confirmed, /'pending'|'in_service'|'completed'/);
+  assert.match(render('arrived'), /'in_service'/);
+  assert.match(render('in_service'), /'completed'/);
+  for (const terminal of ['completed', 'no_show', 'cancelled']) assert.doesNotMatch(render(terminal), /updateAppointmentStatus/);
+});
+
 test('owner and staff use the shared blue confirmed-status token', () => {
   const staffHtml = fs.readFileSync(path.join(__dirname, '..', 'public', 'staff-appointments.html'), 'utf8');
   for (const source of [html, staffHtml]) {
@@ -234,6 +251,15 @@ test('owner and staff use the shared blue confirmed-status token', () => {
   }
   assert.match(html, /\.confirmed\s*\{\s*background: var\(--status-confirmed-soft\);\s*color: var\(--status-confirmed\);/);
   assert.match(staffHtml, /\.status-confirmed\s*\{\s*background: var\(--status-confirmed-soft\);\s*color: var\(--status-confirmed\);/);
+});
+
+test('owner status colors cover every canonical status', () => {
+  for (const token of ['pending', 'confirmed', 'active', 'completed', 'no-show', 'cancelled']) {
+    assert.match(html, new RegExp(`--status-${token}:`));
+    assert.match(html, new RegExp(`--status-${token}-soft:`));
+  }
+  assert.match(html, /\.arrived,\s*\.in_service\s*\{\s*background: var\(--status-active-soft\);\s*color: var\(--status-active\);/);
+  assert.match(html, /\.no_show\s*\{\s*background: var\(--status-no-show-soft\);\s*color: var\(--status-no-show\);/);
 });
 
 test('admin frontend has no legacy auth fallback or browser auth storage', () => {

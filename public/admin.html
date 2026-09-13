@@ -8,8 +8,18 @@
 
   <style>
     :root {
+      --status-pending: #8a6d00;
+      --status-pending-soft: #fff3cd;
       --status-confirmed: #2563eb;
       --status-confirmed-soft: #dbeafe;
+      --status-active: #23865b;
+      --status-active-soft: #e3f5eb;
+      --status-completed: #56616a;
+      --status-completed-soft: #eceff1;
+      --status-no-show: #b33f45;
+      --status-no-show-soft: #fbe9e9;
+      --status-cancelled: #8a5252;
+      --status-cancelled-soft: #f9eaea;
     }
 
     * {
@@ -310,8 +320,8 @@
     }
 
     .pending {
-      background: #fff3cd;
-      color: #8a6d00;
+      background: var(--status-pending-soft);
+      color: var(--status-pending);
     }
 
     .confirmed {
@@ -319,14 +329,25 @@
       color: var(--status-confirmed);
     }
 
+    .arrived,
+    .in_service {
+      background: var(--status-active-soft);
+      color: var(--status-active);
+    }
+
+    .no_show {
+      background: var(--status-no-show-soft);
+      color: var(--status-no-show);
+    }
+
     .cancelled {
-      background: #fde2e2;
-      color: #a61b1b;
+      background: var(--status-cancelled-soft);
+      color: var(--status-cancelled);
     }
 
     .completed {
-      background: #e8e8e8;
-      color: #444;
+      background: var(--status-completed-soft);
+      color: var(--status-completed);
     }
 
     .empty,
@@ -937,7 +958,7 @@ function renderAppointments(appointments) {
         
       <td>
   ${item.status === 'pending' ? `<button onclick="updateAppointmentStatus('${item.id}', 'confirmed')">${adminT('confirm')}</button><button onclick="updateAppointmentStatus('${item.id}', 'cancelled')">${adminT('cancel')}</button>` : ''}
-  ${item.status === 'confirmed' ? `<button onclick="updateAppointmentStatus('${item.id}', 'arrived')">${adminT('arrived')}</button><button onclick="updateAppointmentStatus('${item.id}', 'cancelled')">${adminT('cancel')}</button>` : ''}
+  ${item.status === 'confirmed' ? `<button onclick="updateAppointmentStatus('${item.id}', 'arrived')">${adminT('arrived')}</button><button onclick="updateAppointmentStatus('${item.id}', 'no_show')">${adminT('noShow')}</button><button onclick="updateAppointmentStatus('${item.id}', 'cancelled')">${adminT('cancel')}</button>` : ''}
   ${item.status === 'arrived' ? `<button onclick="updateAppointmentStatus('${item.id}', 'in_service')">${adminT('in_service')}</button>` : ''}
   ${item.status === 'in_service' ? `<button onclick="updateAppointmentStatus('${item.id}', 'completed')">${adminT('complete')}</button>` : ''}
 </td>
@@ -969,7 +990,7 @@ function renderAppointments(appointments) {
   `;
 }
 async function updateAppointmentStatus(id, status) {
-  const promptKey = { confirmed: 'confirmAppointmentPrompt', arrived: 'arrivedAppointmentPrompt', in_service: 'startServicePrompt', completed: 'completeAppointmentPrompt', cancelled: 'cancelAppointmentPrompt' }[status];
+  const promptKey = { confirmed: 'confirmAppointmentPrompt', arrived: 'arrivedAppointmentPrompt', in_service: 'startServicePrompt', completed: 'completeAppointmentPrompt', no_show: 'noShowAppointmentPrompt', cancelled: 'cancelAppointmentPrompt' }[status];
 
   if (!confirm(adminT(promptKey))) {
     return;
