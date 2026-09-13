@@ -7,6 +7,11 @@
   <title data-i18n="ownerPageTitle">GG-Beauty 老板端预约后台</title>
 
   <style>
+    :root {
+      --status-confirmed: #2563eb;
+      --status-confirmed-soft: #dbeafe;
+    }
+
     * {
       box-sizing: border-box;
     }
@@ -310,8 +315,8 @@
     }
 
     .confirmed {
-      background: #d9f7e8;
-      color: #087443;
+      background: var(--status-confirmed-soft);
+      color: var(--status-confirmed);
     }
 
     .cancelled {

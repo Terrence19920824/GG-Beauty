@@ -226,6 +226,16 @@ test('rendering and status action buttons remain available', () => {
   assert.doesNotMatch(rendered, /updateAppointmentStatus\('[^']+', 'completed'\)/);
 });
 
+test('owner and staff use the shared blue confirmed-status token', () => {
+  const staffHtml = fs.readFileSync(path.join(__dirname, '..', 'public', 'staff-appointments.html'), 'utf8');
+  for (const source of [html, staffHtml]) {
+    assert.match(source, /--status-confirmed:\s*#2563eb/);
+    assert.match(source, /--status-confirmed-soft:\s*#dbeafe/);
+  }
+  assert.match(html, /\.confirmed\s*\{\s*background: var\(--status-confirmed-soft\);\s*color: var\(--status-confirmed\);/);
+  assert.match(staffHtml, /\.status-confirmed\s*\{\s*background: var\(--status-confirmed-soft\);\s*color: var\(--status-confirmed\);/);
+});
+
 test('admin frontend has no legacy auth fallback or browser auth storage', () => {
   assert.doesNotMatch(html, /\/api\/admin\/(login|logout)/);
   assert.doesNotMatch(html, /localStorage|sessionStorage/);

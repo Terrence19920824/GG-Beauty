@@ -17,6 +17,8 @@
       --line: #e6e9ec;
       --accent: #1f6f68;
       --accent-soft: #e8f4f2;
+      --status-confirmed: #2563eb;
+      --status-confirmed-soft: #dbeafe;
       --danger: #a83d3d;
       --shadow: 0 7px 24px rgba(24, 36, 43, 0.07);
     }
@@ -370,8 +372,8 @@
     }
 
     .calendar-appointment.status-confirmed {
-      border-left-color: var(--accent);
-      background: #e5f3f1;
+      border-left-color: var(--status-confirmed);
+      background: var(--status-confirmed-soft);
     }
 
     .calendar-appointment.status-arrived,
@@ -462,8 +464,8 @@
     }
 
     .status-confirmed {
-      background: var(--accent-soft);
-      color: var(--accent);
+      background: var(--status-confirmed-soft);
+      color: var(--status-confirmed);
     }
 
     .status-arrived,
