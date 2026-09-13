@@ -17,11 +17,32 @@ test('customer booking exposes a bilingual VIP membership entry',()=>{
   assert.match(booking,/memberEntry\.href = `\/member\.html\?shop=/);
 });
 
+test('trusted shop branding replaces the fallback title and critical business values opt out of browser translation',()=>{
+  assert.match(booking,/id="shopBrandName"[^>]+translate="no"/);
+  assert.match(booking,/shopBrandName\.textContent = result\.data\.shopName \|\| customerShopSlug/);
+  assert.match(server,/shop\.name AS shop_name/);assert.match(server,/shopName: scope\.shop_name/);
+  for(const id of ['shopName','memberName','memberCode','memberVerifiedPhone']) assert.match(html,new RegExp(`id="${id}"[^>]+translate="no"`));
+  assert.match(booking,/id="cartTotals"[^>]+translate="no"/);
+});
+
+test('language control is a compact translucent 中｜E pill and locale defaults stay deterministic',()=>{
+  for(const page of [booking,html]){assert.match(page,/>中<\/button><span class="language-divider">｜<\/span><button[^>]*>E<\/button>/);assert.match(page,/backdrop-filter:blur\(9px\)/);}
+  assert.equal(i18n.detectBrowserLocale({languages:['zh-Hans','en']}),'zh-CN');
+  assert.equal(i18n.detectBrowserLocale({languages:['fr-FR']}),'en');
+  assert.equal(i18n.getStoredLocale({getItem:()=> 'en'},{languages:['zh-CN']}),'en');
+});
+
+test('member entry reuses the matching verified shop session and rejects a different-shop session in UI',()=>{
+  assert.match(ui,/member\.shop_slug!==state\.shopSlug/);
+  assert.match(ui,/state\.member=member/);
+  assert.match(ui,/await api\('\/api\/customer\/me'\)/);
+});
+
 test('member UI covers OTP registration returning member profile phone change and logout without empty benefit modules',()=>{
   for(const id of ['authPanel','countryCode','memberPhone','sendCode','codeStep','otpCode','verifyCode','resendCode','registrationStep','registrationName','registrationEmail','registrationDob','registrationGender','memberPanel','memberCode','memberVerifiedPhone','editMemberProfile','changeMemberPhone','phoneChangePanel','changeCountryCode','changePhone','sendPhoneChangeCode','phoneChangeCode','confirmPhoneChange','logoutMember']) assert.match(html,new RegExp(`id="${id}"`));
   for(const endpoint of ['/api/customer/auth/otp/request','/api/customer/auth/otp/verify','/api/customer/me','/api/customer/phone-change/request','/api/customer/phone-change/confirm','/api/customer/logout']) assert.ok(ui.includes(endpoint));
   assert.doesNotMatch(html,/points|stored value|package|referral/i);
-  assert.match(html,/class="member-card"/);assert.match(html,/class="logo"/);
+  assert.match(html,/class="member-card"/);assert.match(html,/class="logo [^"]*notranslate"/);
 });
 
 test('member modules are shop-policy flags and render only with enabled real payload while theme stays shop scoped',()=>{

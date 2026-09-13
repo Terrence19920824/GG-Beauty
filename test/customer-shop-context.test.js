@@ -32,7 +32,7 @@ test('server resolves active shop by slug and returns no tenant id', async () =>
   const client = {
     query: async (sql, params) => {
       queries.push({ sql, params });
-      return { rows: [{ shop_id: 'private-id', shop_slug: 'merchant-a', location_id: 'private-location' }] };
+      return { rows: [{ shop_id: 'private-id', shop_slug: 'merchant-a', shop_name: 'Merchant A', location_id: 'private-location' }] };
     },
     release() {}
   };
@@ -40,10 +40,11 @@ test('server resolves active shop by slug and returns no tenant id', async () =>
   await withServer(async baseUrl => {
     const response = await fetch(`${baseUrl}/api/booking/context?shopSlug=merchant-a`);
     assert.equal(response.status, 200);
-    assert.deepEqual(await response.json(), { success: true, data: { shopSlug: 'merchant-a' } });
+    assert.deepEqual(await response.json(), { success: true, data: { shopSlug: 'merchant-a', shopName: 'Merchant A' } });
   });
   assert.deepEqual(queries[0].params, ['merchant-a']);
   assert.match(queries[0].sql, /shop\.slug = \$1/);
+  assert.match(queries[0].sql, /shop\.name AS shop_name/);
   assert.match(queries[0].sql, /shop\.status = 'active'/);
 });
 

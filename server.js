@@ -2608,7 +2608,7 @@ const filterBookableCandidateSlots = async ({
 const loadTrustedCustomerBookingScope = async (dbClient, shopSlug) => {
   const result = await dbClient.query(
     `
-    SELECT shop.id AS shop_id, shop.slug AS shop_slug, location.id AS location_id,
+    SELECT shop.id AS shop_id, shop.slug AS shop_slug, shop.name AS shop_name, location.id AS location_id,
       location.timezone
     FROM shops AS shop
     JOIN LATERAL (
@@ -2640,7 +2640,7 @@ app.get('/api/booking/context', async (req, res) => {
     client = await req.app.locals.bookingPool.connect();
     const scope = await loadTrustedCustomerBookingScope(client, shopSlug);
     if (!scope) return res.status(404).json({ success: false, message: 'Shop is unavailable' });
-    return res.json({ success: true, data: { shopSlug: scope.shop_slug } });
+    return res.json({ success: true, data: { shopSlug: scope.shop_slug, shopName: scope.shop_name } });
   } catch (error) {
     console.error('Resolve customer shop context error:', safeStaffAuthErrorCode(error));
     return res.status(500).json({ success: false, message: 'Unable to resolve shop context' });

@@ -25,6 +25,7 @@
     }
 
     .header {
+      position: relative;
       text-align: center;
       margin-bottom: 24px;
     }
@@ -166,8 +167,10 @@
     .recipient-option { margin: 0; padding: 13px 10px; background: #fff; color: #222; border: 1px solid #ddd; font-size: 14px; }
     .recipient-option.selected { background: #111; color: #fff; border-color: #111; }
     .phone-row { display: grid; grid-template-columns: 145px 1fr; gap: 8px; }
-    .language-switch { display: inline-flex; padding: 3px; border: 1px solid #ddd; border-radius: 999px; background: #fff; }
-    .language-switch button { width: auto; margin: 0; padding: 7px 12px; border-radius: 999px; font-size: 13px; }
+    .language-switch { position:absolute;right:0;top:-16px;display:inline-flex;align-items:center;padding:3px 5px;border:1px solid rgba(80,80,80,.16);border-radius:999px;background:rgba(255,255,255,.66);backdrop-filter:blur(9px);-webkit-backdrop-filter:blur(9px);color:#888; }
+    .language-switch button { width:auto;margin:0;padding:4px 7px;border:0;border-radius:999px;background:transparent;color:#999;font-size:12px;font-weight:600; }
+    .language-switch button:disabled { opacity:1;color:#222;background:rgba(255,255,255,.72);box-shadow:0 1px 5px rgba(0,0,0,.07); }
+    .language-divider{font-size:11px;color:#bbb}
     .member-entry { display: inline-block; margin-top: 12px; padding: 9px 14px; border-radius: 999px; background: #111; color: #fff; text-decoration: none; font-size: 13px; font-weight: 700; }
   </style>
 </head>
@@ -177,9 +180,9 @@
 <div class="container">
 
   <div class="header">
-    <h1>GG-Beauty</h1>
+    <h1 id="shopBrandName" translate="no" class="notranslate">GG-Beauty</h1>
     <p data-i18n="onlineAppointment">在线预约</p>
-    <div class="language-switch"><button id="languageZh" type="button">中文</button><button id="languageEn" type="button">EN</button></div>
+    <div class="language-switch" aria-label="Language"><button id="languageZh" type="button" aria-label="中文">中</button><span class="language-divider">｜</span><button id="languageEn" type="button" aria-label="English">E</button></div>
     <div><a id="memberEntry" class="member-entry" href="/member.html" data-i18n="membershipEntry">VIP / 我的会员</a></div>
   </div>
 
@@ -191,7 +194,7 @@
   <div id="bookingStep" class="card" hidden>
 
     <label id="serviceLabel" data-i18n="serviceManagement">服务项目</label>
-    <select id="service">
+    <select id="service" translate="no" class="notranslate">
       <option value="" data-i18n="loadingCustomerServices">正在读取服务...</option>
     </select>
 
@@ -217,8 +220,8 @@
         <label data-i18n="recipientEmail">服务接收人 Email（选填）</label>
         <input id="recipientEmail" type="email" placeholder="example@email.com">
       </div>
-      <div id="cartItems"></div>
-      <div id="cartTotals" class="cart-total"></div>
+      <div id="cartItems" translate="no" class="notranslate"></div>
+      <div id="cartTotals" class="cart-total notranslate" translate="no"></div>
       <button id="addAnotherBtn" type="button" data-i18n="addAnotherService">＋ 继续添加项目</button>
     </div>
 
@@ -268,7 +271,7 @@
       placeholder="example@email.com"
     >
 
-    <div id="confirmationSummary" class="cart-item" hidden></div>
+    <div id="confirmationSummary" class="cart-item notranslate" translate="no" hidden></div>
 
     <button id="submitBtn">
       <span data-i18n="bookAppointment">确认预约</span>
@@ -413,6 +416,8 @@ async function loadCustomerShopContext() {
     throw new Error(result.message || 'Shop is unavailable');
   }
   customerShopSlug = result.data.shopSlug;
+  shopBrandName.textContent = result.data.shopName || customerShopSlug;
+  document.title = `${shopBrandName.textContent} · ${customerT('onlineAppointment')}`;
   memberEntry.href = `/member.html?shop=${encodeURIComponent(customerShopSlug)}`;
 }
 
@@ -433,6 +438,8 @@ function renderCategories() {
     button.dataset.categoryId = category.categoryId;
     button.innerHTML = `<span class="category-icon" aria-hidden="true">${categoryFlowApi.categoryIcon(category.iconKey)}</span><span class="category-name"></span>`;
     button.querySelector('.category-name').textContent = category.name;
+    button.querySelector('.category-name').setAttribute('translate','no');
+    button.querySelector('.category-name').classList.add('notranslate');
     button.addEventListener('click', () => selectCategory(category.categoryId));
     categoryGrid.appendChild(button);
   }
@@ -515,7 +522,7 @@ async function renderCart() {
     const heading = document.createElement('h3'); heading.textContent = service.name; card.appendChild(heading);
     const meta = document.createElement('div'); meta.className = 'cart-meta'; meta.textContent = `${localeApi.formatDuration(service.durationMinutes,currentLocale)} · ${localeApi.formatPrice(service.price,service.priceIsFrom,currentLocale)}`; card.appendChild(meta);
     const label = document.createElement('label'); label.textContent = customerT('chooseStaffCustomer'); card.appendChild(label);
-    const select = document.createElement('select');
+    const select = document.createElement('select'); select.setAttribute('translate','no'); select.classList.add('notranslate');
     select.innerHTML = `<option value="${NO_PREFERENCE_VALUE}">${customerT('customerStaffNoPreference')}</option>` + members.map(member => `<option value="${member.staffId}">${member.displayName}</option>`).join('');
     select.value = item.staffSelectionType === 'specific' ? item.staffId : NO_PREFERENCE_VALUE;
     select.addEventListener('change', async () => { cart = cartApi.updateStaff(cart,item.clientItemKey,select.value===NO_PREFERENCE_VALUE?'no_preference':'specific',select.value); clearStaleTime(); await refreshAvailabilityAfterCartChange(); });
@@ -548,6 +555,7 @@ async function setLocale(locale) {
   document.querySelectorAll('[data-i18n-placeholder]').forEach(element => { element.placeholder = customerT(element.dataset.i18nPlaceholder); });
   document.getElementById('languageZh').disabled = currentLocale === 'zh-CN';
   document.getElementById('languageEn').disabled = currentLocale === 'en';
+  document.title = `${shopBrandName.textContent} · ${customerT('onlineAppointment')}`;
   renderCountryOptions(bookerCountryCode);
   renderCountryOptions(recipientCountryCode);
   renderRecipientChoice();
@@ -574,6 +582,7 @@ const serviceInput =
 
 const categoryStep = document.getElementById('categoryStep');
 const categoryGrid = document.getElementById('categoryGrid');
+const shopBrandName = document.getElementById('shopBrandName');
 const bookingStep = document.getElementById('bookingStep');
 const contactStep = document.getElementById('contactStep');
 const cartPanel=document.getElementById('cartPanel'),cartItems=document.getElementById('cartItems'),cartTotals=document.getElementById('cartTotals');

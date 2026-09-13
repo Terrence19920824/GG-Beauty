@@ -22,7 +22,7 @@ const createCustomerContext = () => {
     options: [], dataset: {}, hidden: false, classList: { add() {}, remove() {}, toggle() {} },
     addEventListener() {}, setAttribute() {}, appendChild(child) { this.options.push(child); }
   });
-  for (const id of ['date', 'dateDisplay', 'service', 'times', 'message', 'languageZh', 'languageEn', 'submitBtn', 'customerName', 'phone', 'email', 'categoryStep', 'categoryGrid', 'bookingStep', 'contactStep', 'cartPanel', 'cartItems', 'cartTotals', 'confirmationSummary', 'addServiceBtn', 'addAnotherBtn', 'bookForMyself', 'bookForSomeoneElse', 'recipientFields', 'recipientName', 'recipientPhone', 'recipientEmail', 'bookerCountryCode', 'recipientCountryCode', 'previousMonth', 'nextMonth', 'calendarTitle', 'calendarGrid', 'nextAvailableDates']) {
+  for (const id of ['date', 'dateDisplay', 'service', 'times', 'message', 'languageZh', 'languageEn', 'shopBrandName', 'submitBtn', 'customerName', 'phone', 'email', 'categoryStep', 'categoryGrid', 'bookingStep', 'contactStep', 'cartPanel', 'cartItems', 'cartTotals', 'confirmationSummary', 'addServiceBtn', 'addAnotherBtn', 'bookForMyself', 'bookForSomeoneElse', 'recipientFields', 'recipientName', 'recipientPhone', 'recipientEmail', 'bookerCountryCode', 'recipientCountryCode', 'previousMonth', 'nextMonth', 'calendarTitle', 'calendarGrid', 'nextAvailableDates']) {
     elements.set(id, makeElement());
   }
   const fetchUrls = [];
@@ -44,6 +44,7 @@ const createCustomerContext = () => {
     localStorage: { getItem: () => 'zh-CN', setItem() {} },
     navigator: { languages: ['zh-CN'] },
     document: {
+      title: '',
       documentElement: { lang: 'zh-CN' },
       getElementById: id => elements.get(id),
       querySelectorAll: () => [],
