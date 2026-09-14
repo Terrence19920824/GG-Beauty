@@ -18,7 +18,8 @@
  * - payments: array of { method, valueKind, amountMinor, cashCollectedMinor }
  * 
  * READ ENDPOINT STATUS:
- * - AWAITING BACKEND READ CONTRACT: Backend currently provides POST checkout. In the meantime, dev/test uses mock fixture.
+ * - GET /api/owner/appointments/:appointmentId/checkout-session is owner-authenticated
+ *   and returns authoritative checkout initialization data.
  */
 
 (function (root, factory) {
@@ -35,7 +36,7 @@
   const POS_CONTRACT_VERSION = '1.1.0';
   const SYNC_CHANNEL_NAME = 'gg_pos_checkout_sync';
   const STORAGE_SYNC_KEY = 'gg_pos_checkout_sync_payload';
-  const READ_ENDPOINT_STATUS = 'AWAITING_BACKEND_READ_CONTRACT';
+  const READ_ENDPOINT_STATUS = 'GET_CHECKOUT_SESSION_AVAILABLE';
 
   /**
    * Mock development fixture.
@@ -554,14 +555,36 @@
    * Backend Integration Boundary
    */
   async function fetchSession(appointmentId) {
-    // AWAITING BACKEND READ CONTRACT:
-    // Backend currently implements POST /api/owner/appointments/:appointmentId/checkout.
-    // Dedicated GET session route will be aligned once backend read contract is published.
-    if (!appointmentId) return getMockFixture();
-
-    const fixture = getMockFixture();
-    fixture.appointmentId = appointmentId;
-    return fixture;
+    if (!appointmentId || typeof fetch !== 'function') throw new Error('CHECKOUT_APPOINTMENT_ID_REQUIRED');
+    const response = await fetch(`/api/owner/appointments/${encodeURIComponent(appointmentId)}/checkout-session`, {
+      credentials: 'same-origin'
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || !result.success || !result.data) throw new Error(result.code || 'CHECKOUT_SESSION_READ_FAILED');
+    const data = result.data;
+    return {
+      appointmentId: data.appointmentId,
+      appointmentStatus: data.appointmentStatus,
+      appointmentTime: data.startAt,
+      customer: data.customer,
+      items: data.items.map(item => ({
+        itemId: item.appointmentItemId,
+        appointmentItemId: item.appointmentItemId,
+        serviceName: item.serviceName,
+        quantity: item.quantity || 1,
+        quotedPrice: fromMinorUnits(item.quotePriceMinor),
+        actualPrice: fromMinorUnits(item.quotePriceMinor),
+        itemDiscount: 0,
+        priceOverrideReason: '',
+        discountReason: '',
+        primaryStaff: item.primaryStaff,
+        assistantStaff: item.assistantStaff
+      })),
+      discount: { type: 'none', value: 0, reason: '' },
+      paymentState: { mode: 'single', activeMethod: 'paynow', tenderedCash: 0, splitPayments: [], status: 'ready' },
+      existingCheckout: data.checkout || null,
+      checkoutLocked: Boolean(data.checkoutLocked)
+    };
   }
 
   /**

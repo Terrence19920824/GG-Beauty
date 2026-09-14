@@ -277,8 +277,32 @@ test('responsive CSS adapts specifically for iPad landscape and enforces accessi
   assert.match(checkoutCss, /@media\s*\(\s*prefers-reduced-motion:\s*reduce\s*\)/);
 });
 
-test('read-endpoint status is explicitly marked awaiting backend read contract', () => {
-  assert.equal(adapter.READ_ENDPOINT_STATUS, 'AWAITING_BACKEND_READ_CONTRACT');
+test('adapter uses the authenticated canonical checkout-session read route without mock fallback', () => {
+  assert.equal(adapter.READ_ENDPOINT_STATUS, 'GET_CHECKOUT_SESSION_AVAILABLE');
+  assert.match(adapter.fetchSession.toString(), /checkout-session/);
+  assert.doesNotMatch(adapter.fetchSession.toString(), /return getMockFixture/);
+  assert.doesNotMatch(ownerHtml, /let session = adapter\.getMockFixture\(\)/);
+  assert.match(ownerHtml, /adapter\.fetchSession\(appointmentId\)/);
+});
+
+test('adapter maps only canonical checkout-session data and fails closed on read errors', async () => {
+  const originalFetch = global.fetch;
+  let requestedUrl;
+  try {
+    global.fetch = async url => { requestedUrl = url; return ({ ok: true, json: async () => ({ success: true, data: {
+      appointmentId: 'appt-1', appointmentStatus: 'confirmed', startAt: '2030-01-01T02:00:00Z', currencyCode: 'SGD',
+      customer: { name: 'Customer', phone: '+6581234567', memberCode: 'GG-000001' },
+      items: [{ appointmentItemId: 'item-1', serviceName: 'Facial', quotePriceMinor: 9800, quantity: 1, primaryStaff: null, assistantStaff: [] }],
+      checkout: null, checkoutLocked: false
+    } }) }); };
+    const session = await adapter.fetchSession('appt-1');
+    assert.match(requestedUrl, /\/api\/owner\/appointments\/appt-1\/checkout-session/);
+    assert.equal(session.items[0].quotedPrice, 98);
+    assert.equal(session._isMockFixture, undefined);
+
+    global.fetch = async () => ({ ok: false, json: async () => ({ success: false, code: 'CHECKOUT_APPOINTMENT_NOT_FOUND' }) });
+    await assert.rejects(adapter.fetchSession('appt-1'), /CHECKOUT_APPOINTMENT_NOT_FOUND/);
+  } finally { global.fetch = originalFetch; }
 });
 
 test('backend safety: zero server code, database, migration, or maintenance changes', () => {

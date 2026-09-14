@@ -53,6 +53,7 @@ const {
 } = require('./lib/customer-member-identity');
 const { isKnownStatus, canTransition, recordStatusHistory } = require('./lib/appointment-status');
 const { createCheckoutPos } = require('./lib/checkout-pos');
+const { createCheckoutPosRead } = require('./lib/checkout-pos-read');
 
 const app = express();
 
@@ -654,6 +655,15 @@ const requireOwnerRole = allowedRoles =>
 const checkoutPos = createCheckoutPos({
   pool: { connect: (...args) => app.locals.ownerAuthPool.connect(...args) }
 });
+const checkoutPosRead = createCheckoutPosRead({
+  pool: { connect: (...args) => app.locals.ownerAuthPool.connect(...args) }
+});
+app.get(
+  '/api/owner/appointments/:appointmentId/checkout-session',
+  requireOwnerAuth,
+  requireOwnerRole(['owner', 'manager']),
+  checkoutPosRead.getSession
+);
 app.post(
   '/api/owner/appointments/:appointmentId/checkout',
   requireOwnerAuth,

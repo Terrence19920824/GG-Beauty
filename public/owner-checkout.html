@@ -209,7 +209,7 @@
             </div>
 
             <!-- Submit Checkout Button -->
-            <button type="button" id="completeCheckoutBtn" class="checkout-submit-btn" data-i18n="completeCheckout">
+            <button type="button" id="completeCheckoutBtn" class="checkout-submit-btn" data-i18n="completeCheckout" disabled>
               确认结账
             </button>
             <div id="validationHint" style="font-size:12px; color:var(--color-error,#c62828); margin-top:6px; display:none; text-align:center;"></div>
@@ -247,7 +247,7 @@
       'use strict';
 
       const adapter = window.ggCheckoutAdapter;
-      let session = adapter.getMockFixture();
+      let session = null;
       let currentLocale = 'zh-CN';
 
       const dictionary = {
@@ -478,7 +478,11 @@
         const submitBtn = document.getElementById('completeCheckoutBtn');
         const hintEl = document.getElementById('validationHint');
 
-        if (validation.valid) {
+        if (session.checkoutLocked) {
+          submitBtn.disabled = true;
+          hintEl.style.display = 'block';
+          hintEl.textContent = 'Checkout already exists for this appointment.';
+        } else if (validation.valid) {
           submitBtn.disabled = false;
           hintEl.style.display = 'none';
         } else {
@@ -685,17 +689,25 @@
 
       document.getElementById('closeSuccessModalBtn').onclick = () => {
         document.getElementById('successModal').style.display = 'none';
-        session = adapter.getMockFixture();
-        document.getElementById('discountReasonInput').value = '';
-        renderItems();
-        renderBilling();
-        syncDisplay();
       };
 
-      // Initial Mount
-      renderItems();
-      renderBilling();
-      syncDisplay();
+      // Production checkout never falls back to mock data. A developer may
+      // use adapter.getMockFixture() explicitly in a test, not this page.
+      (async function initializeCheckout() {
+        const appointmentId = new URLSearchParams(window.location.search).get('appointmentId');
+        const feedback = document.getElementById('checkoutFeedback');
+        try {
+          session = await adapter.fetchSession(appointmentId);
+          renderItems();
+          renderBilling();
+          syncDisplay();
+        } catch (error) {
+          feedback.style.display = 'block';
+          feedback.className = 'message error';
+          feedback.textContent = error.message || 'CHECKOUT_SESSION_READ_FAILED';
+          document.getElementById('completeCheckoutBtn').disabled = true;
+        }
+      })();
     })();
   </script>
 </body>
