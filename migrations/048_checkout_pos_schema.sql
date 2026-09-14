@@ -2,8 +2,11 @@ BEGIN;
 SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='30s';
 -- Required only to make the tenant-scoped line-item FK legally referenceable;
 -- it does not rewrite business rows.
-ALTER TABLE public.appointment_items
-  ADD CONSTRAINT appointment_items_shop_id_id_key UNIQUE (shop_id,id);
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='public.appointment_items'::regclass AND contype='u' AND pg_get_constraintdef(oid) LIKE '%UNIQUE (shop_id, id)%') THEN
+    ALTER TABLE public.appointment_items ADD CONSTRAINT appointment_items_shop_id_id_key UNIQUE (shop_id,id);
+  END IF;
+END $$;
 CREATE TABLE public.checkout_transactions (
  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), shop_id uuid NOT NULL, appointment_id uuid NOT NULL, customer_id uuid NOT NULL,
  status text NOT NULL DEFAULT 'draft', currency_code char(3) NOT NULL, quote_total_minor bigint NOT NULL, actual_total_minor bigint NOT NULL, discount_total_minor bigint NOT NULL DEFAULT 0, final_due_minor bigint NOT NULL, paid_minor bigint NOT NULL DEFAULT 0,
