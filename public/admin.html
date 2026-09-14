@@ -759,6 +759,38 @@ function openCheckoutWorkflow(appointmentId) {
 }
 globalScope.openCheckoutWorkflow = openCheckoutWorkflow;
 
+function resolveCheckoutFinancialState(item) {
+  if (!item || typeof item !== 'object') return null;
+
+  // Terminal or non-service appointment statuses cannot have active checkout financial state
+  // Even if inconsistent client data exists, fail closed
+  const apptStatus = item.status;
+  if (apptStatus === 'cancelled' || apptStatus === 'no_show' || apptStatus === 'pending') {
+    return null;
+  }
+
+  // Explicit checkout/payment state from authoritative data source
+  const rawState = String(
+    item.checkout_status ||
+    item.checkoutStatus ||
+    item.payment_status ||
+    item.paymentStatus ||
+    ''
+  ).toLowerCase().trim();
+
+  if (rawState === 'paid') {
+    return 'paid';
+  }
+  if (rawState === 'awaiting_checkout' || rawState === 'draft') {
+    return 'awaiting_checkout';
+  }
+
+  // Decoupled architecture: appointment.status === 'completed' NEVER implies checkout is paid
+  // If no explicit checkout state is provided, return null (fail closed)
+  return null;
+}
+globalScope.resolveCheckoutFinancialState = resolveCheckoutFinancialState;
+
 function showLogin(message = '') {
   adminContent.hidden = true;
   loginOverlay.style.display = 'flex';
@@ -1062,6 +1094,9 @@ function renderAppointments(appointments) {
       const statusClass =
         item.status || 'pending';
 
+      const checkoutFinancialState =
+        resolveCheckoutFinancialState(item);
+
       return `
         <tr>
 
@@ -1095,8 +1130,8 @@ function renderAppointments(appointments) {
                 item.status
               )}
             </span>
-            ${item.status === 'in_service' ? `<span class="pill status-awaiting-checkout notranslate" translate="no">${adminT('awaitingCheckout')}</span>` : ''}
-            ${item.status === 'completed' ? `<span class="pill status-paid notranslate" translate="no">${adminT('paid')}</span>` : ''}
+            ${checkoutFinancialState === 'awaiting_checkout' ? `<span class="pill status-awaiting-checkout notranslate" translate="no">${adminT('awaitingCheckout')}</span>` : ''}
+            ${checkoutFinancialState === 'paid' ? `<span class="pill status-paid notranslate" translate="no">${adminT('paid')}</span>` : ''}
           </td>
 
         
@@ -1104,7 +1139,7 @@ function renderAppointments(appointments) {
   ${item.status === 'pending' ? `<button onclick="updateAppointmentStatus('${item.id}', 'confirmed')">${adminT('confirm')}</button><button onclick="updateAppointmentStatus('${item.id}', 'cancelled')">${adminT('cancel')}</button>` : ''}
   ${item.status === 'confirmed' ? `<button onclick="updateAppointmentStatus('${item.id}', 'arrived')">${adminT('arrived')}</button><button onclick="updateAppointmentStatus('${item.id}', 'no_show')">${adminT('noShow')}</button><button onclick="updateAppointmentStatus('${item.id}', 'cancelled')">${adminT('cancel')}</button>` : ''}
   ${item.status === 'arrived' ? `<button onclick="updateAppointmentStatus('${item.id}', 'in_service')">${adminT('in_service')}</button>` : ''}
-  ${item.status === 'in_service' ? `<button onclick="updateAppointmentStatus('${item.id}', 'completed')">${adminT('complete')}</button><button type="button" class="checkout-btn" onclick="openCheckoutWorkflow('${item.id}')" data-feature-gated="true" title="${adminT('checkoutDisabledNotice')}">${adminT('goToCheckout')}</button>` : ''}
+  ${item.status === 'in_service' ? `<button onclick="updateAppointmentStatus('${item.id}', 'completed')">${adminT('complete')}</button>${checkoutFinancialState !== 'paid' ? `<button type="button" class="checkout-btn" onclick="openCheckoutWorkflow('${item.id}')" data-feature-gated="true" title="${adminT('checkoutDisabledNotice')}">${adminT('goToCheckout')}</button>` : ''}` : ''}
 </td>
 </tr>
 `;

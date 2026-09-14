@@ -106,45 +106,135 @@ test('owner admin HTML defines front desk workflow stepper with 5-stage progress
 });
 
 test('front desk workflow bar is isolated from appointment list content container', () => {
-  // Must be outside <div id="content"> to avoid mutating content.innerHTML assertions
   const contentDivIndex = html.indexOf('<div id="content"');
   const workflowBarIndex = html.indexOf('class="frontdesk-workflow-bar"');
   assert.ok(workflowBarIndex > 0, 'workflow bar must exist');
   assert.ok(contentDivIndex > workflowBarIndex, 'workflow bar must be placed above #content');
 });
 
-test('renderAppointments displays awaiting checkout pill and checkout button on in_service status', () => {
+test('completed appointment without explicit paid checkout does NOT show Paid pill (fail closed)', () => {
   const { context, elements } = createPageContext();
-  context.renderAppointments([{ ...sampleAppointment, status: 'in_service' }]);
-  const rendered = elements.get('content').innerHTML;
-
-  assert.match(rendered, /class="pill status-awaiting-checkout notranslate"/);
-  assert.match(rendered, /class="checkout-btn"/);
-  assert.match(rendered, /openCheckoutWorkflow\('00000000-0000-4000-8000-000000000001'\)/);
-  assert.match(rendered, /data-feature-gated="true"/);
-});
-
-test('renderAppointments displays paid pill on completed status and omits checkout action', () => {
-  const { context, elements } = createPageContext();
+  // Appointment is completed, but has no explicit checkout/payment state
   context.renderAppointments([{ ...sampleAppointment, status: 'completed' }]);
   const rendered = elements.get('content').innerHTML;
 
-  assert.match(rendered, /class="pill status-paid notranslate"/);
+  // Appointment status displays "已完成"
+  assert.match(rendered, /class="status completed"/);
+  assert.match(rendered, /已完成/);
+
+  // Decoupling rule: MUST NOT infer "Paid" from appointment.status === 'completed'
+  assert.doesNotMatch(rendered, /class="pill status-paid notranslate"/);
+  assert.doesNotMatch(rendered, /class="pill status-awaiting-checkout notranslate"/);
   assert.doesNotMatch(rendered, /class="checkout-btn"/);
   assert.doesNotMatch(rendered, /openCheckoutWorkflow/);
 });
 
-test('renderAppointments strictly disallows checkout actions on unauthorized statuses', () => {
+test('paid status pill only appears from explicit checkout state', () => {
+  const { context, elements } = createPageContext();
+
+  // Explicit checkout_status === 'paid'
+  context.renderAppointments([{
+    ...sampleAppointment,
+    status: 'completed',
+    checkout_status: 'paid'
+  }]);
+  let rendered = elements.get('content').innerHTML;
+  assert.match(rendered, /class="pill status-paid notranslate"/);
+  assert.match(rendered, /已结账/);
+
+  // Case-insensitivity & alternative canonical field payment_status
+  context.renderAppointments([{
+    ...sampleAppointment,
+    status: 'completed',
+    payment_status: 'PAID'
+  }]);
+  rendered = elements.get('content').innerHTML;
+  assert.match(rendered, /class="pill status-paid notranslate"/);
+});
+
+test('in_service displays checkout entry button, and awaiting checkout pill only appears from explicit checkout state', () => {
+  const { context, elements } = createPageContext();
+
+  // in_service without explicit checkout session: has entry button, but does NOT assert awaiting-checkout financial pill
+  context.renderAppointments([{ ...sampleAppointment, status: 'in_service' }]);
+  let rendered = elements.get('content').innerHTML;
+
+  assert.match(rendered, /class="checkout-btn"/);
+  assert.match(rendered, /openCheckoutWorkflow\('00000000-0000-4000-8000-000000000001'\)/);
+  assert.match(rendered, /data-feature-gated="true"/);
+  assert.doesNotMatch(rendered, /class="pill status-awaiting-checkout notranslate"/, 'Must not assume awaiting-checkout without explicit session');
+
+  // in_service with explicit checkout_status === 'awaiting_checkout': displays badge
+  context.renderAppointments([{
+    ...sampleAppointment,
+    status: 'in_service',
+    checkout_status: 'awaiting_checkout'
+  }]);
+  rendered = elements.get('content').innerHTML;
+  assert.match(rendered, /class="pill status-awaiting-checkout notranslate"/);
+  assert.match(rendered, /class="checkout-btn"/);
+
+  // in_service with explicit checkout_status === 'paid': displays paid pill and omits duplicate checkout button
+  context.renderAppointments([{
+    ...sampleAppointment,
+    status: 'in_service',
+    checkout_status: 'paid'
+  }]);
+  rendered = elements.get('content').innerHTML;
+  assert.match(rendered, /class="pill status-paid notranslate"/);
+  assert.doesNotMatch(rendered, /class="checkout-btn"/, 'Already paid appointments should not show checkout button');
+});
+
+test('cancelled, no_show, and pending appointments strictly cannot show checkout financial badges even if inconsistent data is passed', () => {
   const { context, elements } = createPageContext();
 
   for (const unauthorizedStatus of ['pending', 'cancelled', 'no_show']) {
-    context.renderAppointments([{ ...sampleAppointment, status: unauthorizedStatus }]);
+    // Pass conflicting/corrupted checkout status
+    context.renderAppointments([{
+      ...sampleAppointment,
+      status: unauthorizedStatus,
+      checkout_status: 'paid'
+    }]);
     const rendered = elements.get('content').innerHTML;
 
-    assert.doesNotMatch(rendered, /class="checkout-btn"/, `${unauthorizedStatus} must not have checkout button`);
-    assert.doesNotMatch(rendered, /status-awaiting-checkout/, `${unauthorizedStatus} must not show awaiting checkout badge`);
+    assert.doesNotMatch(rendered, /status-paid/, `${unauthorizedStatus} must never show paid pill`);
+    assert.doesNotMatch(rendered, /status-awaiting-checkout/, `${unauthorizedStatus} must never show awaiting checkout pill`);
+    assert.doesNotMatch(rendered, /checkout-btn/, `${unauthorizedStatus} must not have checkout button`);
     assert.doesNotMatch(rendered, /openCheckoutWorkflow/, `${unauthorizedStatus} must not reference openCheckoutWorkflow`);
   }
+});
+
+test('resolveCheckoutFinancialState directly verifies semantic decoupling and fail-closed safety', () => {
+  const { context } = createPageContext();
+  const resolve = context.resolveCheckoutFinancialState;
+
+  assert.strictEqual(typeof resolve, 'function', 'resolveCheckoutFinancialState must be exposed');
+
+  // Completed without checkout state NEVER equals paid
+  assert.strictEqual(resolve({ status: 'completed' }), null);
+  assert.strictEqual(resolve({ status: 'completed', checkout_status: '' }), null);
+  assert.strictEqual(resolve({ status: 'completed', checkout_status: 'none' }), null);
+
+  // Explicit paid states
+  assert.strictEqual(resolve({ status: 'completed', checkout_status: 'paid' }), 'paid');
+  assert.strictEqual(resolve({ status: 'completed', checkoutStatus: 'PAID' }), 'paid');
+  assert.strictEqual(resolve({ status: 'completed', payment_status: 'paid' }), 'paid');
+  assert.strictEqual(resolve({ status: 'in_service', checkout_status: 'paid' }), 'paid');
+
+  // Explicit awaiting checkout states
+  assert.strictEqual(resolve({ status: 'in_service', checkout_status: 'awaiting_checkout' }), 'awaiting_checkout');
+  assert.strictEqual(resolve({ status: 'in_service', checkout_status: 'draft' }), 'awaiting_checkout');
+  assert.strictEqual(resolve({ status: 'completed', checkout_status: 'awaiting_checkout' }), 'awaiting_checkout');
+
+  // in_service without explicit state fails closed
+  assert.strictEqual(resolve({ status: 'in_service' }), null);
+
+  // Unauthorized appointment statuses fail closed even if paid
+  assert.strictEqual(resolve({ status: 'pending', checkout_status: 'paid' }), null);
+  assert.strictEqual(resolve({ status: 'cancelled', checkout_status: 'paid' }), null);
+  assert.strictEqual(resolve({ status: 'no_show', checkout_status: 'paid' }), null);
+  assert.strictEqual(resolve(null), null);
+  assert.strictEqual(resolve(undefined), null);
 });
 
 test('feature gate safety prevents unreleased production checkout invocation and shows notice', () => {
