@@ -1,0 +1,294 @@
+/* GG-Beauty Customer Shared UI Foundation
+   Shared design tokens, reusable component classes, accessibility, and responsive utilities
+   Shared across Customer Booking (/index.html) and Customer VIP Member (/member.html).
+*/
+
+:root {
+  /* Spacing Tokens */
+  --space-0: 0px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+
+  /* Border Radius Tokens */
+  --radius-xs: 4px;
+  --radius-sm: 8px;
+  --radius-md: 10px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-2xl: 18px;
+  --radius-3xl: 22px;
+  --radius-pill: 999px;
+
+  /* Elevation Shadows */
+  --shadow-xs: 0 1px 3px rgba(0, 0, 0, 0.05);
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 18px rgba(0, 0, 0, 0.06);
+  --shadow-lg: 0 5px 22px rgba(0, 0, 0, 0.08);
+  --shadow-vip: 0 14px 35px rgba(0, 0, 0, 0.22);
+  --shadow-focus: 0 0 0 3px rgba(17, 17, 17, 0.16);
+
+  /* Animation & Transitions */
+  --transition-fast: 0.15s ease;
+  --transition-normal: 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* Typography Scale */
+  --font-base: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  --text-xs: 11px;
+  --text-sm: 13px;
+  --text-base: 15px;
+  --text-md: 16px;
+  --text-lg: 17px;
+  --text-xl: 20px;
+  --text-2xl: 24px;
+  --text-3xl: 26px;
+
+  /* Status Colors */
+  --color-success: #2e7d32;
+  --color-error: #c62828;
+  --color-warning: #ed6c02;
+  --color-info: #0288d1;
+}
+
+/* Accessibility & Focus Rings */
+:focus-visible {
+  outline: 2px solid var(--theme-primary, #111111);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, ::before, ::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Page Spacing & Shell */
+.customer-page-shell {
+  max-width: 520px;
+  margin: 0 auto;
+  padding: var(--space-6) var(--space-4) var(--space-12);
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.section-spacing {
+  margin-bottom: var(--space-4);
+}
+
+/* Shared Card & Panel Surface */
+.customer-card,
+.card,
+.panel {
+  background: var(--theme-surface, #ffffff);
+  border-radius: var(--radius-xl, 16px);
+  padding: var(--space-5, 20px);
+  margin-bottom: var(--space-4, 16px);
+  box-shadow: var(--shadow-md);
+  box-sizing: border-box;
+  transition: box-shadow var(--transition-fast);
+}
+
+/* Form Controls & Inputs */
+.customer-input,
+input,
+select {
+  width: 100%;
+  padding: 13px;
+  border: 1px solid var(--theme-border, #dddddd);
+  border-radius: var(--radius-md, 10px);
+  font-size: var(--text-md, 16px);
+  background: var(--theme-surface, #ffffff);
+  color: var(--theme-text, #222222);
+  box-sizing: border-box;
+  font-family: inherit;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.customer-input:focus,
+input:focus,
+select:focus {
+  border-color: var(--theme-primary, #111111);
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+
+/* Shared Buttons */
+.customer-btn,
+button {
+  width: 100%;
+  border: none;
+  padding: 14px 16px;
+  border-radius: var(--radius-lg, 12px);
+  font-size: var(--text-md, 16px);
+  font-weight: 650;
+  cursor: pointer;
+  background: var(--theme-primary, #111111);
+  color: var(--theme-primary-contrast, #ffffff);
+  box-sizing: border-box;
+  font-family: inherit;
+  transition: opacity var(--transition-fast), background var(--transition-fast), transform var(--transition-fast);
+}
+
+.customer-btn:active,
+button:active {
+  transform: scale(0.995);
+}
+
+.customer-btn:disabled,
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.customer-btn-secondary,
+.secondary {
+  background: var(--theme-surface-subtle, #eeeeee);
+  color: var(--theme-text, #222222);
+}
+
+/* Chips & Badges */
+.customer-badge,
+.badge,
+.chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-pill);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  background: var(--theme-surface-subtle, #eeeeee);
+  color: var(--theme-text, #222222);
+  border: 1px solid var(--theme-border, #dddddd);
+}
+
+.customer-badge-primary {
+  background: var(--theme-primary, #111111);
+  color: var(--theme-primary-contrast, #ffffff);
+  border-color: var(--theme-primary, #111111);
+}
+
+.brand-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  border-radius: var(--radius-pill);
+  margin-bottom: var(--space-2);
+  background: var(--theme-primary, #111111);
+  color: var(--theme-primary-contrast, #ffffff);
+  font-weight: 800;
+  font-size: 18px;
+  letter-spacing: 1px;
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+.brand-badge img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* Empty State Component */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-8) var(--space-4);
+  text-align: center;
+  color: var(--theme-text-muted, #777777);
+  box-sizing: border-box;
+}
+
+.empty-state-icon {
+  font-size: 32px;
+  margin-bottom: var(--space-2);
+  opacity: 0.75;
+  user-select: none;
+}
+
+.empty-state-text {
+  font-size: var(--text-base);
+  line-height: 1.5;
+  color: var(--theme-text-muted, #777777);
+  margin: 0;
+}
+
+/* Loading State Component */
+.loading-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-6) var(--space-4);
+  color: var(--theme-text-muted, #777777);
+  font-size: var(--text-sm);
+  text-align: center;
+}
+
+.loading-spinner {
+  width: 20px;
+  height: 20px;
+  border: 2px solid var(--theme-border, #dddddd);
+  border-top-color: var(--theme-primary, #111111);
+  border-radius: 50%;
+  animation: customer-spin 0.8s linear infinite;
+  box-sizing: border-box;
+}
+
+@keyframes customer-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Message & Status Feedback States */
+.message {
+  min-height: 23px;
+  margin-top: var(--space-3);
+  text-align: center;
+  line-height: 1.5;
+  font-size: var(--text-sm);
+}
+
+.message.error,
+.error {
+  color: var(--color-error, #c62828);
+}
+
+.message.success,
+.success {
+  color: var(--color-success, #2e7d32);
+}
+
+/* Mobile-First & Responsive Tweaks */
+@media (max-width: 380px) {
+  .customer-page-shell {
+    padding-left: var(--space-3);
+    padding-right: var(--space-3);
+  }
+
+  .phone-row {
+    grid-template-columns: 125px 1fr !important;
+  }
+}
+
+@media (min-width: 521px) {
+  .customer-card,
+  .card,
+  .panel {
+    border-radius: var(--radius-2xl, 18px);
+  }
+}
