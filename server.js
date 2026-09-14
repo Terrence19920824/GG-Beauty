@@ -52,6 +52,7 @@ const {
   createCustomerMemberIdentity
 } = require('./lib/customer-member-identity');
 const { isKnownStatus, canTransition, recordStatusHistory } = require('./lib/appointment-status');
+const { createCheckoutPos } = require('./lib/checkout-pos');
 
 const app = express();
 
@@ -646,6 +647,19 @@ const requireOwnerRole = allowedRoles =>
 
     next();
   };
+
+// Checkout is an owner/manager-only financial operation.  The handler derives
+// the appointment/customer scope from the authenticated shop; UI-supplied IDs
+// can never choose a tenant or an existing checkout.
+const checkoutPos = createCheckoutPos({
+  pool: { connect: (...args) => app.locals.ownerAuthPool.connect(...args) }
+});
+app.post(
+  '/api/owner/appointments/:appointmentId/checkout',
+  requireOwnerAuth,
+  requireOwnerRole(['owner', 'manager']),
+  checkoutPos.create
+);
 
 const ownerStaffManagement = createOwnerStaffManagement({
   pool: {
