@@ -11,11 +11,26 @@
       box-sizing: border-box;
     }
 
+    :root {
+      --theme-primary: #111;
+      --theme-primary-hover: #2b2b2b;
+      --theme-primary-contrast: #fff;
+      --theme-accent: #111;
+      --theme-bg: #f6f6f6;
+      --theme-surface: #fff;
+      --theme-surface-subtle: #eee;
+      --theme-text: #222;
+      --theme-text-muted: #777;
+      --theme-border: #ddd;
+      --theme-card-start: #050505;
+      --theme-card-end: #252525;
+    }
+
     body {
       margin: 0;
       font-family: Arial, "PingFang SC", sans-serif;
-      background: #f6f6f6;
-      color: #222;
+      background: var(--theme-bg, #f6f6f6);
+      color: var(--theme-text, #222);
     }
 
     .container {
@@ -30,17 +45,40 @@
       margin-bottom: 24px;
     }
 
+    .brand-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      margin-bottom: 8px;
+      background: var(--theme-primary, #111);
+      color: var(--theme-primary-contrast, #fff);
+      font-weight: 800;
+      font-size: 18px;
+      letter-spacing: 1px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+      overflow: hidden;
+    }
+
+    .brand-badge img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
     .header h1 {
       margin-bottom: 6px;
     }
 
     .header p {
-      color: #777;
+      color: var(--theme-text-muted, #777);
       margin-top: 0;
     }
 
     .card {
-      background: white;
+      background: var(--theme-surface, white);
       border-radius: 16px;
       padding: 20px;
       margin-bottom: 16px;
@@ -58,9 +96,9 @@
       margin: 0;
       min-height: 112px;
       padding: 16px 10px;
-      border: 1px solid #ddd;
-      background: #fff;
-      color: #222;
+      border: 1px solid var(--theme-border, #ddd);
+      background: var(--theme-surface, #fff);
+      color: var(--theme-text, #222);
       display: flex;
       flex-direction: column;
       align-items: center;
@@ -69,8 +107,8 @@
     }
 
     .category-card.selected {
-      border-color: #111;
-      box-shadow: inset 0 0 0 1px #111;
+      border-color: var(--theme-primary, #111);
+      box-shadow: inset 0 0 0 1px var(--theme-primary, #111);
     }
 
     .category-icon { font-size: 28px; }
@@ -88,23 +126,24 @@
     select {
       width: 100%;
       padding: 13px;
-      border: 1px solid #ddd;
+      border: 1px solid var(--theme-border, #ddd);
       border-radius: 10px;
       font-size: 16px;
-      background: white;
+      background: var(--theme-surface, white);
+      color: var(--theme-text, #222);
     }
 
     .date-picker-display { min-height: 24px; color: #555; }
     .calendar-header { display: grid; grid-template-columns: 42px 1fr 42px; align-items: center; gap: 8px; margin-top: 10px; }
-    .calendar-header button { margin: 0; padding: 9px; background: #eee; color: #222; font-size: 17px; }
+    .calendar-header button { margin: 0; padding: 9px; background: var(--theme-surface-subtle, #eee); color: var(--theme-text, #222); font-size: 17px; }
     .calendar-title { text-align: center; font-weight: 700; }
     .calendar-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; margin-top: 10px; }
-    .calendar-weekday { text-align: center; color: #777; font-size: 12px; padding: 4px 0; }
-    .calendar-day { aspect-ratio: 1; margin: 0; padding: 0; border: 1px solid #ddd; border-radius: 10px; background: #fff; color: #222; font-size: 14px; }
+    .calendar-weekday { text-align: center; color: var(--theme-text-muted, #777); font-size: 12px; padding: 4px 0; }
+    .calendar-day { aspect-ratio: 1; margin: 0; padding: 0; border: 1px solid var(--theme-border, #ddd); border-radius: 10px; background: var(--theme-surface, #fff); color: var(--theme-text, #222); font-size: 14px; }
     .calendar-day:disabled { background: #f1f1f1; color: #aaa; border-color: #eee; opacity: 1; }
-    .calendar-day.selected { background: #111; color: #fff; border-color: #111; }
+    .calendar-day.selected { background: var(--theme-primary, #111); color: var(--theme-primary-contrast, #fff); border-color: var(--theme-primary, #111); }
     .next-available { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 10px; }
-    .next-available button { width: auto; margin: 0; padding: 8px 11px; background: #eee; color: #222; font-size: 13px; }
+    .next-available button { width: auto; margin: 0; padding: 8px 11px; background: var(--theme-surface-subtle, #eee); color: var(--theme-text, #222); font-size: 13px; }
 
     button {
       width: 100%;
@@ -115,8 +154,8 @@
       font-weight: 600;
       cursor: pointer;
       margin-top: 18px;
-      background: #111;
-      color: white;
+      background: var(--theme-primary, #111);
+      color: var(--theme-primary-contrast, white);
     }
 
     button:disabled {
@@ -133,17 +172,18 @@
 
     .time-btn {
       padding: 11px 5px;
-      border: 1px solid #ddd;
+      border: 1px solid var(--theme-border, #ddd);
       border-radius: 9px;
       text-align: center;
-      background: white;
+      background: var(--theme-surface, white);
+      color: var(--theme-text, #222);
       cursor: pointer;
     }
 
     .time-btn.selected {
-      background: #111;
-      color: white;
-      border-color: #111;
+      background: var(--theme-primary, #111);
+      color: var(--theme-primary-contrast, white);
+      border-color: var(--theme-primary, #111);
     }
 
     .message {
@@ -159,19 +199,19 @@
     .error {
       color: #c62828;
     }
-    .cart-item { border: 1px solid #ddd; border-radius: 12px; padding: 12px; margin-top: 10px; }
+    .cart-item { border: 1px solid var(--theme-border, #ddd); border-radius: 12px; padding: 12px; margin-top: 10px; }
     .cart-item h3 { margin: 0 0 6px; }
     .cart-meta, .cart-total { color: #555; line-height: 1.6; }
-    .remove-item { background: #eee; color: #222; margin-top: 8px; padding: 9px; }
+    .remove-item { background: var(--theme-surface-subtle, #eee); color: var(--theme-text, #222); margin-top: 8px; padding: 9px; }
     .recipient-options { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
-    .recipient-option { margin: 0; padding: 13px 10px; background: #fff; color: #222; border: 1px solid #ddd; font-size: 14px; }
-    .recipient-option.selected { background: #111; color: #fff; border-color: #111; }
+    .recipient-option { margin: 0; padding: 13px 10px; background: var(--theme-surface, #fff); color: var(--theme-text, #222); border: 1px solid var(--theme-border, #ddd); font-size: 14px; }
+    .recipient-option.selected { background: var(--theme-primary, #111); color: var(--theme-primary-contrast, #fff); border-color: var(--theme-primary, #111); }
     .phone-row { display: grid; grid-template-columns: 145px 1fr; gap: 8px; }
     .language-switch { position:absolute;right:0;top:-16px;display:inline-flex;align-items:center;padding:3px 5px;border:1px solid rgba(80,80,80,.16);border-radius:999px;background:rgba(255,255,255,.66);backdrop-filter:blur(9px);-webkit-backdrop-filter:blur(9px);color:#888; }
     .language-switch button { width:auto;margin:0;padding:4px 7px;border:0;border-radius:999px;background:transparent;color:#999;font-size:12px;font-weight:600; }
     .language-switch button:disabled { opacity:1;color:#222;background:rgba(255,255,255,.72);box-shadow:0 1px 5px rgba(0,0,0,.07); }
     .language-divider{font-size:11px;color:#bbb}
-    .member-entry { display: inline-block; margin-top: 12px; padding: 9px 14px; border-radius: 999px; background: #111; color: #fff; text-decoration: none; font-size: 13px; font-weight: 700; }
+    .member-entry { display: inline-block; margin-top: 12px; padding: 9px 14px; border-radius: 999px; background: var(--theme-primary, #111); color: var(--theme-primary-contrast, #fff); text-decoration: none; font-size: 13px; font-weight: 700; }
   </style>
 </head>
 
@@ -180,6 +220,7 @@
 <div class="container">
 
   <div class="header">
+    <div id="shopBrandBadge" class="brand-badge notranslate" translate="no" aria-hidden="true"><span id="shopBrandLogoPlaceholder">GG</span></div>
     <h1 id="shopBrandName" translate="no" class="notranslate">GG-Beauty</h1>
     <p data-i18n="onlineAppointment">在线预约</p>
     <div class="language-switch" aria-label="Language"><button id="languageZh" type="button" aria-label="中文">中</button><span class="language-divider">｜</span><button id="languageEn" type="button" aria-label="English">E</button></div>
@@ -286,6 +327,7 @@
 <script src="/shared-i18n.js"></script>
 <script src="/service-locale.js"></script>
 <script src="/customer-shop-context.js"></script>
+<script src="/customer-theme.js"></script>
 <script src="/customer-category-flow.js"></script>
 <script src="/customer-multi-service-cart.js"></script>
 <script src="/customer-booking-calendar.js"></script>
@@ -417,6 +459,18 @@ async function loadCustomerShopContext() {
   }
   customerShopSlug = result.data.shopSlug;
   shopBrandName.textContent = result.data.shopName || customerShopSlug;
+  if (globalThis.ggCustomerTheme && typeof globalThis.ggCustomerTheme.resolveTheme === 'function') {
+    const theme = globalThis.ggCustomerTheme.resolveTheme(customerShopSlug, { shopName: shopBrandName.textContent });
+    if (typeof document !== 'undefined' && document.documentElement) {
+      globalThis.ggCustomerTheme.applyTheme(document.documentElement, theme);
+    }
+    const badge = typeof document !== 'undefined' && typeof document.getElementById === 'function' ? document.getElementById('shopBrandBadge') : null;
+    const placeholder = typeof document !== 'undefined' && typeof document.getElementById === 'function' ? document.getElementById('shopBrandLogoPlaceholder') : null;
+    if (placeholder) placeholder.textContent = theme.logoText || 'GG';
+    if (badge && theme.logoUrl) {
+      badge.innerHTML = `<img src="${theme.logoUrl}" alt="" style="width:100%;height:100%;border-radius:50%;object-fit:cover;">`;
+    }
+  }
   document.title = `${shopBrandName.textContent} · ${customerT('onlineAppointment')}`;
   memberEntry.href = `/member.html?shop=${encodeURIComponent(customerShopSlug)}`;
 }
