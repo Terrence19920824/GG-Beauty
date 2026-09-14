@@ -392,6 +392,26 @@
   function buildCheckoutPayload(session, idempotencyKey) {
     const totals = calculateTotals(session);
     const key = idempotencyKey || session.idempotencyKey || generateIdempotencyKey();
+    // Keep one key for retries of this checkout intent. The server is the
+    // authority, but a retry must reach its shop-scoped idempotency guard.
+    session.idempotencyKey = key;
+
+    // Allocate an order-level discount in minor units before building lines.
+    // The final line receives the remainder, so rounded proportions always
+    // sum exactly to the UI's displayed discount and cannot overpay the API.
+    const orderDiscountMinor = toMinorUnits(totals.discountAmount);
+    const allocatableMinor = session.items.map(item => Math.max(0, toMinorUnits(item.actualPrice) - toMinorUnits(item.itemDiscount || 0)));
+    const allocatedOrderDiscounts = allocatableMinor.map(() => 0);
+    let allocatedMinor = 0;
+    for (let index = 0; index < allocatableMinor.length; index += 1) {
+      const isLast = index === allocatableMinor.length - 1;
+      const remaining = Math.max(0, orderDiscountMinor - allocatedMinor);
+      const allocation = isLast
+        ? Math.min(allocatableMinor[index], remaining)
+        : Math.min(allocatableMinor[index], Math.round(orderDiscountMinor * (allocatableMinor[index] / Math.max(1, toMinorUnits(totals.subtotal)))));
+      allocatedOrderDiscounts[index] = allocation;
+      allocatedMinor += allocation;
+    }
 
     // Line items mapping (in integer minor units)
     const items = session.items.map((item, index) => {
@@ -402,9 +422,8 @@
       let itemDiscountMinor = toMinorUnits(item.itemDiscount || 0);
       let itemDiscountReason = cleanReason(item.discountReason);
 
-      if (totals.discountAmount > 0 && itemDiscountMinor === 0) {
-        const proportion = totals.subtotal > 0 ? (item.actualPrice / totals.subtotal) : (1 / session.items.length);
-        itemDiscountMinor = Math.min(actualPriceMinor, Math.round(toMinorUnits(totals.discountAmount) * proportion));
+      if (totals.discountAmount > 0) {
+        itemDiscountMinor += allocatedOrderDiscounts[index];
         itemDiscountReason = cleanReason(session.discount?.reason);
       }
 
@@ -555,7 +574,7 @@
       throw new Error(validation.errors.join('; '));
     }
 
-    const idempotencyKey = generateIdempotencyKey();
+    const idempotencyKey = session.idempotencyKey || generateIdempotencyKey();
     const payload = buildCheckoutPayload(session, idempotencyKey);
     const appointmentId = session.appointmentId;
     const url = `/api/owner/appointments/${encodeURIComponent(appointmentId)}/checkout`;

@@ -147,6 +147,18 @@ test('canonical checkout payload strictly strips forbidden fields and formats re
   assert.equal(Number.isSafeInteger(payload.payments[0].amountMinor), true);
 });
 
+test('canonical payload preserves retry idempotency and allocates order discounts exactly in minor units', () => {
+  const fixture = adapter.getMockFixture();
+  fixture.items[0].actualPrice = 10.01;
+  fixture.items[1].actualPrice = 10.00;
+  adapter.applyDiscount(fixture, { type: 'fixed', value: 0.01, reason: 'Rounding adjustment' });
+  const first = adapter.buildCheckoutPayload(fixture);
+  const replay = adapter.buildCheckoutPayload(fixture);
+  assert.equal(first.idempotencyKey, replay.idempotencyKey);
+  assert.equal(first.items.reduce((total, item) => total + item.discountMinor, 0), 1);
+  assert.equal(first.items.reduce((total, item) => total + item.actualPriceMinor - item.discountMinor, 0), 2000);
+});
+
 test('server-authoritative totals are honored upon checkout response', async () => {
   const fixture = adapter.getMockFixture();
   const res = await adapter.submitCheckout(fixture);

@@ -8,6 +8,7 @@ const path = require('node:path');
 const { spawn, spawnSync } = require('node:child_process');
 const { Client, Pool } = require('pg');
 const { createCheckoutPos } = require('../lib/checkout-pos');
+const adapter = require('../public/checkout-ui-adapter');
 
 const ROOT = path.join(__dirname, '..');
 const PG_BIN = process.env.PG17_BIN || '/opt/homebrew/opt/postgresql@17/bin';
@@ -16,13 +17,13 @@ const ID = {
   shopA: '11111111-1111-4111-8111-111111111111', shopB: '11111111-1111-4111-8111-222222222222',
   customerA: '22222222-2222-4222-8222-111111111111', customerB: '22222222-2222-4222-8222-222222222222',
   appointmentA: '33333333-3333-4333-8333-111111111111', appointmentB: '33333333-3333-4333-8333-222222222222',
-  itemA: '44444444-4444-4444-8444-111111111111', itemB: '44444444-4444-4444-8444-222222222222',
+  itemA: '44444444-4444-4444-8444-111111111111', itemA2: '44444444-4444-4444-8444-333333333333', itemB: '44444444-4444-4444-8444-222222222222',
   owner: '55555555-5555-4555-8555-555555555555'
 };
 
 const response = () => ({ statusCode: 200, status(code) { this.statusCode = code; return this; }, json(body) { this.body = body; return this; } });
-const request = (appointmentId, shopId, idempotencyKey) => ({
-  params: { appointmentId }, body: { idempotencyKey, payments: [] }, ownerAuth: { shopId, ownerAccountId: ID.owner }
+const request = (appointmentId, shopId, body) => ({
+  params: { appointmentId }, body, ownerAuth: { shopId, ownerAccountId: ID.owner }
 });
 
 async function connectWhenReady(url) {
@@ -66,23 +67,37 @@ test('PostgreSQL checkout financial audit is immutable, idempotent and transacti
     ]);
     await db.query(`INSERT INTO appointment_items VALUES
       ($1, $2, $3, 1, $4, 'Service A', 88.00),
-      ($5, $6, $7, 1, $8, 'Service B', 98.00)`, [
+      ($5, $2, $3, 2, $6, 'Service A2', 198.00),
+      ($7, $8, $9, 1, $10, 'Service B', 98.00)`, [
       ID.itemA, ID.shopA, ID.appointmentA, '66666666-6666-4666-8666-111111111111',
-      ID.itemB, ID.shopB, ID.appointmentB, '66666666-6666-4666-8666-222222222222'
+      ID.itemA2, '66666666-6666-4666-8666-333333333333', ID.itemB, ID.shopB, ID.appointmentB,
+      '66666666-6666-4666-8666-222222222222'
     ]);
+    await db.query(migration('047_checkout_pos_preflight_readonly.sql'));
     await db.query(migration('048_checkout_pos_schema.sql'));
+    await db.query(migration('049_checkout_pos_verification_readonly.sql'));
+    await db.query(migration('050_checkout_financial_audit_preflight_readonly.sql'));
     await db.query(migration('051_checkout_financial_audit_schema.sql'));
 
     pool = new Pool({ connectionString: url, ssl: false });
     const create = createCheckoutPos({ pool }).create;
-    const keyA = 'checkout-a-idempotency-key';
-    const first = response(); await create(request(ID.appointmentA, ID.shopA, keyA), first);
+    const session = {
+      appointmentId: ID.appointmentA,
+      items: [
+        { appointmentItemId: ID.itemA, actualPrice: 88.00, quotedPrice: 88.00, itemDiscount: 0 },
+        { appointmentItemId: ID.itemA2, actualPrice: 200.00, quotedPrice: 198.00, itemDiscount: 0, priceOverrideReason: 'Extra long hair' }
+      ],
+      discount: { type: 'fixed', value: 10.00, reason: 'Launch promotion' },
+      paymentState: { mode: 'split', splitPayments: [{ method: 'cash', amount: 100.00 }, { method: 'paynow', amount: 178.00 }] }
+    };
+    const payload = adapter.buildCheckoutPayload(session, 'checkout-a-idempotency-key');
+    const first = response(); await create(request(ID.appointmentA, ID.shopA, payload), first);
     assert.equal(first.statusCode, 201);
-    const replay = response(); await create(request(ID.appointmentA, ID.shopA, keyA), replay);
+    const replay = response(); await create(request(ID.appointmentA, ID.shopA, payload), replay);
     assert.equal(replay.statusCode, 200); assert.equal(replay.body.idempotent, true);
     assert.equal(Number((await db.query('SELECT COUNT(*) FROM checkout_transactions')).rows[0].count), 1);
-    assert.equal(Number((await db.query('SELECT COUNT(*) FROM checkout_line_items')).rows[0].count), 1);
-    assert.equal(Number((await db.query('SELECT COUNT(*) FROM checkout_payments')).rows[0].count), 0);
+    assert.equal(Number((await db.query('SELECT COUNT(*) FROM checkout_line_items')).rows[0].count), 2);
+    assert.equal(Number((await db.query('SELECT COUNT(*) FROM checkout_payments')).rows[0].count), 2);
     assert.equal(Number((await db.query('SELECT COUNT(*) FROM checkout_financial_audit')).rows[0].count), 1);
 
     const auditId = (await db.query('SELECT id FROM checkout_financial_audit')).rows[0].id;
@@ -90,18 +105,19 @@ test('PostgreSQL checkout financial audit is immutable, idempotent and transacti
     await assert.rejects(db.query('DELETE FROM checkout_financial_audit WHERE id=$1', [auditId]), error => /immutable/.test(error.message));
 
     const crossTenant = response();
-    await create(request(ID.appointmentA, ID.shopB, 'checkout-cross-tenant-key'), crossTenant);
+    await create(request(ID.appointmentA, ID.shopB, { idempotencyKey: 'checkout-cross-tenant-key', payments: [] }), crossTenant);
     assert.equal(crossTenant.statusCode, 404);
     assert.equal(Number((await db.query('SELECT COUNT(*) FROM checkout_transactions WHERE shop_id=$1', [ID.shopB])).rows[0].count), 0);
 
     await db.query('ALTER TABLE checkout_financial_audit ADD CONSTRAINT force_audit_failure CHECK (false) NOT VALID');
     const failing = response();
-    await create(request(ID.appointmentB, ID.shopB, 'checkout-audit-failure-key'), failing);
+    await create(request(ID.appointmentB, ID.shopB, { idempotencyKey: 'checkout-audit-failure-key', payments: [] }), failing);
     assert.equal(failing.statusCode, 500);
     assert.equal(Number((await db.query("SELECT COUNT(*) FROM checkout_transactions WHERE idempotency_key='checkout-audit-failure-key'")).rows[0].count), 0);
     assert.equal(Number((await db.query('SELECT COUNT(*) FROM checkout_line_items WHERE shop_id=$1', [ID.shopB])).rows[0].count), 0);
     assert.equal(Number((await db.query('SELECT COUNT(*) FROM checkout_payments WHERE shop_id=$1', [ID.shopB])).rows[0].count), 0);
     assert.equal(Number((await db.query('SELECT COUNT(*) FROM checkout_financial_audit WHERE shop_id=$1', [ID.shopB])).rows[0].count), 0);
+    await db.query(migration('052_checkout_financial_audit_verification_readonly.sql'));
   } finally {
     if (pool) await pool.end().catch(() => {});
     if (db) await db.end().catch(() => {});
