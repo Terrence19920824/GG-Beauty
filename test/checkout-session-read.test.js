@@ -28,6 +28,7 @@ function fixture({ existingCheckout = null } = {}) {
   const client = {
     async query(sql, params = []) {
       state.queries.push({ sql, params });
+      if (sql === 'BEGIN READ ONLY' || sql === 'COMMIT' || sql === 'ROLLBACK') return { rows: [] };
       if (/FROM appointments a/.test(sql)) {
         return { rows: params[0] === ID.appointmentA && params[1] === ID.shopA ? [{
           id: ID.appointmentA, status: 'in_service', start_at: '2030-01-01T02:00:00Z', end_at: '2030-01-01T04:00:00Z',
@@ -77,12 +78,14 @@ test('checkout session read is owner-authenticated, tenant-safe and minimal', as
     assert.equal(data.checkout, null);
     assert.equal(data.checkoutLocked, false);
   });
-  assert.equal(own.state.queries.every(entry => /^\s*SELECT/i.test(entry.sql)), true);
+  assert.equal(own.state.queries[0].sql, 'BEGIN READ ONLY');
+  assert.equal(own.state.queries.at(-1).sql, 'COMMIT');
+  assert.equal(own.state.queries.filter(entry => !['BEGIN READ ONLY', 'COMMIT'].includes(entry.sql)).every(entry => /^\s*SELECT/i.test(entry.sql)), true);
   assert.equal(own.state.queries.some(entry => entry.params.includes(ID.shopB)), false);
 
   const denied = fixture(); app.locals.ownerAuthPool = denied.pool;
   await withServer(async base => assert.equal((await get(base, ID.appointmentB)).status, 404));
-  assert.equal(denied.state.queries.length, 1);
+  assert.deepEqual(denied.state.queries.map(entry => entry.sql), ['BEGIN READ ONLY', denied.state.queries[1].sql, 'ROLLBACK']);
 
   const unknown = fixture(); app.locals.ownerAuthPool = unknown.pool;
   await withServer(async base => assert.equal((await get(base, '99999999-9999-4999-8999-999999999999')).status, 404));

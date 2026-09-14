@@ -2,8 +2,36 @@ BEGIN;
 SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='30s';
 -- Required only to make the tenant-scoped line-item FK legally referenceable;
 -- it does not rewrite business rows.
-DO $$ BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='public.appointment_items'::regclass AND contype='u' AND pg_get_constraintdef(oid) LIKE '%UNIQUE (shop_id, id)%') THEN
+DO $$
+DECLARE
+  target_name CONSTANT text := 'appointment_items_shop_id_id_key';
+  has_equivalent boolean;
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM pg_class
+    WHERE relnamespace='public'::regnamespace
+      AND relname IN ('checkout_transactions','checkout_line_items','checkout_payments','checkout_staff_attributions')
+  ) THEN RAISE EXCEPTION 'checkout schema already exists; do not rerun 048'; END IF;
+
+  SELECT EXISTS (
+    SELECT 1 FROM pg_index i
+    WHERE i.indrelid='public.appointment_items'::regclass
+      AND i.indisunique AND i.indisvalid AND i.indisready
+      AND i.indpred IS NULL AND i.indexprs IS NULL
+      AND ARRAY(SELECT key.attnum FROM unnest(i.indkey) WITH ORDINALITY AS key(attnum, ord) ORDER BY key.ord) = ARRAY[
+        (SELECT attnum FROM pg_attribute WHERE attrelid='public.appointment_items'::regclass AND attname='shop_id' AND NOT attisdropped),
+        (SELECT attnum FROM pg_attribute WHERE attrelid='public.appointment_items'::regclass AND attname='id' AND NOT attisdropped)
+      ]::smallint[]
+  ) INTO has_equivalent;
+
+  IF EXISTS (
+    SELECT 1 FROM pg_class c
+    WHERE c.relnamespace='public'::regnamespace AND c.relname=target_name
+  ) AND NOT has_equivalent THEN
+    RAISE EXCEPTION 'checkout prerequisite name % exists but is not an equivalent valid unique index', target_name;
+  END IF;
+
+  IF NOT has_equivalent THEN
     ALTER TABLE public.appointment_items ADD CONSTRAINT appointment_items_shop_id_id_key UNIQUE (shop_id,id);
   END IF;
 END $$;
