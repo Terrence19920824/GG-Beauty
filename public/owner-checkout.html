@@ -1,0 +1,702 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title data-i18n="ownerCheckoutTitle">GG-Beauty 前台收银 / POS</title>
+  
+  <link rel="stylesheet" href="/customer-shared.css">
+  <link rel="stylesheet" href="/checkout-ui.css">
+
+  <script src="/customer-theme.js"></script>
+  <script src="/shared-i18n.js"></script>
+  <script src="/checkout-ui-adapter.js"></script>
+</head>
+<body>
+  <div class="pos-container">
+    <!-- Header -->
+    <header class="pos-header" role="banner">
+      <div class="pos-header-left">
+        <div id="shopBrandBadge" class="brand-badge notranslate" translate="no">GG</div>
+        <div>
+          <h1 id="shopBrandName" class="context-customer-name notranslate" translate="no" style="margin:0; font-size: 20px;">GG-Beauty</h1>
+          <span data-i18n="ownerCheckoutTitle" style="font-size: 13px; color: var(--theme-text-muted, #666);">前台收银 / POS</span>
+        </div>
+      </div>
+      <div class="pos-header-right">
+        <button type="button" id="openCustomerDisplayBtn" class="quick-adj-btn" style="padding: 8px 12px; font-weight: 600;" data-i18n="openCustomerDisplay">
+          打开顾客副屏
+        </button>
+        <div style="display:inline-flex; align-items:center; gap: 4px; background: #eee; padding: 4px 8px; border-radius: 999px;">
+          <button type="button" id="langZh" style="border:none; background:transparent; cursor:pointer; font-weight:700; padding:2px 6px;">中</button>
+          <span class="language-divider" style="color:#aaa;">｜</span>
+          <button type="button" id="langEn" style="border:none; background:transparent; cursor:pointer; font-weight:600; padding:2px 6px;">E</button>
+        </div>
+      </div>
+    </header>
+
+    <!-- Feedback Banner -->
+    <div id="checkoutFeedback" class="message" role="alert" aria-live="polite" style="display:none; margin-bottom: 12px;"></div>
+
+    <!-- Main Grid -->
+    <main class="pos-grid" id="mainPosGrid">
+      <!-- Left Column: Customer & Items -->
+      <section aria-labelledby="orderItemsHeading">
+        <!-- Customer & Appointment Card -->
+        <div class="context-card">
+          <div class="context-row">
+            <div>
+              <span class="context-customer-name notranslate" id="customerName" translate="no">Jennifer Tan</span>
+              <span id="memberBadge" class="customer-badge notranslate" translate="no" style="margin-left: 8px;">VIP Gold</span>
+              <span id="customerId" class="muted notranslate" translate="no" style="font-size: 12px; margin-left: 6px;">#cust-8821</span>
+            </div>
+            <div class="context-phone notranslate" id="customerPhone" translate="no">+65 9123 4567</div>
+          </div>
+          <div class="context-row" style="margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--theme-border, #e5e5e5);">
+            <div style="font-size: 13px; color: var(--theme-text-muted, #666);">
+              <span data-i18n="appointment">预约</span>: 
+              <span id="appointmentId" class="notranslate" translate="no" style="font-weight: 600;">apt-20260914-001</span>
+              <span class="muted"> | </span>
+              <span id="appointmentTime" class="notranslate" translate="no">14:30</span>
+            </div>
+            <span id="appointmentStatus" class="staff-chip" style="font-weight: 600; text-transform: capitalize;">in_service</span>
+          </div>
+        </div>
+
+        <!-- Items Card -->
+        <div class="pos-items-card">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 12px;">
+            <h2 id="orderItemsHeading" style="margin:0; font-size: 18px;" data-i18n="selectedServices">消费项目</h2>
+            <span id="itemsCountBadge" class="customer-badge notranslate" translate="no">2 项</span>
+          </div>
+          <div id="itemsListContainer">
+            <!-- Dynamic Items Rows populated by JS -->
+          </div>
+        </div>
+      </section>
+
+      <!-- Right Column: Billing & Payment -->
+      <section aria-labelledby="billingSummaryHeading">
+        <div class="billing-card">
+          <h2 id="billingSummaryHeading" style="margin:0 0 16px; font-size: 18px;" data-i18n="subtotal">账单与结算</h2>
+          
+          <!-- Summary Lines -->
+          <div class="summary-row">
+            <span data-i18n="quotedPrice" style="color:var(--theme-text-muted,#666);">预约参考原价</span>
+            <span id="quotedTotalAmount" class="notranslate" translate="no" style="color:var(--theme-text-muted,#666); text-decoration:line-through;">S$286.00</span>
+          </div>
+          <div class="summary-row">
+            <span data-i18n="subtotal">项目小计</span>
+            <span id="subtotalAmount" class="notranslate" translate="no" style="font-weight: 600;">S$286.00</span>
+          </div>
+
+          <!-- Discount Selector -->
+          <div style="margin-top: 10px;">
+            <div style="font-size: 13px; color: var(--theme-text-muted, #666); margin-bottom: 6px;" data-i18n="discount">折扣优惠</div>
+            <div class="discount-selector" role="group" aria-label="折扣选项">
+              <button type="button" class="discount-pill active" data-discount-type="none" data-discount-val="0">0%</button>
+              <button type="button" class="discount-pill" data-discount-type="percent" data-discount-val="5">5%</button>
+              <button type="button" class="discount-pill" data-discount-type="percent" data-discount-val="10">10%</button>
+              <button type="button" class="discount-pill" data-discount-type="percent" data-discount-val="20">20%</button>
+              <button type="button" class="discount-pill" data-discount-type="fixed" id="customDiscountBtn">S$ 自定义</button>
+            </div>
+            <div id="customDiscountRow" style="display:none; align-items:center; gap: 8px; margin-top: 6px;">
+              <span>S$</span>
+              <input type="number" id="customDiscountInput" min="0" step="1" class="actual-price-input notranslate" translate="no" style="width: 120px;" placeholder="0.00">
+            </div>
+
+            <!-- Discount Reason Input (Required when discount > 0) -->
+            <div id="discountReasonWrap" class="override-reason-wrap" style="display:none;">
+              <label for="discountReasonInput" style="font-size: 12px; font-weight: 700; color: #92400e;">
+                <span data-i18n="discountReason">折扣原因 (3-500字, 必填)</span>:
+              </label>
+              <input type="text" id="discountReasonInput" class="override-reason-input" minlength="3" maxlength="500" placeholder="例如：新客到店立减 / 老板特批优惠券">
+            </div>
+          </div>
+
+          <div class="summary-row">
+            <span data-i18n="discount">优惠减免</span>
+            <span id="discountValueAmount" class="notranslate" translate="no" style="color: var(--color-error, #c62828); font-weight: 600;">-S$0.00</span>
+          </div>
+
+          <!-- Final Total Preview (Client Preview) -->
+          <div class="summary-row total-row">
+            <div>
+              <span data-i18n="finalTotal" style="font-size: 18px; font-weight: 700;">预估应收</span>
+              <div class="muted" style="font-size:11px;">(最终以服务端权威核算为准)</div>
+            </div>
+            <span id="finalTotalAmount" class="final-amount-large notranslate" translate="no">S$286.00</span>
+          </div>
+
+          <!-- Payment Section -->
+          <div style="margin-top: 24px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 8px;">
+              <span data-i18n="paymentMethod" style="font-size: 15px; font-weight: 700;">支付方式</span>
+              <label style="font-size: 13px; display:inline-flex; align-items:center; gap: 4px; cursor:pointer;">
+                <input type="checkbox" id="splitModeToggle"> <span data-i18n="splitPayment">组合拆分支付</span>
+              </label>
+            </div>
+
+            <!-- Single Payment Method Buttons -->
+            <div id="singlePaymentGrid" class="payment-method-grid" role="radiogroup" aria-label="支付方式">
+              <button type="button" class="payment-btn active" data-method="paynow" role="radio" aria-checked="true">
+                <span>📱</span> PayNow / QR
+              </button>
+              <button type="button" class="payment-btn" data-method="card" role="radio" aria-checked="false">
+                <span>💳</span> <span data-i18n="card">刷卡</span>
+              </button>
+              <button type="button" class="payment-btn" data-method="cash" role="radio" aria-checked="false">
+                <span>💵</span> <span data-i18n="cash">现金</span>
+              </button>
+              <button type="button" class="payment-btn" data-method="other" role="radio" aria-checked="false">
+                <span>🧾</span> <span data-i18n="otherPayment">其他</span>
+              </button>
+            </div>
+
+            <!-- Cash Tendered Sub-panel -->
+            <div id="cashPanel" class="cash-details-box" style="display:none;">
+              <div style="display:flex; justify-content:space-between; align-items:center;">
+                <label for="tenderedCashInput" data-i18n="tendered" style="font-weight: 600;">实收现金:</label>
+                <div style="display:flex; align-items:center; gap: 4px;">
+                  <span>S$</span>
+                  <input type="number" step="0.5" id="tenderedCashInput" class="actual-price-input notranslate" translate="no" style="width: 110px;" placeholder="0.00">
+                </div>
+              </div>
+              <div class="quick-cash-row">
+                <button type="button" class="quick-cash-btn" id="cashExactBtn" data-i18n="exact">刚好</button>
+                <button type="button" class="quick-cash-btn notranslate" translate="no" data-val="50">S$50</button>
+                <button type="button" class="quick-cash-btn notranslate" translate="no" data-val="100">S$100</button>
+                <button type="button" class="quick-cash-btn notranslate" translate="no" data-val="300">S$300</button>
+              </div>
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-top: 10px; padding-top: 8px; border-top: 1px dashed #ddd;">
+                <span data-i18n="changeDue" style="font-weight: 600;">找零:</span>
+                <span id="cashChangeAmount" class="notranslate" translate="no" style="font-size: 18px; font-weight: 750; color: var(--color-success, #2e7d32);">S$0.00</span>
+              </div>
+            </div>
+
+            <!-- Card Sub-panel -->
+            <div id="cardPanel" class="cash-details-box" style="display:none; text-align:center;">
+              <div style="font-size: 14px; font-weight: 600; margin-bottom: 6px;" data-i18n="tapCard">请在刷卡机上轻触或插卡</div>
+              <div style="display:flex; justify-content:center; gap: 8px; margin-top: 8px;">
+                <span class="staff-chip">VISA</span>
+                <span class="staff-chip">Mastercard</span>
+                <span class="staff-chip">NETS</span>
+              </div>
+            </div>
+
+            <!-- PayNow Sub-panel -->
+            <div id="paynowPanel" class="cash-details-box" style="display:block; text-align:center;">
+              <div class="demo-warning-banner" id="ownerDemoQrNotice">
+                ⚠️ DEMO / 非真实收款码 · 请勿扫码转账 (Prototype Only - Do Not Pay)
+              </div>
+              <div style="font-size: 14px; font-weight: 600;" data-i18n="scanPayNow">请让顾客在副屏或扫描 PayNow 二维码</div>
+              <div class="muted notranslate" translate="no" style="font-size: 12px; margin-top: 4px;">REF: PN-2026-8821</div>
+            </div>
+
+            <!-- Split Payment Sub-panel -->
+            <div id="splitPanel" class="split-payment-box" style="display:none;">
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 8px;">
+                <strong data-i18n="splitPayment">组合拆分支付</strong>
+                <button type="button" id="addSplitRowBtn" class="quick-adj-btn" data-i18n="addPaymentMethod">+ 添加方式</button>
+              </div>
+              <div id="splitListContainer">
+                <!-- Dynamic Split payment rows -->
+              </div>
+              <div class="split-balance-bar" id="splitBalanceBar">
+                <span data-i18n="remainingBalance">未付余款:</span>
+                <span id="splitRemainingAmount" class="notranslate" translate="no">S$0.00</span>
+              </div>
+            </div>
+
+            <!-- Submit Checkout Button -->
+            <button type="button" id="completeCheckoutBtn" class="checkout-submit-btn" data-i18n="completeCheckout">
+              确认结账
+            </button>
+            <div id="validationHint" style="font-size:12px; color:var(--color-error,#c62828); margin-top:6px; display:none; text-align:center;"></div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Success Receipt Modal (Server Authoritative) -->
+    <div id="successModal" role="dialog" aria-modal="true" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); align-items:center; justify-content:center; z-index:9999;">
+      <div style="background:#fff; border-radius: 16px; padding: 28px; width: 90%; max-width: 440px; box-shadow: var(--shadow-lg); text-align:center;">
+        <div style="font-size: 44px; margin-bottom: 8px;">✅</div>
+        <h3 style="margin:0 0 4px;" data-i18n="checkoutSuccess">结账完成！</h3>
+        <div class="staff-chip staff-chip-primary" id="receiptAuthoritativeTag" style="margin-bottom:12px;">权威服务器凭证 (Authoritative Receipt)</div>
+        <p class="muted notranslate" id="receiptNumberText" translate="no" style="margin:0 0 16px;">REC-2026-9812</p>
+        <div style="background:#f8f8f8; padding: 14px; border-radius: 10px; margin-bottom: 20px; text-align:left;">
+          <div style="display:flex; justify-content:space-between; margin-bottom: 6px;">
+            <span data-i18n="finalTotal">服务端核算实收:</span>
+            <strong id="receiptPaidTotal" class="notranslate" translate="no">S$286.00</strong>
+          </div>
+          <div style="display:flex; justify-content:space-between; font-size:13px; color:#666;">
+            <span data-i18n="paymentMethod">支付方式:</span>
+            <span id="receiptMethodText" class="notranslate" translate="no">PayNow</span>
+          </div>
+        </div>
+        <button type="button" id="closeSuccessModalBtn" class="customer-btn" style="min-height:48px;">
+          完成并关闭
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      'use strict';
+
+      const adapter = window.ggCheckoutAdapter;
+      let session = adapter.getMockFixture();
+      let currentLocale = 'zh-CN';
+
+      const dictionary = {
+        'zh-CN': {
+          ownerCheckoutTitle: '前台收银 / POS',
+          selectedServices: '消费项目',
+          quotedPrice: '预约参考价',
+          actualPrice: '实收金额',
+          priceOverrideReason: '改价原因 (3-500字, 必填)',
+          discountReason: '折扣原因 (3-500字, 必填)',
+          subtotal: '项目小计',
+          discount: '折扣优惠',
+          finalTotal: '预估应收',
+          paymentMethod: '支付方式',
+          card: '刷卡',
+          cash: '现金',
+          otherPayment: '其他',
+          splitPayment: '组合拆分支付',
+          addPaymentMethod: '+ 添加方式',
+          tendered: '实收现金',
+          changeDue: '找零',
+          exact: '刚好',
+          tapCard: '请在刷卡机上轻触或插卡',
+          scanPayNow: '请让顾客在副屏或扫描 PayNow 二维码',
+          remainingBalance: '未付余款',
+          completeCheckout: '确认结账',
+          checkoutSuccess: '结账完成！',
+          openCustomerDisplay: '打开顾客副屏',
+          appointment: '预约',
+          primaryStaff: '主理',
+          assistantStaff: '助理',
+          noAssistant: '无助理'
+        },
+        'en': {
+          ownerCheckoutTitle: 'Front Desk / POS Checkout',
+          selectedServices: 'Services / Items',
+          quotedPrice: 'Quoted Price',
+          actualPrice: 'Actual Price',
+          priceOverrideReason: 'Price Override Reason (3-500 chars, required)',
+          discountReason: 'Discount Reason (3-500 chars, required)',
+          subtotal: 'Subtotal',
+          discount: 'Discount',
+          finalTotal: 'Estimated Total',
+          paymentMethod: 'Payment Method',
+          card: 'Card',
+          cash: 'Cash',
+          otherPayment: 'Other',
+          splitPayment: 'Split Payment',
+          addPaymentMethod: '+ Add Method',
+          tendered: 'Tendered Cash',
+          changeDue: 'Change Due',
+          exact: 'Exact',
+          tapCard: 'Please tap or insert card on terminal',
+          scanPayNow: 'Scan PayNow QR on customer display',
+          remainingBalance: 'Remaining Balance',
+          completeCheckout: 'Complete Checkout',
+          checkoutSuccess: 'Checkout Complete!',
+          openCustomerDisplay: 'Open Customer Display',
+          appointment: 'Appointment',
+          primaryStaff: 'Primary',
+          assistantStaff: 'Assistant',
+          noAssistant: 'None'
+        }
+      };
+
+      function t(key) {
+        return (dictionary[currentLocale] && dictionary[currentLocale][key]) || key;
+      }
+
+      function applyTranslations() {
+        document.querySelectorAll('[data-i18n]').forEach(el => {
+          const key = el.getAttribute('data-i18n');
+          if (key) el.textContent = t(key);
+        });
+      }
+
+      function setLocale(loc) {
+        currentLocale = loc;
+        document.documentElement.lang = loc;
+        document.getElementById('langZh').style.fontWeight = loc === 'zh-CN' ? '700' : '400';
+        document.getElementById('langEn').style.fontWeight = loc === 'en' ? '700' : '400';
+        applyTranslations();
+        renderItems();
+        renderBilling();
+      }
+
+      // Initialize Theme
+      if (window.ggCustomerTheme) {
+        const theme = window.ggCustomerTheme.resolveTheme(session.shopSlug || 'gg-beauty');
+        window.ggCustomerTheme.applyTheme(theme, document.documentElement);
+      }
+
+      // Render Items with dynamic Price Override Reason
+      function renderItems() {
+        const container = document.getElementById('itemsListContainer');
+        container.innerHTML = '';
+        document.getElementById('itemsCountBadge').textContent = `${session.items.length} ${currentLocale === 'zh-CN' ? '项' : 'items'}`;
+
+        session.items.forEach(item => {
+          const row = document.createElement('div');
+          row.className = 'pos-item-row';
+          const name = currentLocale === 'zh-CN' ? (item.serviceNameZh || item.serviceName) : (item.serviceNameEn || item.serviceName);
+          const isOverridden = Math.round(Number(item.actualPrice) * 100) !== Math.round(Number(item.quotedPrice) * 100);
+
+          row.innerHTML = `
+            <div class="pos-item-main">
+              <div>
+                <div class="pos-item-title">${escapeHtml(name)}</div>
+                <div class="pos-item-staff">
+                  <span class="staff-chip staff-chip-primary">
+                    <span>${t('primaryStaff')}:</span> <strong class="notranslate" translate="no">${escapeHtml(item.primaryStaff?.name || '-')}</strong>
+                  </span>
+                  <span class="staff-chip">
+                    <span>${t('assistantStaff')}:</span> <strong class="notranslate" translate="no">${escapeHtml(item.assistantStaff?.name || t('noAssistant'))}</strong>
+                  </span>
+                </div>
+              </div>
+              <div class="stepper-wrap" role="group" aria-label="Quantity">
+                <button type="button" class="stepper-btn" data-action="minus" data-id="${item.itemId}">−</button>
+                <span class="stepper-value notranslate" translate="no">${item.quantity || 1}</span>
+                <button type="button" class="stepper-btn" data-action="plus" data-id="${item.itemId}">+</button>
+              </div>
+            </div>
+            <div class="pos-item-pricing">
+              <div class="price-box">
+                <span class="quoted-price-label">${t('quotedPrice')}:</span>
+                <span class="quoted-price-value notranslate" translate="no">S$${item.quotedPrice.toFixed(2)}</span>
+              </div>
+              <div class="actual-price-input-wrap">
+                <span style="font-size: 13px; font-weight: 600;">${t('actualPrice')}:</span>
+                <span class="notranslate" translate="no">S$</span>
+                <input type="number" step="0.5" class="actual-price-input notranslate" translate="no" data-item-price="${item.itemId}" value="${item.actualPrice.toFixed(2)}">
+                <button type="button" class="quick-adj-btn" data-adj="-10" data-id="${item.itemId}">-10</button>
+                <button type="button" class="quick-adj-btn" data-adj="+10" data-id="${item.itemId}">+10</button>
+              </div>
+            </div>
+
+            <!-- Price Override Reason: displayed when actualPrice differs from quotedPrice -->
+            <div class="override-reason-wrap ${isOverridden && !(item.priceOverrideReason || '').trim() ? 'has-error' : ''}" 
+                 id="overrideReasonBox-${item.itemId}" 
+                 style="display: ${isOverridden ? 'flex' : 'none'};">
+              <label for="overrideInput-${item.itemId}" style="font-size: 12px; font-weight: 700; color: #92400e;">
+                ${t('priceOverrideReason')}
+              </label>
+              <input type="text" id="overrideInput-${item.itemId}" class="override-reason-input" data-item-reason="${item.itemId}" minlength="3" maxlength="500" value="${escapeHtml(item.priceOverrideReason || '')}" placeholder="例如：发量超厚加收调色服务费">
+            </div>
+          `;
+          container.appendChild(row);
+        });
+
+        // Quantity Stepper listeners
+        container.querySelectorAll('[data-action]').forEach(btn => {
+          btn.onclick = () => {
+            const itemId = btn.getAttribute('data-id');
+            const item = session.items.find(i => i.itemId === itemId);
+            if (!item) return;
+            const isPlus = btn.getAttribute('data-action') === 'plus';
+            const newQty = isPlus ? item.quantity + 1 : Math.max(1, item.quantity - 1);
+            adapter.updateItemQuantity(session, itemId, newQty);
+            renderItems();
+            renderBilling();
+            syncDisplay();
+          };
+        });
+
+        // Price Input listeners
+        container.querySelectorAll('[data-item-price]').forEach(input => {
+          input.onchange = () => {
+            const itemId = input.getAttribute('data-item-price');
+            adapter.updateItemPrice(session, itemId, Number(input.value) || 0);
+            renderItems();
+            renderBilling();
+            syncDisplay();
+          };
+        });
+
+        // Quick adjustment buttons
+        container.querySelectorAll('[data-adj]').forEach(btn => {
+          btn.onclick = () => {
+            const itemId = btn.getAttribute('data-id');
+            const adj = Number(btn.getAttribute('data-adj')) || 0;
+            const item = session.items.find(i => i.itemId === itemId);
+            if (!item) return;
+            adapter.updateItemPrice(session, itemId, Math.max(0, item.actualPrice + adj));
+            renderItems();
+            renderBilling();
+            syncDisplay();
+          };
+        });
+
+        // Override Reason input listeners
+        container.querySelectorAll('[data-item-reason]').forEach(input => {
+          input.oninput = () => {
+            const itemId = input.getAttribute('data-item-reason');
+            adapter.setItemOverrideReason(session, itemId, input.value);
+            renderBilling();
+            syncDisplay();
+          };
+        });
+      }
+
+      // Render Billing and Discount Reason
+      function renderBilling() {
+        const totals = adapter.calculateTotals(session);
+        document.getElementById('quotedTotalAmount').textContent = `S$${totals.quotedTotal.toFixed(2)}`;
+        document.getElementById('subtotalAmount').textContent = `S$${totals.subtotal.toFixed(2)}`;
+        document.getElementById('discountValueAmount').textContent = `-S$${totals.discountAmount.toFixed(2)}`;
+        document.getElementById('finalTotalAmount').textContent = `S$${totals.finalTotal.toFixed(2)}`;
+
+        // Discount Reason Box: reveal when discount > 0
+        const discountReasonWrap = document.getElementById('discountReasonWrap');
+        if (totals.discountAmount > 0) {
+          discountReasonWrap.style.display = 'flex';
+        } else {
+          discountReasonWrap.style.display = 'none';
+        }
+
+        // Cash Change
+        document.getElementById('cashChangeAmount').textContent = `S$${totals.changeDue.toFixed(2)}`;
+
+        // Split balance
+        const balanceEl = document.getElementById('splitRemainingAmount');
+        balanceEl.textContent = `S$${totals.remainingBalance.toFixed(2)}`;
+        balanceEl.style.color = totals.remainingBalance <= 0 ? 'var(--color-success, #2e7d32)' : 'var(--color-error, #c62828)';
+
+        // Validate Checkout Form
+        const validation = adapter.validateCheckout(session);
+        const submitBtn = document.getElementById('completeCheckoutBtn');
+        const hintEl = document.getElementById('validationHint');
+
+        if (validation.valid) {
+          submitBtn.disabled = false;
+          hintEl.style.display = 'none';
+        } else {
+          submitBtn.disabled = true;
+          hintEl.style.display = 'block';
+          hintEl.textContent = validation.errors[0];
+        }
+      }
+
+      function syncDisplay() {
+        adapter.broadcastSession(session);
+      }
+
+      function escapeHtml(str) {
+        return String(str || '').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+      }
+
+      // Setup Payment Panels
+      function updatePaymentMode() {
+        const isSplit = document.getElementById('splitModeToggle').checked;
+        adapter.setPaymentMode(session, isSplit ? 'split' : 'single');
+        document.getElementById('singlePaymentGrid').style.display = isSplit ? 'none' : 'grid';
+        document.getElementById('splitPanel').style.display = isSplit ? 'block' : 'none';
+
+        if (isSplit) {
+          document.getElementById('cashPanel').style.display = 'none';
+          document.getElementById('cardPanel').style.display = 'none';
+          document.getElementById('paynowPanel').style.display = 'none';
+          renderSplitPayments();
+        } else {
+          switchPaymentMethod(session.paymentState.activeMethod || 'paynow');
+        }
+        renderBilling();
+        syncDisplay();
+      }
+
+      function switchPaymentMethod(method) {
+        adapter.setPaymentMethod(session, method);
+        document.querySelectorAll('.payment-btn').forEach(btn => {
+          const match = btn.getAttribute('data-method') === method;
+          btn.classList.toggle('active', match);
+          btn.setAttribute('aria-checked', match ? 'true' : 'false');
+        });
+
+        document.getElementById('cashPanel').style.display = method === 'cash' ? 'block' : 'none';
+        document.getElementById('cardPanel').style.display = method === 'card' ? 'block' : 'none';
+        document.getElementById('paynowPanel').style.display = method === 'paynow' ? 'block' : 'none';
+        renderBilling();
+        syncDisplay();
+      }
+
+      function renderSplitPayments() {
+        const container = document.getElementById('splitListContainer');
+        container.innerHTML = '';
+        if (!session.paymentState.splitPayments || session.paymentState.splitPayments.length === 0) {
+          adapter.addSplitPayment(session, 'cash', 0);
+        }
+
+        session.paymentState.splitPayments.forEach((p, idx) => {
+          const row = document.createElement('div');
+          row.className = 'split-row';
+          row.innerHTML = `
+            <select data-split-idx="${idx}">
+              <option value="cash" ${p.method==='cash'?'selected':''}>${t('cash')}</option>
+              <option value="card" ${p.method==='card'?'selected':''}>${t('card')}</option>
+              <option value="paynow" ${p.method==='paynow'?'selected':''}>PayNow</option>
+              <option value="other" ${p.method==='other'?'selected':''}>${t('otherPayment')}</option>
+            </select>
+            <div style="display:flex; align-items:center; gap:4px;">
+              <span>S$</span>
+              <input type="number" step="0.5" class="actual-price-input notranslate" translate="no" data-split-amount="${idx}" value="${p.amount.toFixed(2)}">
+            </div>
+            <button type="button" class="quick-adj-btn" data-remove-split="${idx}" style="color:red;">✕</button>
+          `;
+          container.appendChild(row);
+        });
+
+        container.querySelectorAll('[data-split-idx]').forEach(sel => {
+          sel.onchange = () => {
+            const idx = Number(sel.getAttribute('data-split-idx'));
+            session.paymentState.splitPayments[idx].method = sel.value;
+            syncDisplay();
+          };
+        });
+
+        container.querySelectorAll('[data-split-amount]').forEach(inp => {
+          inp.onchange = () => {
+            const idx = Number(inp.getAttribute('data-split-amount'));
+            session.paymentState.splitPayments[idx].amount = Number(inp.value) || 0;
+            renderBilling();
+            syncDisplay();
+          };
+        });
+
+        container.querySelectorAll('[data-remove-split]').forEach(btn => {
+          btn.onclick = () => {
+            const idx = Number(btn.getAttribute('data-remove-split'));
+            adapter.removeSplitPayment(session, idx);
+            renderSplitPayments();
+            renderBilling();
+            syncDisplay();
+          };
+        });
+      }
+
+      // Event Listeners
+      document.getElementById('langZh').onclick = () => setLocale('zh-CN');
+      document.getElementById('langEn').onclick = () => setLocale('en');
+      document.getElementById('openCustomerDisplayBtn').onclick = () => {
+        window.open('/customer-display.html', 'gg_customer_display', 'width=1024,height=768');
+      };
+
+      document.getElementById('splitModeToggle').onchange = updatePaymentMode;
+      document.querySelectorAll('.payment-btn').forEach(btn => {
+        btn.onclick = () => switchPaymentMethod(btn.getAttribute('data-method'));
+      });
+
+      document.getElementById('addSplitRowBtn').onclick = () => {
+        adapter.addSplitPayment(session, 'paynow', 0);
+        renderSplitPayments();
+        renderBilling();
+        syncDisplay();
+      };
+
+      // Discount pills
+      document.querySelectorAll('.discount-pill').forEach(btn => {
+        btn.onclick = () => {
+          document.querySelectorAll('.discount-pill').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+          const type = btn.getAttribute('data-discount-type');
+          const val = Number(btn.getAttribute('data-discount-val')) || 0;
+          if (type === 'fixed') {
+            document.getElementById('customDiscountRow').style.display = 'flex';
+            adapter.applyDiscount(session, { type: 'fixed', value: Number(document.getElementById('customDiscountInput').value) || 0, reason: document.getElementById('discountReasonInput').value });
+          } else {
+            document.getElementById('customDiscountRow').style.display = 'none';
+            adapter.applyDiscount(session, { type, value: val, reason: document.getElementById('discountReasonInput').value });
+          }
+          renderBilling();
+          syncDisplay();
+        };
+      });
+
+      document.getElementById('customDiscountInput').oninput = () => {
+        const val = Number(document.getElementById('customDiscountInput').value) || 0;
+        adapter.applyDiscount(session, { type: 'fixed', value: val, reason: document.getElementById('discountReasonInput').value });
+        renderBilling();
+        syncDisplay();
+      };
+
+      document.getElementById('discountReasonInput').oninput = () => {
+        adapter.setDiscountReason(session, document.getElementById('discountReasonInput').value);
+        renderBilling();
+        syncDisplay();
+      };
+
+      // Cash helpers
+      document.getElementById('tenderedCashInput').oninput = () => {
+        adapter.setTenderedCash(session, document.getElementById('tenderedCashInput').value);
+        renderBilling();
+        syncDisplay();
+      };
+
+      document.getElementById('cashExactBtn').onclick = () => {
+        const totals = adapter.calculateTotals(session);
+        document.getElementById('tenderedCashInput').value = totals.finalTotal.toFixed(2);
+        adapter.setTenderedCash(session, totals.finalTotal);
+        renderBilling();
+        syncDisplay();
+      };
+
+      document.querySelectorAll('.quick-cash-btn[data-val]').forEach(btn => {
+        btn.onclick = () => {
+          const val = Number(btn.getAttribute('data-val'));
+          document.getElementById('tenderedCashInput').value = val.toFixed(2);
+          adapter.setTenderedCash(session, val);
+          renderBilling();
+          syncDisplay();
+        };
+      });
+
+      // Submit checkout
+      document.getElementById('completeCheckoutBtn').onclick = async () => {
+        try {
+          document.getElementById('completeCheckoutBtn').disabled = true;
+          // Submits canonical payload without forbidden fields
+          const result = await adapter.submitCheckout(session);
+          if (result && result.success) {
+            document.getElementById('receiptNumberText').textContent = result.data.receiptNumber || 'REC-SERVER';
+            // Authoritative server-calculated receipt amount
+            document.getElementById('receiptPaidTotal').textContent = `S$${(result.data.paidTotal || (result.data.paidMinor / 100) || 0).toFixed(2)}`;
+            document.getElementById('receiptMethodText').textContent = session.paymentState.mode === 'split' ? 'Split Payment' : session.paymentState.activeMethod.toUpperCase();
+            document.getElementById('successModal').style.display = 'flex';
+          }
+        } catch (err) {
+          const fb = document.getElementById('checkoutFeedback');
+          fb.style.display = 'block';
+          fb.className = 'message error';
+          fb.textContent = err.message;
+        } finally {
+          document.getElementById('completeCheckoutBtn').disabled = false;
+        }
+      };
+
+      document.getElementById('closeSuccessModalBtn').onclick = () => {
+        document.getElementById('successModal').style.display = 'none';
+        session = adapter.getMockFixture();
+        document.getElementById('discountReasonInput').value = '';
+        renderItems();
+        renderBilling();
+        syncDisplay();
+      };
+
+      // Initial Mount
+      renderItems();
+      renderBilling();
+      syncDisplay();
+    })();
+  </script>
+</body>
+</html>
