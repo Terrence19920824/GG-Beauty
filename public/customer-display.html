@@ -69,8 +69,9 @@
         </div>
 
         <div class="display-total-box">
-          <div style="font-size: 14px; font-weight: 600; color: var(--theme-text-muted, #555);" data-i18n="finalTotal">应付总额</div>
+          <div style="font-size: 14px; font-weight: 600; color: var(--theme-text-muted, #555);" data-i18n="finalTotal">预估应付总额</div>
           <div id="dispFinalAmount" class="display-final-price notranslate" translate="no">S$286.00</div>
+          <div class="muted" style="font-size:11px; margin-top:4px;">(以收银系统最终权威核算为准)</div>
         </div>
       </div>
     </section>
@@ -85,6 +86,10 @@
           <div id="payInstructionTitle" style="font-size: 16px; font-weight: 700; margin-bottom: 4px;">PayNow / 扫码支付</div>
           <div id="payInstructionSubtitle" class="muted" style="font-size: 13px;">请使用手机银行或扫描二维码付款</div>
           <div id="dispQrContainer" class="qr-container">
+            <!-- Explicit Demo Safety Banner on QR to prevent customer transfer -->
+            <div class="demo-warning-banner" id="qrDemoSafetyBanner">
+              ⚠️ DEMO / 非真实收款码 · 请勿扫码转账 (Prototype Only - Do Not Pay)
+            </div>
             <div class="qr-box-mock">
               <div style="text-align:center;">
                 <div style="font-size: 32px;">📱</div>
@@ -154,7 +159,7 @@
           customerName: '顾客',
           subtotal: '项目小计',
           discount: '优惠减免',
-          finalTotal: '应付总额',
+          finalTotal: '预估应付总额',
           paymentInstructions: '支付与顾客确认',
           placeholderPreviewTag: '演示占位 / 未开放',
           placeholderPoints: '预计本次累计积分:',
@@ -177,7 +182,7 @@
           customerName: 'Customer',
           subtotal: 'Subtotal',
           discount: 'Discount',
-          finalTotal: 'Total Payable',
+          finalTotal: 'Estimated Total',
           paymentInstructions: 'Payment & Confirmation',
           placeholderPreviewTag: 'Preview Only / Upcoming',
           placeholderPoints: 'Estimated Points Earned:',

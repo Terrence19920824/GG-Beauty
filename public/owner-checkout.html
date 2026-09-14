@@ -104,6 +104,14 @@
               <span>S$</span>
               <input type="number" id="customDiscountInput" min="0" step="1" class="actual-price-input notranslate" translate="no" style="width: 120px;" placeholder="0.00">
             </div>
+
+            <!-- Discount Reason Input (Required when discount > 0) -->
+            <div id="discountReasonWrap" class="override-reason-wrap" style="display:none;">
+              <label for="discountReasonInput" style="font-size: 12px; font-weight: 700; color: #92400e;">
+                <span data-i18n="discountReason">折扣原因 (3-500字, 必填)</span>:
+              </label>
+              <input type="text" id="discountReasonInput" class="override-reason-input" minlength="3" maxlength="500" placeholder="例如：新客到店立减 / 老板特批优惠券">
+            </div>
           </div>
 
           <div class="summary-row">
@@ -111,9 +119,12 @@
             <span id="discountValueAmount" class="notranslate" translate="no" style="color: var(--color-error, #c62828); font-weight: 600;">-S$0.00</span>
           </div>
 
-          <!-- Final Total -->
+          <!-- Final Total Preview (Client Preview) -->
           <div class="summary-row total-row">
-            <span data-i18n="finalTotal" style="font-size: 18px; font-weight: 700;">应收总计</span>
+            <div>
+              <span data-i18n="finalTotal" style="font-size: 18px; font-weight: 700;">预估应收</span>
+              <div class="muted" style="font-size:11px;">(最终以服务端权威核算为准)</div>
+            </div>
             <span id="finalTotalAmount" class="final-amount-large notranslate" translate="no">S$286.00</span>
           </div>
 
@@ -175,6 +186,9 @@
 
             <!-- PayNow Sub-panel -->
             <div id="paynowPanel" class="cash-details-box" style="display:block; text-align:center;">
+              <div class="demo-warning-banner" id="ownerDemoQrNotice">
+                ⚠️ DEMO / 非真实收款码 · 请勿扫码转账 (Prototype Only - Do Not Pay)
+              </div>
               <div style="font-size: 14px; font-weight: 600;" data-i18n="scanPayNow">请让顾客在副屏或扫描 PayNow 二维码</div>
               <div class="muted notranslate" translate="no" style="font-size: 12px; margin-top: 4px;">REF: PN-2026-8821</div>
             </div>
@@ -198,20 +212,22 @@
             <button type="button" id="completeCheckoutBtn" class="checkout-submit-btn" data-i18n="completeCheckout">
               确认结账
             </button>
+            <div id="validationHint" style="font-size:12px; color:var(--color-error,#c62828); margin-top:6px; display:none; text-align:center;"></div>
           </div>
         </div>
       </section>
     </main>
 
-    <!-- Success Receipt Modal -->
+    <!-- Success Receipt Modal (Server Authoritative) -->
     <div id="successModal" role="dialog" aria-modal="true" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); align-items:center; justify-content:center; z-index:9999;">
       <div style="background:#fff; border-radius: 16px; padding: 28px; width: 90%; max-width: 440px; box-shadow: var(--shadow-lg); text-align:center;">
         <div style="font-size: 44px; margin-bottom: 8px;">✅</div>
-        <h3 style="margin:0 0 8px;" data-i18n="checkoutSuccess">结账完成！</h3>
+        <h3 style="margin:0 0 4px;" data-i18n="checkoutSuccess">结账完成！</h3>
+        <div class="staff-chip staff-chip-primary" id="receiptAuthoritativeTag" style="margin-bottom:12px;">权威服务器凭证 (Authoritative Receipt)</div>
         <p class="muted notranslate" id="receiptNumberText" translate="no" style="margin:0 0 16px;">REC-2026-9812</p>
         <div style="background:#f8f8f8; padding: 14px; border-radius: 10px; margin-bottom: 20px; text-align:left;">
           <div style="display:flex; justify-content:space-between; margin-bottom: 6px;">
-            <span data-i18n="finalTotal">实收总计:</span>
+            <span data-i18n="finalTotal">服务端核算实收:</span>
             <strong id="receiptPaidTotal" class="notranslate" translate="no">S$286.00</strong>
           </div>
           <div style="display:flex; justify-content:space-between; font-size:13px; color:#666;">
@@ -240,9 +256,11 @@
           selectedServices: '消费项目',
           quotedPrice: '预约参考价',
           actualPrice: '实收金额',
+          priceOverrideReason: '改价原因 (3-500字, 必填)',
+          discountReason: '折扣原因 (3-500字, 必填)',
           subtotal: '项目小计',
           discount: '折扣优惠',
-          finalTotal: '应收总计',
+          finalTotal: '预估应收',
           paymentMethod: '支付方式',
           card: '刷卡',
           cash: '现金',
@@ -268,9 +286,11 @@
           selectedServices: 'Services / Items',
           quotedPrice: 'Quoted Price',
           actualPrice: 'Actual Price',
+          priceOverrideReason: 'Price Override Reason (3-500 chars, required)',
+          discountReason: 'Discount Reason (3-500 chars, required)',
           subtotal: 'Subtotal',
           discount: 'Discount',
-          finalTotal: 'Final Total',
+          finalTotal: 'Estimated Total',
           paymentMethod: 'Payment Method',
           card: 'Card',
           cash: 'Cash',
@@ -320,7 +340,7 @@
         window.ggCustomerTheme.applyTheme(theme, document.documentElement);
       }
 
-      // Render Items
+      // Render Items with dynamic Price Override Reason
       function renderItems() {
         const container = document.getElementById('itemsListContainer');
         container.innerHTML = '';
@@ -330,6 +350,7 @@
           const row = document.createElement('div');
           row.className = 'pos-item-row';
           const name = currentLocale === 'zh-CN' ? (item.serviceNameZh || item.serviceName) : (item.serviceNameEn || item.serviceName);
+          const isOverridden = Math.round(Number(item.actualPrice) * 100) !== Math.round(Number(item.quotedPrice) * 100);
 
           row.innerHTML = `
             <div class="pos-item-main">
@@ -363,11 +384,21 @@
                 <button type="button" class="quick-adj-btn" data-adj="+10" data-id="${item.itemId}">+10</button>
               </div>
             </div>
+
+            <!-- Price Override Reason: displayed when actualPrice differs from quotedPrice -->
+            <div class="override-reason-wrap ${isOverridden && !(item.priceOverrideReason || '').trim() ? 'has-error' : ''}" 
+                 id="overrideReasonBox-${item.itemId}" 
+                 style="display: ${isOverridden ? 'flex' : 'none'};">
+              <label for="overrideInput-${item.itemId}" style="font-size: 12px; font-weight: 700; color: #92400e;">
+                ${t('priceOverrideReason')}
+              </label>
+              <input type="text" id="overrideInput-${item.itemId}" class="override-reason-input" data-item-reason="${item.itemId}" minlength="3" maxlength="500" value="${escapeHtml(item.priceOverrideReason || '')}" placeholder="例如：发量超厚加收调色服务费">
+            </div>
           `;
           container.appendChild(row);
         });
 
-        // Attach listeners
+        // Quantity Stepper listeners
         container.querySelectorAll('[data-action]').forEach(btn => {
           btn.onclick = () => {
             const itemId = btn.getAttribute('data-id');
@@ -382,15 +413,18 @@
           };
         });
 
+        // Price Input listeners
         container.querySelectorAll('[data-item-price]').forEach(input => {
           input.onchange = () => {
             const itemId = input.getAttribute('data-item-price');
             adapter.updateItemPrice(session, itemId, Number(input.value) || 0);
+            renderItems();
             renderBilling();
             syncDisplay();
           };
         });
 
+        // Quick adjustment buttons
         container.querySelectorAll('[data-adj]').forEach(btn => {
           btn.onclick = () => {
             const itemId = btn.getAttribute('data-id');
@@ -403,9 +437,19 @@
             syncDisplay();
           };
         });
+
+        // Override Reason input listeners
+        container.querySelectorAll('[data-item-reason]').forEach(input => {
+          input.oninput = () => {
+            const itemId = input.getAttribute('data-item-reason');
+            adapter.setItemOverrideReason(session, itemId, input.value);
+            renderBilling();
+            syncDisplay();
+          };
+        });
       }
 
-      // Render Billing
+      // Render Billing and Discount Reason
       function renderBilling() {
         const totals = adapter.calculateTotals(session);
         document.getElementById('quotedTotalAmount').textContent = `S$${totals.quotedTotal.toFixed(2)}`;
@@ -413,21 +457,35 @@
         document.getElementById('discountValueAmount').textContent = `-S$${totals.discountAmount.toFixed(2)}`;
         document.getElementById('finalTotalAmount').textContent = `S$${totals.finalTotal.toFixed(2)}`;
 
+        // Discount Reason Box: reveal when discount > 0
+        const discountReasonWrap = document.getElementById('discountReasonWrap');
+        if (totals.discountAmount > 0) {
+          discountReasonWrap.style.display = 'flex';
+        } else {
+          discountReasonWrap.style.display = 'none';
+        }
+
         // Cash Change
         document.getElementById('cashChangeAmount').textContent = `S$${totals.changeDue.toFixed(2)}`;
 
         // Split balance
         const balanceEl = document.getElementById('splitRemainingAmount');
         balanceEl.textContent = `S$${totals.remainingBalance.toFixed(2)}`;
-        if (totals.remainingBalance <= 0) {
-          balanceEl.style.color = 'var(--color-success, #2e7d32)';
-        } else {
-          balanceEl.style.color = 'var(--color-error, #c62828)';
-        }
+        balanceEl.style.color = totals.remainingBalance <= 0 ? 'var(--color-success, #2e7d32)' : 'var(--color-error, #c62828)';
 
-        // Validate Checkout Button
-        const valid = adapter.validateCheckout(session).valid;
-        document.getElementById('completeCheckoutBtn').disabled = !valid;
+        // Validate Checkout Form
+        const validation = adapter.validateCheckout(session);
+        const submitBtn = document.getElementById('completeCheckoutBtn');
+        const hintEl = document.getElementById('validationHint');
+
+        if (validation.valid) {
+          submitBtn.disabled = false;
+          hintEl.style.display = 'none';
+        } else {
+          submitBtn.disabled = true;
+          hintEl.style.display = 'block';
+          hintEl.textContent = validation.errors[0];
+        }
       }
 
       function syncDisplay() {
@@ -554,10 +612,10 @@
           const val = Number(btn.getAttribute('data-discount-val')) || 0;
           if (type === 'fixed') {
             document.getElementById('customDiscountRow').style.display = 'flex';
-            adapter.applyDiscount(session, { type: 'fixed', value: Number(document.getElementById('customDiscountInput').value) || 0 });
+            adapter.applyDiscount(session, { type: 'fixed', value: Number(document.getElementById('customDiscountInput').value) || 0, reason: document.getElementById('discountReasonInput').value });
           } else {
             document.getElementById('customDiscountRow').style.display = 'none';
-            adapter.applyDiscount(session, { type, value: val });
+            adapter.applyDiscount(session, { type, value: val, reason: document.getElementById('discountReasonInput').value });
           }
           renderBilling();
           syncDisplay();
@@ -566,7 +624,13 @@
 
       document.getElementById('customDiscountInput').oninput = () => {
         const val = Number(document.getElementById('customDiscountInput').value) || 0;
-        adapter.applyDiscount(session, { type: 'fixed', value: val });
+        adapter.applyDiscount(session, { type: 'fixed', value: val, reason: document.getElementById('discountReasonInput').value });
+        renderBilling();
+        syncDisplay();
+      };
+
+      document.getElementById('discountReasonInput').oninput = () => {
+        adapter.setDiscountReason(session, document.getElementById('discountReasonInput').value);
         renderBilling();
         syncDisplay();
       };
@@ -600,10 +664,12 @@
       document.getElementById('completeCheckoutBtn').onclick = async () => {
         try {
           document.getElementById('completeCheckoutBtn').disabled = true;
+          // Submits canonical payload without forbidden fields
           const result = await adapter.submitCheckout(session);
           if (result && result.success) {
-            document.getElementById('receiptNumberText').textContent = result.data.receiptNumber || 'REC-PROTOTYPE';
-            document.getElementById('receiptPaidTotal').textContent = `S$${result.data.totals.finalTotal.toFixed(2)}`;
+            document.getElementById('receiptNumberText').textContent = result.data.receiptNumber || 'REC-SERVER';
+            // Authoritative server-calculated receipt amount
+            document.getElementById('receiptPaidTotal').textContent = `S$${(result.data.paidTotal || (result.data.paidMinor / 100) || 0).toFixed(2)}`;
             document.getElementById('receiptMethodText').textContent = session.paymentState.mode === 'split' ? 'Split Payment' : session.paymentState.activeMethod.toUpperCase();
             document.getElementById('successModal').style.display = 'flex';
           }
@@ -620,6 +686,7 @@
       document.getElementById('closeSuccessModalBtn').onclick = () => {
         document.getElementById('successModal').style.display = 'none';
         session = adapter.getMockFixture();
+        document.getElementById('discountReasonInput').value = '';
         renderItems();
         renderBilling();
         syncDisplay();

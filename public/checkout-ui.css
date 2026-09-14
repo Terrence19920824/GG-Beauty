@@ -551,3 +551,51 @@
     scroll-behavior: auto !important;
   }
 }
+
+/* Override & Discount Reason Inputs */
+.override-reason-wrap {
+  margin-top: 8px;
+  padding: 8px 12px;
+  background: #fff8e6;
+  border-left: 3px solid #f59e0b;
+  border-radius: var(--radius-sm, 6px);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.override-reason-wrap.has-error {
+  background: #fef2f2;
+  border-left-color: #ef4444;
+}
+
+.override-reason-input {
+  width: 100%;
+  padding: 8px 10px;
+  font-size: var(--text-sm, 13px);
+  border: 1px solid var(--theme-border, #ccc);
+  border-radius: var(--radius-sm, 6px);
+  box-sizing: border-box;
+}
+
+.override-reason-input:focus {
+  border-color: #f59e0b;
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.2);
+}
+
+.demo-warning-banner {
+  background: #fffbeb;
+  border: 1px solid #fcd34d;
+  color: #92400e;
+  padding: 6px 10px;
+  border-radius: var(--radius-md, 8px);
+  font-size: var(--text-xs, 12px);
+  font-weight: 700;
+  text-align: center;
+  margin: 6px 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
