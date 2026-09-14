@@ -86,6 +86,10 @@ test('checkout session read is owner-authenticated, tenant-safe and minimal', as
 
   const unknown = fixture(); app.locals.ownerAuthPool = unknown.pool;
   await withServer(async base => assert.equal((await get(base, '99999999-9999-4999-8999-999999999999')).status, 404));
+
+  const malformed = fixture(); app.locals.ownerAuthPool = malformed.pool;
+  await withServer(async base => assert.equal((await get(base, 'not-a-uuid')).status, 404));
+  assert.equal(malformed.state.queries.length, 0);
 });
 
 test('checkout session read exposes paid state without permitting a new checkout', async () => {
