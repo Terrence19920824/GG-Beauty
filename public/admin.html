@@ -20,6 +20,10 @@
       --status-no-show-soft: #fbe9e9;
       --status-cancelled: #8a5252;
       --status-cancelled-soft: #f9eaea;
+      --status-checkout: #7c3aed;
+      --status-checkout-soft: #ede9fe;
+      --status-paid: #059669;
+      --status-paid-soft: #d1fae5;
     }
 
     * {
@@ -389,6 +393,98 @@
         grid-column: auto;
       }
     }
+
+    .status-awaiting-checkout {
+      background: var(--status-checkout-soft);
+      color: var(--status-checkout);
+      font-weight: 600;
+    }
+
+    .status-paid {
+      background: var(--status-paid-soft);
+      color: var(--status-paid);
+      font-weight: 600;
+    }
+
+    .checkout-btn {
+      border: 1px solid var(--status-checkout);
+      background: var(--status-checkout-soft);
+      color: var(--status-checkout);
+      padding: 6px 12px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 600;
+      margin-left: 4px;
+      min-height: 40px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.2s ease;
+    }
+
+    .checkout-btn:hover {
+      background: var(--status-checkout);
+      color: #ffffff;
+    }
+
+    .frontdesk-workflow-bar {
+      background: #ffffff;
+      border: 1px solid #e5e7eb;
+      border-radius: 12px;
+      padding: 14px 16px;
+      margin: 16px 0;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+    }
+
+    .workflow-stepper {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      overflow-x: auto;
+      gap: 8px;
+      margin-top: 10px;
+      padding-bottom: 4px;
+    }
+
+    .workflow-step {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 13px;
+      color: #555;
+      white-space: nowrap;
+    }
+
+    .step-num {
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      background: #f3f4f6;
+      border: 1px solid #d1d5db;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .step-arrow {
+      color: #9ca3af;
+      font-size: 14px;
+      user-select: none;
+    }
+
+    :focus-visible {
+      outline: 2px solid #111;
+      outline-offset: 2px;
+    }
+
+    @media (min-width: 768px) {
+      .checkout-btn {
+        min-height: 44px;
+      }
+    }
   </style>
 </head>
 
@@ -472,8 +568,8 @@
 
   <div class="header">
     <div>
-      <button id="adminLanguageZh" class="refresh-btn" type="button" onclick="ownerSelfService.setLocale('zh-CN')">中文</button>
-      <button id="adminLanguageEn" class="refresh-btn" type="button" onclick="ownerSelfService.setLocale('en')">EN</button>
+      <button id="adminLanguageZh" class="refresh-btn" type="button" onclick="ownerSelfService.setLocale('zh-CN'); if (typeof currentAppointments !== 'undefined' && currentAppointments.length) renderAppointments(currentAppointments);">中文</button>
+      <button id="adminLanguageEn" class="refresh-btn" type="button" onclick="ownerSelfService.setLocale('en'); if (typeof currentAppointments !== 'undefined' && currentAppointments.length) renderAppointments(currentAppointments);">EN</button>
       <h1 data-i18n="ownerTitle">GG-Beauty 老板端</h1>
       <p data-i18n="ownerSubtitle">预约管理后台</p>
     </div>
@@ -522,6 +618,39 @@
       <div class="number" id="todayCount">0</div>
     </div>
 
+  </div>
+
+  <div class="frontdesk-workflow-bar" role="region" aria-label="Front Desk Workflow Guide">
+    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+      <strong data-i18n="frontDeskWorkflow" style="font-size:14px; color:#1f2937;">前台接待与收银流程</strong>
+      <span class="muted" data-i18n="workflowFeaturePreview" style="font-size:12px; background:#f3f4f6; padding:2px 8px; border-radius:6px;">工作流展示</span>
+    </div>
+    <div class="workflow-stepper" aria-hidden="true">
+      <div class="workflow-step">
+        <span class="step-num">1</span>
+        <span data-i18n="workflowAppointment">预约</span>
+      </div>
+      <span class="step-arrow">→</span>
+      <div class="workflow-step">
+        <span class="step-num">2</span>
+        <span data-i18n="workflowArrived">到店</span>
+      </div>
+      <span class="step-arrow">→</span>
+      <div class="workflow-step">
+        <span class="step-num">3</span>
+        <span data-i18n="workflowInService">服务中</span>
+      </div>
+      <span class="step-arrow">→</span>
+      <div class="workflow-step">
+        <span class="step-num" style="background:var(--status-checkout-soft); color:var(--status-checkout); border-color:var(--status-checkout);">4</span>
+        <strong style="color:var(--status-checkout);" data-i18n="workflowCheckout">去结账</strong>
+      </div>
+      <span class="step-arrow">→</span>
+      <div class="workflow-step">
+        <span class="step-num" style="background:var(--status-paid-soft); color:var(--status-paid); border-color:var(--status-paid);">5</span>
+        <strong style="color:var(--status-paid);" data-i18n="workflowPaid">已结账</strong>
+      </div>
+    </div>
   </div>
 
   <div class="card">
@@ -616,6 +745,19 @@ const adminResultMessage = (result, fallbackKey) =>
   globalThis.ownerSelfService?._state.locale === 'zh-CN' && result?.message
     ? result.message
     : adminT(fallbackKey);
+
+const globalScope = typeof globalThis !== 'undefined' ? globalThis : (typeof window !== 'undefined' ? window : this);
+globalScope.FEATURE_CHECKOUT_ENABLED = false;
+
+function openCheckoutWorkflow(appointmentId) {
+  if (!globalScope.FEATURE_CHECKOUT_ENABLED) {
+    if (typeof alert === 'function') {
+      alert(adminT('featureGatedNoticeDesc'));
+    }
+    return;
+  }
+}
+globalScope.openCheckoutWorkflow = openCheckoutWorkflow;
 
 function showLogin(message = '') {
   adminContent.hidden = true;
@@ -953,6 +1095,8 @@ function renderAppointments(appointments) {
                 item.status
               )}
             </span>
+            ${item.status === 'in_service' ? `<span class="pill status-awaiting-checkout notranslate" translate="no">${adminT('awaitingCheckout')}</span>` : ''}
+            ${item.status === 'completed' ? `<span class="pill status-paid notranslate" translate="no">${adminT('paid')}</span>` : ''}
           </td>
 
         
@@ -960,7 +1104,7 @@ function renderAppointments(appointments) {
   ${item.status === 'pending' ? `<button onclick="updateAppointmentStatus('${item.id}', 'confirmed')">${adminT('confirm')}</button><button onclick="updateAppointmentStatus('${item.id}', 'cancelled')">${adminT('cancel')}</button>` : ''}
   ${item.status === 'confirmed' ? `<button onclick="updateAppointmentStatus('${item.id}', 'arrived')">${adminT('arrived')}</button><button onclick="updateAppointmentStatus('${item.id}', 'no_show')">${adminT('noShow')}</button><button onclick="updateAppointmentStatus('${item.id}', 'cancelled')">${adminT('cancel')}</button>` : ''}
   ${item.status === 'arrived' ? `<button onclick="updateAppointmentStatus('${item.id}', 'in_service')">${adminT('in_service')}</button>` : ''}
-  ${item.status === 'in_service' ? `<button onclick="updateAppointmentStatus('${item.id}', 'completed')">${adminT('complete')}</button>` : ''}
+  ${item.status === 'in_service' ? `<button onclick="updateAppointmentStatus('${item.id}', 'completed')">${adminT('complete')}</button><button type="button" class="checkout-btn" onclick="openCheckoutWorkflow('${item.id}')" data-feature-gated="true" title="${adminT('checkoutDisabledNotice')}">${adminT('goToCheckout')}</button>` : ''}
 </td>
 </tr>
 `;
