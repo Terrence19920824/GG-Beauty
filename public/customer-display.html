@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title data-i18n="customerDisplayTitle">GG-Beauty 顾客副屏 / Customer Display</title>
+
+  <link rel="stylesheet" href="/customer-shared.css">
+  <link rel="stylesheet" href="/checkout-ui.css">
+
+  <script src="/customer-theme.js"></script>
+  <script src="/shared-i18n.js"></script>
+  <script src="/checkout-ui-adapter.js"></script>
+</head>
+<body class="customer-display-shell">
+  <!-- Top Bar -->
+  <header class="display-header" role="banner">
+    <div style="display:flex; align-items:center; gap: 14px;">
+      <div id="shopBrandBadge" class="brand-badge notranslate" translate="no">GG</div>
+      <div>
+        <h1 id="shopBrandName" class="context-customer-name notranslate" translate="no" style="margin:0; font-size: 22px;">GG-Beauty</h1>
+        <span class="muted" data-i18n="welcomeCustomer">欢迎光临 · 尊享美业体验</span>
+      </div>
+    </div>
+    <div style="display:flex; align-items:center; gap: 12px;">
+      <span id="syncStatusTag" class="staff-chip staff-chip-primary" style="font-size:12px;">● 实时同步中</span>
+      <div style="display:inline-flex; align-items:center; gap: 4px; background: #eee; padding: 4px 8px; border-radius: 999px;">
+        <button type="button" id="dispLangZh" style="border:none; background:transparent; cursor:pointer; font-weight:700; padding:2px 6px;">中</button>
+        <span class="language-divider" style="color:#aaa;">｜</span>
+        <button type="button" id="dispLangEn" style="border:none; background:transparent; cursor:pointer; font-weight:600; padding:2px 6px;">E</button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Dual-Column Display Grid -->
+  <main class="display-grid">
+    <!-- Left Column: Itemized Ticket & Pricing -->
+    <section class="display-card" aria-labelledby="dispTicketHeading">
+      <div>
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 16px; border-bottom: 2px solid var(--theme-border, #eee); padding-bottom: 12px;">
+          <div>
+            <h2 id="dispTicketHeading" style="margin:0; font-size: 20px;" data-i18n="consumptionDetails">本次消费项目</h2>
+            <div style="margin-top: 4px; font-size: 13px; color: var(--theme-text-muted, #666);">
+              <span data-i18n="customerName">顾客</span>: 
+              <strong id="dispCustomerName" class="notranslate" translate="no">Jennifer Tan</strong>
+              <span id="dispMemberBadge" class="customer-badge notranslate" translate="no" style="margin-left: 6px;">VIP Gold</span>
+            </div>
+          </div>
+          <div id="dispItemCount" class="staff-chip notranslate" translate="no">2 items</div>
+        </div>
+
+        <!-- Ticket Items List -->
+        <div id="dispTicketList">
+          <!-- Populated dynamically -->
+        </div>
+      </div>
+
+      <!-- Pricing Summary -->
+      <div>
+        <div style="border-top: 1px dashed var(--theme-border, #ddd); padding-top: 12px; margin-top: 16px;">
+          <div class="summary-row" style="font-size: 14px; color: var(--theme-text-muted, #666);">
+            <span data-i18n="subtotal">项目小计</span>
+            <span id="dispSubtotal" class="notranslate" translate="no">S$286.00</span>
+          </div>
+          <div class="summary-row" id="dispDiscountRow" style="font-size: 14px; color: var(--color-error, #c62828); display:flex;">
+            <span data-i18n="discount">优惠减免</span>
+            <span id="dispDiscount" class="notranslate" translate="no">-S$0.00</span>
+          </div>
+        </div>
+
+        <div class="display-total-box">
+          <div style="font-size: 14px; font-weight: 600; color: var(--theme-text-muted, #555);" data-i18n="finalTotal">应付总额</div>
+          <div id="dispFinalAmount" class="display-final-price notranslate" translate="no">S$286.00</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Right Column: Payment & Presentation-Only Placeholders -->
+    <section class="display-card" aria-labelledby="dispPaymentHeading">
+      <div>
+        <h2 id="dispPaymentHeading" style="margin:0 0 12px; font-size: 18px;" data-i18n="paymentInstructions">支付与顾客确认</h2>
+        
+        <!-- Payment Instruction Banner -->
+        <div id="dispPaymentBanner" class="context-card" style="margin-bottom: 12px; text-align:center;">
+          <div id="payInstructionTitle" style="font-size: 16px; font-weight: 700; margin-bottom: 4px;">PayNow / 扫码支付</div>
+          <div id="payInstructionSubtitle" class="muted" style="font-size: 13px;">请使用手机银行或扫描二维码付款</div>
+          <div id="dispQrContainer" class="qr-container">
+            <div class="qr-box-mock">
+              <div style="text-align:center;">
+                <div style="font-size: 32px;">📱</div>
+                <strong style="display:block; margin-top: 4px; font-size: 13px;" class="notranslate" translate="no">PayNow QR</strong>
+                <span class="muted notranslate" translate="no" style="font-size: 11px;">UEN: 20268821GG</span>
+              </div>
+            </div>
+            <div class="muted notranslate" translate="no" style="font-size: 12px;">REF: PN-2026-8821 · GG-Beauty</div>
+          </div>
+        </div>
+
+        <!-- 1. Presentation-Only Points Delta Placeholder -->
+        <div class="prototype-placeholder-box">
+          <div class="prototype-tag" data-i18n="placeholderPreviewTag">演示占位 / 未开放</div>
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <strong data-i18n="placeholderPoints">预计本次累计积分:</strong>
+            <span id="dispPointsDelta" class="customer-badge notranslate" translate="no" style="font-size:13px; font-weight:700;">+286 点</span>
+          </div>
+          <p class="prototype-disclaimer" data-i18n="placeholderPointsNotice">
+            提示：此为未来积分体系界面占位，暂未连接真实积分数据。
+          </p>
+        </div>
+
+        <!-- 2. Presentation-Only Package / Stored Value Placeholder -->
+        <div class="prototype-placeholder-box">
+          <div class="prototype-tag" data-i18n="placeholderPreviewTag">演示占位 / 未开放</div>
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <strong data-i18n="placeholderPackage">会员次卡/储值卡可用:</strong>
+            <span class="staff-chip notranslate" translate="no">头皮护理 5次卡 (余2次)</span>
+          </div>
+          <p class="prototype-disclaimer" data-i18n="placeholderPackageNotice">
+            提示：此为未来储值卡/套餐抵扣体系占位，暂未连接真实储值系统。
+          </p>
+        </div>
+
+        <!-- 3. Presentation-Only Digital Signature Pad Placeholder -->
+        <div class="prototype-placeholder-box">
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <div class="prototype-tag" data-i18n="placeholderPreviewTag">演示占位 / 未开放</div>
+            <button type="button" id="clearSigBtn" class="quick-adj-btn" style="padding: 2px 8px; font-size: 11px;">清除签名</button>
+          </div>
+          <strong style="display:block; font-size:13px; margin-bottom: 4px;" data-i18n="placeholderSignature">顾客电子签名确认:</strong>
+          <div class="signature-pad-wrap">
+            <canvas id="signatureCanvas" class="signature-canvas" width="400" height="120"></canvas>
+          </div>
+          <p class="prototype-disclaimer" data-i18n="placeholderSignatureNotice">
+            提示：此为未来电子签名功能占位，不保存真实笔迹。
+          </p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    (function () {
+      'use strict';
+
+      const adapter = window.ggCheckoutAdapter;
+      let session = adapter.getMockFixture();
+      let currentLocale = 'zh-CN';
+
+      const dictionary = {
+        'zh-CN': {
+          customerDisplayTitle: 'GG-Beauty 顾客副屏 / Customer Display',
+          welcomeCustomer: '欢迎光临 · 尊享美业体验',
+          consumptionDetails: '本次消费项目',
+          customerName: '顾客',
+          subtotal: '项目小计',
+          discount: '优惠减免',
+          finalTotal: '应付总额',
+          paymentInstructions: '支付与顾客确认',
+          placeholderPreviewTag: '演示占位 / 未开放',
+          placeholderPoints: '预计本次累计积分:',
+          placeholderPointsNotice: '提示：此为未来积分体系界面占位，暂未连接真实积分数据。',
+          placeholderPackage: '会员次卡/储值卡可用:',
+          placeholderPackageNotice: '提示：此为未来储值卡/套餐抵扣体系占位，暂未连接真实储值系统。',
+          placeholderSignature: '顾客电子签名确认:',
+          placeholderSignatureNotice: '提示：此为未来电子签名功能占位，不保存真实笔迹。',
+          primaryStaff: '主理',
+          assistantStaff: '助理',
+          scanPayNowPrompt: '请使用手机银行或扫描二维码付款',
+          tapCardPrompt: '请在终端轻触或插卡支付',
+          cashierPrompt: '前台收银员正在为您核对账单',
+          otherPrompt: '前台处理中'
+        },
+        'en': {
+          customerDisplayTitle: 'GG-Beauty Customer Display',
+          welcomeCustomer: 'Welcome · Premium Salon Experience',
+          consumptionDetails: 'Your Order Details',
+          customerName: 'Customer',
+          subtotal: 'Subtotal',
+          discount: 'Discount',
+          finalTotal: 'Total Payable',
+          paymentInstructions: 'Payment & Confirmation',
+          placeholderPreviewTag: 'Preview Only / Upcoming',
+          placeholderPoints: 'Estimated Points Earned:',
+          placeholderPointsNotice: 'Notice: Presentation placeholder only. Not connected to active points systems.',
+          placeholderPackage: 'Package / Pass Available:',
+          placeholderPackageNotice: 'Notice: Presentation placeholder only. Not connected to active package systems.',
+          placeholderSignature: 'Customer Signature:',
+          placeholderSignatureNotice: 'Notice: Presentation placeholder only. Signatures are not recorded.',
+          primaryStaff: 'Primary',
+          assistantStaff: 'Assistant',
+          scanPayNowPrompt: 'Scan QR code via your banking app',
+          tapCardPrompt: 'Please tap or insert card on POS terminal',
+          cashierPrompt: 'Cashier is processing payment',
+          otherPrompt: 'Front desk processing'
+        }
+      };
+
+      function t(key) {
+        return (dictionary[currentLocale] && dictionary[currentLocale][key]) || key;
+      }
+
+      function applyTranslations() {
+        document.querySelectorAll('[data-i18n]').forEach(el => {
+          const key = el.getAttribute('data-i18n');
+          if (key) el.textContent = t(key);
+        });
+      }
+
+      function setLocale(loc) {
+        currentLocale = loc;
+        document.documentElement.lang = loc;
+        document.getElementById('dispLangZh').style.fontWeight = loc === 'zh-CN' ? '700' : '400';
+        document.getElementById('dispLangEn').style.fontWeight = loc === 'en' ? '700' : '400';
+        applyTranslations();
+        render();
+      }
+
+      // Initialize Theme
+      if (window.ggCustomerTheme) {
+        const theme = window.ggCustomerTheme.resolveTheme(session.shopSlug || 'gg-beauty');
+        window.ggCustomerTheme.applyTheme(theme, document.documentElement);
+      }
+
+      function escapeHtml(str) {
+        return String(str || '').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+      }
+
+      function render() {
+        const totals = adapter.calculateTotals(session);
+        
+        // Customer Info
+        document.getElementById('dispCustomerName').textContent = session.customer?.name || 'Customer';
+        document.getElementById('dispMemberBadge').textContent = session.customer?.memberTier || 'Member';
+
+        // Items List
+        const list = document.getElementById('dispTicketList');
+        list.innerHTML = '';
+        document.getElementById('dispItemCount').textContent = `${session.items.length} ${currentLocale==='zh-CN'?'项':'items'}`;
+
+        session.items.forEach(item => {
+          const name = currentLocale === 'zh-CN' ? (item.serviceNameZh || item.serviceName) : (item.serviceNameEn || item.serviceName);
+          const div = document.createElement('div');
+          div.className = 'display-ticket-item';
+          div.innerHTML = `
+            <div>
+              <div style="font-size:16px; font-weight:650; color:var(--theme-text,#111);">${escapeHtml(name)}</div>
+              <div style="display:flex; gap:6px; margin-top:4px;">
+                <span class="staff-chip staff-chip-primary">
+                  <span>${t('primaryStaff')}:</span> <strong class="notranslate" translate="no">${escapeHtml(item.primaryStaff?.name || '-')}</strong>
+                </span>
+                ${item.assistantStaff ? `<span class="staff-chip"><span>${t('assistantStaff')}:</span> <strong class="notranslate" translate="no">${escapeHtml(item.assistantStaff.name)}</strong></span>` : ''}
+              </div>
+            </div>
+            <div style="text-align:right;">
+              <div class="notranslate" translate="no" style="font-size:16px; font-weight:700;">S$${(item.actualPrice * (item.quantity || 1)).toFixed(2)}</div>
+              ${item.quantity > 1 ? `<span class="muted notranslate" translate="no" style="font-size:12px;">x${item.quantity}</span>` : ''}
+            </div>
+          `;
+          list.appendChild(div);
+        });
+
+        // Totals
+        document.getElementById('dispSubtotal').textContent = `S$${totals.subtotal.toFixed(2)}`;
+        document.getElementById('dispDiscount').textContent = `-S$${totals.discountAmount.toFixed(2)}`;
+        document.getElementById('dispFinalAmount').textContent = `S$${totals.finalTotal.toFixed(2)}`;
+
+        // Points Delta Placeholder
+        document.getElementById('dispPointsDelta').textContent = `+${Math.round(totals.finalTotal)} ${currentLocale==='zh-CN'?'点':'pts'}`;
+
+        // Payment Instructions update
+        const method = session.paymentState.mode === 'split' ? 'split' : (session.paymentState.activeMethod || 'paynow');
+        const titleEl = document.getElementById('payInstructionTitle');
+        const subEl = document.getElementById('payInstructionSubtitle');
+        const qrEl = document.getElementById('dispQrContainer');
+
+        if (method === 'paynow') {
+          titleEl.textContent = 'PayNow / QR';
+          subEl.textContent = t('scanPayNowPrompt');
+          qrEl.style.display = 'flex';
+        } else if (method === 'card') {
+          titleEl.textContent = t('paymentInstructions') + ' - Card';
+          subEl.textContent = t('tapCardPrompt');
+          qrEl.style.display = 'none';
+        } else if (method === 'cash') {
+          titleEl.textContent = t('paymentInstructions') + ' - Cash';
+          subEl.textContent = t('cashierPrompt');
+          qrEl.style.display = 'none';
+        } else {
+          titleEl.textContent = t('paymentInstructions');
+          subEl.textContent = t('otherPrompt');
+          qrEl.style.display = 'none';
+        }
+      }
+
+      // Digital Signature Canvas Placeholder Interaction
+      const canvas = document.getElementById('signatureCanvas');
+      if (canvas && canvas.getContext) {
+        const ctx = canvas.getContext('2d');
+        let isDrawing = false;
+
+        function getPos(e) {
+          const rect = canvas.getBoundingClientRect();
+          const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+          const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+          return { x: clientX - rect.left, y: clientY - rect.top };
+        }
+
+        canvas.addEventListener('mousedown', (e) => { isDrawing = true; const p = getPos(e); ctx.beginPath(); ctx.moveTo(p.x, p.y); });
+        canvas.addEventListener('mousemove', (e) => {
+          if (!isDrawing) return;
+          const p = getPos(e);
+          ctx.lineTo(p.x, p.y);
+          ctx.lineWidth = 2;
+          ctx.strokeStyle = '#111';
+          ctx.stroke();
+        });
+        window.addEventListener('mouseup', () => { isDrawing = false; });
+
+        canvas.addEventListener('touchstart', (e) => { isDrawing = true; const p = getPos(e); ctx.beginPath(); ctx.moveTo(p.x, p.y); e.preventDefault(); }, { passive: false });
+        canvas.addEventListener('touchmove', (e) => {
+          if (!isDrawing) return;
+          const p = getPos(e);
+          ctx.lineTo(p.x, p.y);
+          ctx.lineWidth = 2;
+          ctx.strokeStyle = '#111';
+          ctx.stroke();
+          e.preventDefault();
+        }, { passive: false });
+        window.addEventListener('touchend', () => { isDrawing = false; });
+
+        document.getElementById('clearSigBtn').onclick = () => {
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+        };
+      }
+
+      // Real-time synchronization
+      adapter.subscribeCustomerDisplay((data) => {
+        if (data && data.session) {
+          session = data.session;
+          const statusEl = document.getElementById('syncStatusTag');
+          statusEl.textContent = '● 已同步 ' + new Date().toLocaleTimeString();
+          render();
+        }
+      });
+
+      document.getElementById('dispLangZh').onclick = () => setLocale('zh-CN');
+      document.getElementById('dispLangEn').onclick = () => setLocale('en');
+
+      // Initial Mount
+      render();
+    })();
+  </script>
+</body>
+</html>
