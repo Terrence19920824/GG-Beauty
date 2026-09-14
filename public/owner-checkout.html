@@ -39,7 +39,7 @@
     <div id="checkoutFeedback" class="message" role="alert" aria-live="polite" style="display:none; margin-bottom: 12px;"></div>
 
     <!-- Main Grid -->
-    <main class="pos-grid" id="mainPosGrid">
+    <main class="pos-grid" id="mainPosGrid" style="display:none;">
       <!-- Left Column: Customer & Items -->
       <section aria-labelledby="orderItemsHeading">
         <!-- Customer & Appointment Card -->
@@ -351,6 +351,9 @@
           row.className = 'pos-item-row';
           const name = currentLocale === 'zh-CN' ? (item.serviceNameZh || item.serviceName) : (item.serviceNameEn || item.serviceName);
           const isOverridden = Math.round(Number(item.actualPrice) * 100) !== Math.round(Number(item.quotedPrice) * 100);
+          const assistantName = Array.isArray(item.assistantStaff)
+            ? item.assistantStaff.map(staff => staff.name).filter(Boolean).join(', ')
+            : item.assistantStaff?.name;
 
           row.innerHTML = `
             <div class="pos-item-main">
@@ -361,15 +364,11 @@
                     <span>${t('primaryStaff')}:</span> <strong class="notranslate" translate="no">${escapeHtml(item.primaryStaff?.name || '-')}</strong>
                   </span>
                   <span class="staff-chip">
-                    <span>${t('assistantStaff')}:</span> <strong class="notranslate" translate="no">${escapeHtml(item.assistantStaff?.name || t('noAssistant'))}</strong>
+                    <span>${t('assistantStaff')}:</span> <strong class="notranslate" translate="no">${escapeHtml(assistantName || t('noAssistant'))}</strong>
                   </span>
                 </div>
               </div>
-              <div class="stepper-wrap" role="group" aria-label="Quantity">
-                <button type="button" class="stepper-btn" data-action="minus" data-id="${item.itemId}">−</button>
-                <span class="stepper-value notranslate" translate="no">${item.quantity || 1}</span>
-                <button type="button" class="stepper-btn" data-action="plus" data-id="${item.itemId}">+</button>
-              </div>
+              <span class="stepper-value notranslate" translate="no">×${item.quantity || 1}</span>
             </div>
             <div class="pos-item-pricing">
               <div class="price-box">
@@ -396,21 +395,6 @@
             </div>
           `;
           container.appendChild(row);
-        });
-
-        // Quantity Stepper listeners
-        container.querySelectorAll('[data-action]').forEach(btn => {
-          btn.onclick = () => {
-            const itemId = btn.getAttribute('data-id');
-            const item = session.items.find(i => i.itemId === itemId);
-            if (!item) return;
-            const isPlus = btn.getAttribute('data-action') === 'plus';
-            const newQty = isPlus ? item.quantity + 1 : Math.max(1, item.quantity - 1);
-            adapter.updateItemQuantity(session, itemId, newQty);
-            renderItems();
-            renderBilling();
-            syncDisplay();
-          };
         });
 
         // Price Input listeners
@@ -494,6 +478,18 @@
 
       function syncDisplay() {
         adapter.broadcastSession(session);
+      }
+
+      function renderContext() {
+        document.getElementById('customerName').textContent = session.customer?.name || '';
+        document.getElementById('customerPhone').textContent = session.customer?.phone || '';
+        const memberBadge = document.getElementById('memberBadge');
+        memberBadge.textContent = session.customer?.memberCode || '';
+        memberBadge.style.display = session.customer?.memberCode ? 'inline-flex' : 'none';
+        document.getElementById('customerId').style.display = 'none';
+        document.getElementById('appointmentId').textContent = session.appointmentId || '';
+        document.getElementById('appointmentTime').textContent = session.appointmentTime || '';
+        document.getElementById('appointmentStatus').textContent = session.appointmentStatus || '';
       }
 
       function escapeHtml(str) {
@@ -698,9 +694,11 @@
         const feedback = document.getElementById('checkoutFeedback');
         try {
           session = await adapter.fetchSession(appointmentId);
+          renderContext();
           renderItems();
           renderBilling();
           syncDisplay();
+          document.getElementById('mainPosGrid').style.display = '';
         } catch (error) {
           feedback.style.display = 'block';
           feedback.className = 'message error';

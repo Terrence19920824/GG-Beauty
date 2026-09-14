@@ -283,6 +283,9 @@ test('adapter uses the authenticated canonical checkout-session read route witho
   assert.doesNotMatch(adapter.fetchSession.toString(), /return getMockFixture/);
   assert.doesNotMatch(ownerHtml, /let session = adapter\.getMockFixture\(\)/);
   assert.match(ownerHtml, /adapter\.fetchSession\(appointmentId\)/);
+  assert.match(ownerHtml, /id="mainPosGrid" style="display:none;"/);
+  assert.match(ownerHtml, /renderContext\(\)/);
+  assert.doesNotMatch(ownerHtml, /data-action="minus"|data-action="plus"/);
 });
 
 test('adapter maps only canonical checkout-session data and fails closed on read errors', async () => {
