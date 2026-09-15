@@ -24,6 +24,16 @@
       --status-checkout-soft: #ede9fe;
       --status-paid: #059669;
       --status-paid-soft: #d1fae5;
+      --status-draft: #b45309;
+      --status-draft-soft: #fef3c7;
+      --status-partially-paid: #0284c7;
+      --status-partially-paid-soft: #e0f2fe;
+      --status-refunded: #6b7280;
+      --status-refunded-soft: #f3f4f6;
+      --status-void: #4b5563;
+      --status-void-soft: #e5e7eb;
+      --status-inconsistent: #dc2626;
+      --status-inconsistent-soft: #fee2e2;
     }
 
     * {
@@ -406,6 +416,53 @@
       font-weight: 600;
     }
 
+    .status-draft {
+      background: var(--status-draft-soft);
+      color: var(--status-draft);
+      font-weight: 600;
+    }
+
+    .status-partially-paid {
+      background: var(--status-partially-paid-soft);
+      color: var(--status-partially-paid);
+      font-weight: 600;
+    }
+
+    .status-refunded {
+      background: var(--status-refunded-soft);
+      color: var(--status-refunded);
+      font-weight: 600;
+    }
+
+    .status-void {
+      background: var(--status-void-soft);
+      color: var(--status-void);
+      font-weight: 600;
+    }
+
+    .status-inconsistent {
+      background: var(--status-inconsistent-soft);
+      color: var(--status-inconsistent);
+      border: 1px solid var(--status-inconsistent);
+      font-weight: 700;
+    }
+
+    .multi-service-list, .multi-staff-list {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .service-idx {
+      font-weight: 600;
+      color: #6b7280;
+      margin-right: 2px;
+    }
+
+    .staff-assignment {
+      display: inline-block;
+    }
+
     .checkout-btn {
       border: 1px solid var(--status-checkout);
       background: var(--status-checkout-soft);
@@ -568,8 +625,8 @@
 
   <div class="header">
     <div>
-      <button id="adminLanguageZh" class="refresh-btn" type="button" onclick="ownerSelfService.setLocale('zh-CN'); if (typeof currentAppointments !== 'undefined' && currentAppointments.length) renderAppointments(currentAppointments);">中文</button>
-      <button id="adminLanguageEn" class="refresh-btn" type="button" onclick="ownerSelfService.setLocale('en'); if (typeof currentAppointments !== 'undefined' && currentAppointments.length) renderAppointments(currentAppointments);">EN</button>
+      <button id="adminLanguageZh" class="refresh-btn" type="button" onclick="setAdminLocale('zh-CN')">中文</button>
+      <button id="adminLanguageEn" class="refresh-btn" type="button" onclick="setAdminLocale('en')">EN</button>
       <h1 data-i18n="ownerTitle">GG-Beauty 老板端</h1>
       <p data-i18n="ownerSubtitle">预约管理后台</p>
     </div>
@@ -701,7 +758,7 @@
         <label class="field"><span data-i18n="sortOrder">排序</span><input id="serviceSortOrder" type="number" min="0"></label>
         <label class="check-row"><input id="serviceBookable" type="checkbox"><span data-i18n="allowBooking">允许顾客预约</span></label>
         <label class="check-row"><input id="serviceActive" type="checkbox"><span data-i18n="serviceActive">启用项目</span></label>
-        <label class="check-row"><input id="servicePriceIsFrom" type="checkbox"><span data-i18n="startingPrice">起价 / From</span></label>
+        <label class="check-row"><input id="servicePriceIsFrom" type="checkbox"><span data-i18n="startingPrice">起价</span></label>
       </div>
       <div class="form-actions"><button class="secondary-btn" data-i18n="cancel" onclick="ownerSelfService.closeServiceForm()">取消</button><button id="saveServiceButton" class="primary-btn" data-i18n="save" onclick="ownerSelfService.saveService()">保存</button></div>
     </div>
@@ -746,6 +803,15 @@ const adminResultMessage = (result, fallbackKey) =>
     ? result.message
     : adminT(fallbackKey);
 
+function escapeHtml(str) {
+  return String(str == null ? '' : str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 const globalScope = typeof globalThis !== 'undefined' ? globalThis : (typeof window !== 'undefined' ? window : this);
 globalScope.FEATURE_CHECKOUT_ENABLED = false;
 
@@ -769,7 +835,27 @@ function resolveCheckoutFinancialState(item) {
     return null;
   }
 
-  // Explicit checkout/payment state from authoritative data source
+  // Authoritative projection from backend: item.checkout
+  if (item.checkout && typeof item.checkout === 'object') {
+    if (
+      item.checkout.payment_state === 'inconsistent' ||
+      item.checkout.reconciliation_valid === false ||
+      item.checkout.has_inconsistency === true
+    ) {
+      return 'inconsistent';
+    }
+    const state = String(item.checkout.payment_state || item.checkout.payment_status || '').toLowerCase().trim();
+    if (state === 'paid') return 'paid';
+    if (state === 'unpaid' || state === 'draft') return 'unpaid';
+    if (state === 'partially_paid') return 'partially_paid';
+    if (state === 'partially_refunded') return 'partially_refunded';
+    if (state === 'refunded') return 'refunded';
+    if (state === 'void' || state === 'voided') return 'void';
+    if (state === 'inconsistent') return 'inconsistent';
+    return null;
+  }
+
+  // Fallback for flat fields (e.g. from previous fixtures / legacy)
   const rawState = String(
     item.checkout_status ||
     item.checkoutStatus ||
@@ -778,18 +864,147 @@ function resolveCheckoutFinancialState(item) {
     ''
   ).toLowerCase().trim();
 
-  if (rawState === 'paid') {
-    return 'paid';
-  }
-  if (rawState === 'awaiting_checkout' || rawState === 'draft') {
-    return 'awaiting_checkout';
-  }
+  if (rawState === 'paid') return 'paid';
+  if (rawState === 'awaiting_checkout') return 'awaiting_checkout';
+  if (rawState === 'unpaid' || rawState === 'draft') return 'unpaid';
+  if (rawState === 'partially_paid') return 'partially_paid';
+  if (rawState === 'partially_refunded') return 'partially_refunded';
+  if (rawState === 'refunded') return 'refunded';
+  if (rawState === 'void' || rawState === 'voided') return 'void';
+  if (rawState === 'inconsistent') return 'inconsistent';
 
   // Decoupled architecture: appointment.status === 'completed' NEVER implies checkout is paid
   // If no explicit checkout state is provided, return null (fail closed)
   return null;
 }
 globalScope.resolveCheckoutFinancialState = resolveCheckoutFinancialState;
+
+function canStartCheckout(item) {
+  if (!item || typeof item !== 'object') return false;
+  // Authoritative gate from backend projection
+  if (item.can_start_checkout !== true) return false;
+  // Defense-in-depth: only in_service and completed can start checkout
+  if (item.status !== 'in_service' && item.status !== 'completed') return false;
+  // If payment state is inconsistent, fail closed
+  const financialState = resolveCheckoutFinancialState(item);
+  if (financialState === 'inconsistent') return false;
+  return true;
+}
+globalScope.canStartCheckout = canStartCheckout;
+
+function getCheckoutBadgeHtml(financialState) {
+  if (!financialState) return '';
+  switch (financialState) {
+    case 'unpaid':
+    case 'draft':
+      return `<span class="pill status-draft notranslate" translate="no" role="status">${adminT('checkoutStateDraft')}</span>`;
+    case 'partially_paid':
+      return `<span class="pill status-partially-paid notranslate" translate="no" role="status">${adminT('checkoutStatePartiallyPaid')}</span>`;
+    case 'paid':
+      return `<span class="pill status-paid notranslate" translate="no" role="status">${adminT('checkoutStatePaid')}</span>`;
+    case 'partially_refunded':
+      return `<span class="pill status-refunded notranslate" translate="no" role="status">${adminT('checkoutStatePartiallyRefunded')}</span>`;
+    case 'refunded':
+      return `<span class="pill status-refunded notranslate" translate="no" role="status">${adminT('checkoutStateRefunded')}</span>`;
+    case 'void':
+      return `<span class="pill status-void notranslate" translate="no" role="status">${adminT('checkoutStateVoid')}</span>`;
+    case 'inconsistent':
+      return `<span class="pill status-inconsistent notranslate" translate="no" role="status" aria-label="${adminT('checkoutStateInconsistent')}">${adminT('checkoutStateInconsistent')}</span>`;
+    case 'awaiting_checkout':
+      return `<span class="pill status-awaiting-checkout notranslate" translate="no" role="status">${adminT('awaitingCheckout')}</span>`;
+    default:
+      return '';
+  }
+}
+globalScope.getCheckoutBadgeHtml = getCheckoutBadgeHtml;
+
+function formatServiceCell(item) {
+  if (Array.isArray(item.items) && item.items.length > 0) {
+    const sorted = [...item.items].sort((a, b) => (Number(a.sequence_no) || 0) - (Number(b.sequence_no) || 0));
+    if (sorted.length === 1) {
+      const name = sorted[0].service_name_snapshot || sorted[0].service_name || item.service_name || '-';
+      return `<div class="service-item notranslate" translate="no">${escapeHtml(name)}</div>`;
+    }
+    return `<div class="multi-service-list">${sorted.map((s, idx) => `
+      <div class="service-item notranslate" translate="no">
+        <span class="service-idx">${idx + 1}.</span> ${escapeHtml(s.service_name_snapshot || s.service_name || '-')}
+      </div>
+    `).join('')}</div>`;
+  }
+  return `<span class="notranslate" translate="no">${escapeHtml(item.service_name || '-')}</span>`;
+}
+
+function formatStaffCell(item) {
+  if (Array.isArray(item.items) && item.items.length > 0) {
+    const sorted = [...item.items].sort((a, b) => (Number(a.sequence_no) || 0) - (Number(b.sequence_no) || 0));
+    if (sorted.length === 1) {
+      const assignments = Array.isArray(sorted[0].staff_assignments) ? sorted[0].staff_assignments : [];
+      if (assignments.length > 0) {
+        return assignments.map(a => {
+          const roleLabel = a.role === 'assistant' ? adminT('assistantStaff') : (a.role === 'primary' ? adminT('primaryStaff') : '');
+          return `<span class="staff-assignment notranslate" translate="no">${escapeHtml(a.staff_name)}${roleLabel ? ` (${roleLabel})` : ''}</span>`;
+        }).join(', ');
+      }
+      return `<span class="notranslate" translate="no">${escapeHtml(item.staff_name || '-')}</span>`;
+    }
+    const rows = sorted.map((s, idx) => {
+      const assignments = Array.isArray(s.staff_assignments) ? s.staff_assignments : [];
+      let text = '';
+      if (assignments.length > 0) {
+        text = assignments.map(a => {
+          const roleLabel = a.role === 'assistant' ? adminT('assistantStaff') : (a.role === 'primary' ? adminT('primaryStaff') : '');
+          return `${escapeHtml(a.staff_name)}${roleLabel ? ` (${roleLabel})` : ''}`;
+        }).join(', ');
+      } else {
+        text = escapeHtml(item.staff_name || '-');
+      }
+      return `<div class="staff-item notranslate" translate="no"><span class="service-idx">${idx + 1}.</span> ${text}</div>`;
+    });
+    return `<div class="multi-staff-list">${rows.join('')}</div>`;
+  }
+  return `<span class="notranslate" translate="no">${escapeHtml(item.staff_name || '-')}</span>`;
+}
+
+function setAdminLocale(locale) {
+  if (globalThis.ownerSelfService?.setLocale) {
+    globalThis.ownerSelfService.setLocale(locale);
+  } else {
+    if (globalThis.ggI18n?.setLocale) {
+      globalThis.ggI18n.setLocale(locale);
+    }
+    if (globalThis.ownerSelfService?._state) {
+      globalThis.ownerSelfService._state.locale = locale;
+    }
+    if (typeof document !== 'undefined' && typeof document.querySelectorAll === 'function') {
+      document.querySelectorAll('[data-i18n]').forEach(el => {
+        el.textContent = adminT(el.dataset.i18n);
+      });
+      document.querySelectorAll('[data-i18n-title]').forEach(el => {
+        el.title = adminT(el.dataset.i18nTitle);
+      });
+      document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
+        el.placeholder = adminT(el.dataset.i18nPlaceholder);
+      });
+    }
+  }
+  let zhBtn = null;
+  let enBtn = null;
+  try {
+    zhBtn = document.getElementById('adminLanguageZh');
+    enBtn = document.getElementById('adminLanguageEn');
+  } catch (_) {}
+  const activeLocale = globalThis.ownerSelfService?._state?.locale || locale;
+  if (zhBtn) zhBtn.disabled = activeLocale === 'zh-CN';
+  if (enBtn) enBtn.disabled = activeLocale === 'en';
+  const appts = (Array.isArray(globalScope.currentAppointments) && globalScope.currentAppointments.length > 0)
+    ? globalScope.currentAppointments
+    : (Array.isArray(currentAppointments) ? currentAppointments : []);
+  if (typeof renderAppointments === 'function' && appts.length > 0) {
+    currentAppointments = appts;
+    renderAppointments(appts);
+  }
+}
+globalScope.setAdminLocale = setAdminLocale;
 
 function showLogin(message = '') {
   adminContent.hidden = true;
@@ -1072,6 +1287,10 @@ function updateSummary(appointments) {
 
 // 显示预约表格
 function renderAppointments(appointments) {
+  if (Array.isArray(appointments)) {
+    currentAppointments = appointments;
+    globalScope.currentAppointments = appointments;
+  }
 
   if (
     !appointments ||
@@ -1097,49 +1316,41 @@ function renderAppointments(appointments) {
       const checkoutFinancialState =
         resolveCheckoutFinancialState(item);
 
+      const checkoutBtnHtml = canStartCheckout(item)
+        ? `<button type="button" class="checkout-btn" onclick="openCheckoutWorkflow('${item.id}')" data-feature-gated="${!globalScope.FEATURE_CHECKOUT_ENABLED}" title="${globalScope.FEATURE_CHECKOUT_ENABLED ? adminT('goToCheckout') : adminT('checkoutDisabledNotice')}">${adminT('goToCheckout')}</button>`
+        : '';
+
       return `
         <tr>
-
           <td>
             ${formatSingaporeTime(
               item.start_at
             )}
           </td>
-
-          <td>
-            ${item.customer_name || '-'}
+          <td class="notranslate" translate="no">
+            ${escapeHtml(item.customer_name || '-')}
           </td>
-
           <td>
-            ${item.customer_phone || '-'}
+            ${escapeHtml(item.customer_phone || '-')}
           </td>
-
           <td>
-            ${item.service_name || '-'}
+            ${formatServiceCell(item)}
           </td>
-
           <td>
-            ${item.staff_name || '-'}
+            ${formatStaffCell(item)}
           </td>
-
           <td>
-            <span
-              class="status ${statusClass}"
-            >
-              ${getStatusText(
-                item.status
-              )}
+            <span class="status ${statusClass}">
+              ${getStatusText(item.status)}
             </span>
-            ${checkoutFinancialState === 'awaiting_checkout' ? `<span class="pill status-awaiting-checkout notranslate" translate="no">${adminT('awaitingCheckout')}</span>` : ''}
-            ${checkoutFinancialState === 'paid' ? `<span class="pill status-paid notranslate" translate="no">${adminT('paid')}</span>` : ''}
+            ${getCheckoutBadgeHtml(checkoutFinancialState)}
           </td>
-
-        
-      <td>
+          <td>
   ${item.status === 'pending' ? `<button onclick="updateAppointmentStatus('${item.id}', 'confirmed')">${adminT('confirm')}</button><button onclick="updateAppointmentStatus('${item.id}', 'cancelled')">${adminT('cancel')}</button>` : ''}
   ${item.status === 'confirmed' ? `<button onclick="updateAppointmentStatus('${item.id}', 'arrived')">${adminT('arrived')}</button><button onclick="updateAppointmentStatus('${item.id}', 'no_show')">${adminT('noShow')}</button><button onclick="updateAppointmentStatus('${item.id}', 'cancelled')">${adminT('cancel')}</button>` : ''}
   ${item.status === 'arrived' ? `<button onclick="updateAppointmentStatus('${item.id}', 'in_service')">${adminT('in_service')}</button>` : ''}
-  ${item.status === 'in_service' ? `<button onclick="updateAppointmentStatus('${item.id}', 'completed')">${adminT('complete')}</button>${checkoutFinancialState !== 'paid' ? `<button type="button" class="checkout-btn" onclick="openCheckoutWorkflow('${item.id}')" data-feature-gated="true" title="${adminT('checkoutDisabledNotice')}">${adminT('goToCheckout')}</button>` : ''}` : ''}
+  ${item.status === 'in_service' ? `<button onclick="updateAppointmentStatus('${item.id}', 'completed')">${adminT('complete')}</button>${checkoutBtnHtml}` : ''}
+  ${item.status === 'completed' ? checkoutBtnHtml : ''}
 </td>
 </tr>
 `;
