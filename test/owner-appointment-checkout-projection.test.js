@@ -8,29 +8,38 @@ const {
   toSafeMinor
 } = require('../lib/owner-appointment-checkout-projection');
 
-const assignment = (role, suffix) => ({
+const assignment = (
+  role,
+  suffix,
+  startAt = '2030-01-01T02:00:00Z',
+  endAt = '2030-01-01T03:00:00Z'
+) => ({
   assignment_id: `assignment-${suffix}`,
   staff_id: `staff-${suffix}`,
   staff_name: `Staff ${suffix}`,
   role,
-  start_at: '2030-01-01T02:00:00Z',
-  end_at: '2030-01-01T03:00:00Z'
+  start_at: startAt,
+  end_at: endAt
 });
 
-const item = (sequence, overrides = {}) => ({
-  item_id: `item-${sequence}`,
-  sequence_no: sequence,
-  service_id: `service-${sequence}`,
-  service_name_snapshot: `Service ${sequence}`,
-  service_locale_snapshot: sequence === 1 ? 'en' : 'zh-CN',
-  duration_minutes_snapshot: 60,
-  price_snapshot_minor: sequence === 1 ? '6000' : '8000',
-  start_at: `2030-01-01T0${sequence + 1}:00:00Z`,
-  end_at: `2030-01-01T0${sequence + 2}:00:00Z`,
-  status: 'in_service',
-  staff_assignments: [assignment('primary', sequence)],
-  ...overrides
-});
+const item = (sequence, overrides = {}) => {
+  const startAt = `2030-01-01T0${sequence + 1}:00:00Z`;
+  const endAt = `2030-01-01T0${sequence + 2}:00:00Z`;
+  return {
+    item_id: `item-${sequence}`,
+    sequence_no: sequence,
+    service_id: `service-${sequence}`,
+    service_name_snapshot: `Service ${sequence}`,
+    service_locale_snapshot: sequence === 1 ? 'en' : 'zh-CN',
+    duration_minutes_snapshot: 60,
+    price_snapshot_minor: sequence === 1 ? '6000' : '8000',
+    start_at: startAt,
+    end_at: endAt,
+    status: 'in_service',
+    staff_assignments: [assignment('primary', sequence, startAt, endAt)],
+    ...overrides
+  };
+};
 
 const appointment = (overrides = {}) => ({
   id: 'appointment-a',
@@ -49,7 +58,10 @@ const appointment = (overrides = {}) => ({
   staff_code: 'A1',
   staff_assignments: [],
   items: [item(2, {
-    staff_assignments: [assignment('primary', '2p'), assignment('assistant', '2a')]
+    staff_assignments: [
+      assignment('primary', '2p', '2030-01-01T03:00:00Z', '2030-01-01T04:00:00Z'),
+      assignment('assistant', '2a', '2030-01-01T03:00:00Z', '2030-01-01T04:00:00Z')
+    ]
   }), item(1)],
   ...overrides
 });
@@ -70,6 +82,8 @@ const checkoutRow = (status, overrides = {}) => ({
   line_final_total_minor: '14000',
   payment_total_minor: '0',
   refund_total_minor: '0',
+  refund_audit_count: '0',
+  void_audit_count: '0',
   ...overrides
 });
 
@@ -123,20 +137,22 @@ test('completed appointment without checkout is never inferred paid', () => {
 
 test('partial refund and full refund require exact refund ledger agreement', () => {
   const partial = deriveCheckout(checkoutRow('partially_refunded', {
-    checkout_recorded_paid_minor: '14000', payment_total_minor: '14000', refund_total_minor: '4000'
+    checkout_recorded_paid_minor: '14000', payment_total_minor: '14000',
+    refund_total_minor: '4000', refund_audit_count: '1'
   }));
   assert.equal(partial.payment_state, 'partially_refunded');
   assert.equal(partial.net_paid_minor, 10000);
   assert.equal(partial.reconciliation_valid, true);
   const full = deriveCheckout(checkoutRow('refunded', {
-    checkout_recorded_paid_minor: '14000', payment_total_minor: '14000', refund_total_minor: '14000'
+    checkout_recorded_paid_minor: '14000', payment_total_minor: '14000',
+    refund_total_minor: '14000', refund_audit_count: '1'
   }));
   assert.equal(full.payment_state, 'refunded');
   assert.equal(full.net_paid_minor, 0);
 });
 
-test('void is valid only without collected or refunded value', () => {
-  const voided = deriveCheckout(checkoutRow('void'));
+test('void is valid only with audit proof and without collected or refunded value', () => {
+  const voided = deriveCheckout(checkoutRow('void', { void_audit_count: '1' }));
   assert.equal(voided.payment_state, 'void');
   assert.equal(voided.reconciliation_valid, true);
   const invalid = deriveCheckout(checkoutRow('void', {
@@ -189,6 +205,46 @@ test('missing or incomplete items make checkout start fail closed', () => {
   }
 });
 
+test('invalid item intervals and duration mismatches fail closed', () => {
+  for (const invalidItem of [
+    item(1, { end_at: '2030-01-01T02:00:00Z' }),
+    item(1, { end_at: '2030-01-01T01:59:59Z' }),
+    item(1, { duration_minutes_snapshot: 30 }),
+    item(1, { end_at: '2030-01-01T03:00:00.000001Z' }),
+    item(1, { start_at: 'not-a-timestamp' })
+  ]) {
+    assert.equal(projectOwnerAppointmentCheckout(appointment({ items: [invalidItem] }), {
+      role: 'owner', checkoutWriteEnabled: true
+    }).can_start_checkout, false);
+  }
+});
+
+test('primary and assistant assignment times must exactly match the item interval', () => {
+  for (const staffAssignments of [
+    [assignment('primary', 'bad-primary', '2030-01-01T02:01:00Z', '2030-01-01T03:00:00Z')],
+    [assignment('primary', 'p'), assignment('assistant', 'a', '2030-01-01T02:30:00Z', '2030-01-01T03:00:00Z')],
+    [assignment('primary', 'p'), assignment('assistant', 'a', '2030-01-01T02:00:00Z', '2030-01-01T03:01:00Z')],
+    [assignment('primary', 'p'), assignment('assistant', 'a', '2030-01-01T03:00:00Z', '2030-01-01T03:00:00Z')]
+  ]) {
+    assert.equal(projectOwnerAppointmentCheckout(appointment({
+      items: [item(1, { staff_assignments: staffAssignments })]
+    }), { role: 'manager', checkoutWriteEnabled: true }).can_start_checkout, false);
+  }
+});
+
+test('refund and void require matching tenant-scoped immutable audit proof', () => {
+  for (const status of ['partially_refunded', 'refunded', 'void']) {
+    const financial = status === 'partially_refunded'
+      ? { checkout_recorded_paid_minor: '14000', payment_total_minor: '14000', refund_total_minor: '4000' }
+      : status === 'refunded'
+        ? { checkout_recorded_paid_minor: '14000', payment_total_minor: '14000', refund_total_minor: '14000' }
+        : {};
+    assert.equal(deriveCheckout(checkoutRow(status, financial)).payment_state, 'inconsistent');
+    const proof = status === 'void' ? { void_audit_count: '1' } : { refund_audit_count: '1' };
+    assert.equal(deriveCheckout(checkoutRow(status, { ...financial, ...proof })).payment_state, status);
+  }
+});
+
 test('checkout gate and current role are authoritative for can_start_checkout', () => {
   for (const checkoutWriteEnabled of [false, undefined, 'true']) {
     assert.equal(projectOwnerAppointmentCheckout(appointment(), {
@@ -220,7 +276,8 @@ test('any existing checkout including draft, void, or refunded prevents a new ch
     const row = {
       ...appointment(),
       ...checkoutRow(status, status === 'refunded' ? {
-        checkout_recorded_paid_minor: '14000', payment_total_minor: '14000', refund_total_minor: '14000'
+        checkout_recorded_paid_minor: '14000', payment_total_minor: '14000',
+        refund_total_minor: '14000', refund_audit_count: '1'
       } : {})
     };
     assert.equal(projectOwnerAppointmentCheckout(row, {

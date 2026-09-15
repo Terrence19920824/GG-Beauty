@@ -31,7 +31,8 @@ const ID = {
   assignmentA1: '88888888-8888-4888-8888-111111111111',
   assignmentA2: '88888888-8888-4888-8888-333333333333',
   assistantA2: '88888888-8888-4888-8888-444444444444',
-  checkoutA: '99999999-9999-4999-8999-111111111111'
+  checkoutA: '99999999-9999-4999-8999-111111111111',
+  checkoutB: '99999999-9999-4999-8999-222222222222'
 };
 
 const connectWhenReady = async url => {
@@ -69,43 +70,58 @@ test('owner appointment checkout projection executes once on PostgreSQL and isol
   try {
     db = await connectWhenReady(url);
     await db.query(`
-      CREATE TABLE locations (id uuid PRIMARY KEY, shop_id uuid NOT NULL, name text, is_active boolean NOT NULL);
-      CREATE TABLE customers (id uuid PRIMARY KEY, shop_id uuid NOT NULL, name text, phone text, email text);
-      CREATE TABLE services (id uuid PRIMARY KEY, shop_id uuid NOT NULL, name text, duration_minutes integer, price numeric);
-      CREATE TABLE staff (id uuid PRIMARY KEY, shop_id uuid NOT NULL, name text, staff_code text);
+      CREATE TABLE locations (id uuid PRIMARY KEY, shop_id uuid NOT NULL, name text, is_active boolean NOT NULL, UNIQUE(shop_id,id));
+      CREATE TABLE customers (id uuid PRIMARY KEY, shop_id uuid NOT NULL, name text, phone text, email text, UNIQUE(shop_id,id));
+      CREATE TABLE services (id uuid PRIMARY KEY, shop_id uuid NOT NULL, name text, duration_minutes integer, price numeric, UNIQUE(shop_id,id));
+      CREATE TABLE staff (id uuid PRIMARY KEY, shop_id uuid NOT NULL, name text, staff_code text, UNIQUE(shop_id,id));
       CREATE TABLE appointments (
         id uuid PRIMARY KEY, shop_id uuid NOT NULL, location_id uuid NOT NULL,
         customer_id uuid NOT NULL, service_id uuid NOT NULL, staff_id uuid NOT NULL,
         appointment_no text, start_at timestamptz, end_at timestamptz,
-        status text, booking_source text
+        status text, booking_source text, UNIQUE(shop_id,id), UNIQUE(shop_id,location_id,id)
       );
       CREATE TABLE appointment_items (
         id uuid PRIMARY KEY, shop_id uuid NOT NULL, location_id uuid NOT NULL,
         appointment_id uuid NOT NULL, service_id uuid NOT NULL, sequence_no integer NOT NULL,
         service_name_snapshot text NOT NULL, service_locale_snapshot text,
         duration_minutes_snapshot integer NOT NULL, price_snapshot numeric,
-        start_at timestamptz NOT NULL, end_at timestamptz NOT NULL, status text NOT NULL
+        start_at timestamptz NOT NULL, end_at timestamptz NOT NULL, status text NOT NULL,
+        UNIQUE(shop_id,id), UNIQUE(shop_id,location_id,id),
+        FOREIGN KEY(shop_id,location_id,appointment_id) REFERENCES appointments(shop_id,location_id,id)
       );
       CREATE TABLE appointment_item_staff_assignments (
         id uuid PRIMARY KEY, shop_id uuid NOT NULL, location_id uuid NOT NULL,
         appointment_item_id uuid NOT NULL, staff_id uuid NOT NULL, role text NOT NULL,
-        start_at timestamptz NOT NULL, end_at timestamptz NOT NULL
+        start_at timestamptz NOT NULL, end_at timestamptz NOT NULL,
+        FOREIGN KEY(shop_id,location_id,appointment_item_id) REFERENCES appointment_items(shop_id,location_id,id),
+        FOREIGN KEY(shop_id,staff_id) REFERENCES staff(shop_id,id)
       );
       CREATE TABLE checkout_transactions (
         id uuid PRIMARY KEY, shop_id uuid NOT NULL, appointment_id uuid NOT NULL,
         status text NOT NULL, currency_code char(3) NOT NULL,
         quote_total_minor bigint NOT NULL, actual_total_minor bigint NOT NULL,
         discount_total_minor bigint NOT NULL, final_due_minor bigint NOT NULL,
-        paid_minor bigint NOT NULL
+        paid_minor bigint NOT NULL, UNIQUE(shop_id,id),
+        FOREIGN KEY(shop_id,appointment_id) REFERENCES appointments(shop_id,id)
       );
       CREATE TABLE checkout_line_items (
         id uuid PRIMARY KEY, shop_id uuid NOT NULL, checkout_id uuid NOT NULL,
+        appointment_item_id uuid,
         quote_price_minor bigint NOT NULL, actual_price_minor bigint NOT NULL,
-        discount_minor bigint NOT NULL, final_value_minor bigint NOT NULL
+        discount_minor bigint NOT NULL, final_value_minor bigint NOT NULL,
+        FOREIGN KEY(shop_id,checkout_id) REFERENCES checkout_transactions(shop_id,id),
+        FOREIGN KEY(shop_id,appointment_item_id) REFERENCES appointment_items(shop_id,id)
       );
       CREATE TABLE checkout_payments (
         id uuid PRIMARY KEY, shop_id uuid NOT NULL, checkout_id uuid NOT NULL,
-        value_kind text NOT NULL, amount_minor bigint NOT NULL
+        value_kind text NOT NULL, amount_minor bigint NOT NULL,
+        FOREIGN KEY(shop_id,checkout_id) REFERENCES checkout_transactions(shop_id,id)
+      );
+      CREATE TABLE checkout_financial_audit (
+        id uuid PRIMARY KEY, shop_id uuid NOT NULL, checkout_id uuid NOT NULL,
+        appointment_id uuid NOT NULL, event_type text NOT NULL,
+        FOREIGN KEY(shop_id,checkout_id) REFERENCES checkout_transactions(shop_id,id),
+        FOREIGN KEY(shop_id,appointment_id) REFERENCES appointments(shop_id,id)
       );
     `);
     await db.query(`INSERT INTO locations VALUES ($1,$2,'A',true),($3,$4,'B',true)`, [ID.locationA, ID.shopA, ID.locationB, ID.shopB]);
@@ -128,15 +144,50 @@ test('owner appointment checkout projection executes once on PostgreSQL and isol
     await db.query(`INSERT INTO appointment_item_staff_assignments VALUES
       ($1,$2,$3,$4,$5,'primary','2030-01-01T02:00Z','2030-01-01T03:00Z'),
       ($6,$2,$3,$7,$5,'primary','2030-01-01T03:00Z','2030-01-01T04:00Z'),
-      ($8,$2,$3,$7,$9,'assistant','2030-01-01T03:00Z','2030-01-01T04:00Z')`, [
+      ($8,$2,$3,$7,$9,'assistant','2030-01-01T03:00Z','2030-01-01T04:00Z'),
+      ('88888888-8888-4888-8888-222222222222',$10,$11,$12,$13,'primary','2030-01-02T02:00Z','2030-01-02T03:00Z')`, [
       ID.assignmentA1, ID.shopA, ID.locationA, ID.itemA1, ID.staffA,
-      ID.assignmentA2, ID.itemA2, ID.assistantA2, ID.staffA
+      ID.assignmentA2, ID.itemA2, ID.assistantA2, ID.staffA,
+      ID.shopB, ID.locationB, ID.itemB, ID.staffB
     ]);
     await db.query(`INSERT INTO checkout_transactions VALUES ($1,$2,$3,'paid','SGD',14000,14000,0,14000,14000)`, [ID.checkoutA, ID.shopA, ID.appointmentA]);
+    await db.query(`INSERT INTO checkout_transactions VALUES ($1,$2,$3,'void','SGD',8000,8000,0,8000,0)`, [ID.checkoutB, ID.shopB, ID.appointmentB]);
     await db.query(`INSERT INTO checkout_line_items VALUES
-      ('aaaaaaaa-aaaa-4aaa-8aaa-111111111111',$1,$2,6000,6000,0,6000),
-      ('aaaaaaaa-aaaa-4aaa-8aaa-222222222222',$1,$2,8000,8000,0,8000)`, [ID.shopA, ID.checkoutA]);
+      ('aaaaaaaa-aaaa-4aaa-8aaa-111111111111',$1,$2,$3,6000,6000,0,6000),
+      ('aaaaaaaa-aaaa-4aaa-8aaa-222222222222',$1,$2,$4,8000,8000,0,8000)`, [ID.shopA, ID.checkoutA, ID.itemA1, ID.itemA2]);
     await db.query(`INSERT INTO checkout_payments VALUES ('bbbbbbbb-bbbb-4bbb-8bbb-111111111111',$1,$2,'cash_collected',14000)`, [ID.shopA, ID.checkoutA]);
+    await db.query(`INSERT INTO checkout_line_items VALUES
+      ('aaaaaaaa-aaaa-4aaa-8aaa-333333333333',$1,$2,$3,8000,8000,0,8000)`,
+    [ID.shopB, ID.checkoutB, ID.itemB]);
+    await db.query(`INSERT INTO checkout_financial_audit VALUES
+      ('cccccccc-cccc-4ccc-8ccc-222222222222',$1,$2,$3,'void')`,
+    [ID.shopB, ID.checkoutB, ID.appointmentB]);
+
+    await db.query('BEGIN');
+    const expectTenantFkRejection = async (name, sql, parameters) => {
+      await db.query(`SAVEPOINT ${name}`);
+      await assert.rejects(db.query(sql, parameters), error => error.code === '23503');
+      await db.query(`ROLLBACK TO SAVEPOINT ${name}`);
+    };
+    await expectTenantFkRejection('bad_item', `INSERT INTO appointment_items VALUES
+      ('77777777-7777-4777-8777-999999999991',$1,$2,$3,$4,9,'forged','en',60,1,'2030-01-01T02:00Z','2030-01-01T03:00Z','in_service')`,
+    [ID.shopB, ID.locationB, ID.appointmentA, ID.serviceB]);
+    await expectTenantFkRejection('bad_assignment', `INSERT INTO appointment_item_staff_assignments VALUES
+      ('88888888-8888-4888-8888-999999999992',$1,$2,$3,$4,'assistant','2030-01-01T02:00Z','2030-01-01T03:00Z')`,
+    [ID.shopB, ID.locationB, ID.itemA1, ID.staffB]);
+    await expectTenantFkRejection('bad_checkout', `INSERT INTO checkout_transactions VALUES
+      ('99999999-9999-4999-8999-999999999993',$1,$2,'void','SGD',0,0,0,0,0)`,
+    [ID.shopB, ID.appointmentA]);
+    await expectTenantFkRejection('bad_line', `INSERT INTO checkout_line_items VALUES
+      ('aaaaaaaa-aaaa-4aaa-8aaa-999999999994',$1,$2,NULL,0,0,0,0)`,
+    [ID.shopB, ID.checkoutA]);
+    await expectTenantFkRejection('bad_payment', `INSERT INTO checkout_payments VALUES
+      ('bbbbbbbb-bbbb-4bbb-8bbb-999999999995',$1,$2,'refund',1)`,
+    [ID.shopB, ID.checkoutA]);
+    await expectTenantFkRejection('bad_audit', `INSERT INTO checkout_financial_audit VALUES
+      ('cccccccc-cccc-4ccc-8ccc-999999999996',$1,$2,$3,'refund')`,
+    [ID.shopB, ID.checkoutA, ID.appointmentB]);
+    await db.query('COMMIT');
 
     pool = new Pool({ connectionString: url, ssl: false });
     let connectCount = 0;
@@ -160,7 +211,11 @@ test('owner appointment checkout projection executes once on PostgreSQL and isol
       const body = await response.json();
       assert.equal(body.data.length, 1);
       assert.equal(body.data[0].id, ID.appointmentA);
-      assert.equal(JSON.stringify(body).includes('B Customer'), false);
+      const serialized = JSON.stringify(body);
+      for (const forbidden of [
+        'B Customer', 'B Service', 'B Staff', ID.appointmentB,
+        ID.itemB, ID.checkoutB
+      ]) assert.equal(serialized.includes(forbidden), false, forbidden);
       assert.deepEqual(body.data[0].items.map(item => item.sequence_no), [1, 2]);
       assert.deepEqual(body.data[0].items[1].staff_assignments.map(row => row.role), ['primary', 'assistant']);
       assert.equal(body.data[0].checkout.payment_state, 'paid');

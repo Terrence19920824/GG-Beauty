@@ -1501,7 +1501,16 @@ app.get(
     }
 
     const result = await client.query(`
-      WITH assignment_projection AS (
+      WITH selected_appointments AS MATERIALIZED (
+        SELECT appointment.*
+        FROM appointments appointment
+        WHERE appointment.shop_id = $1
+          AND (
+            $2::UUID IS NULL
+            OR appointment.location_id = $2::UUID
+          )
+      ),
+      assignment_projection AS (
         SELECT
           assignment.shop_id,
           assignment.location_id,
@@ -1520,6 +1529,14 @@ app.get(
               assignment.id
           ) AS assignments
         FROM appointment_item_staff_assignments assignment
+        JOIN appointment_items assigned_item
+          ON assigned_item.id = assignment.appointment_item_id
+         AND assigned_item.shop_id = assignment.shop_id
+         AND assigned_item.location_id = assignment.location_id
+        JOIN selected_appointments selected
+          ON selected.id = assigned_item.appointment_id
+         AND selected.shop_id = assigned_item.shop_id
+         AND selected.location_id = assigned_item.location_id
         JOIN staff assigned_staff
           ON assigned_staff.id = assignment.staff_id
          AND assigned_staff.shop_id = assignment.shop_id
@@ -1558,6 +1575,10 @@ app.get(
             ORDER BY item.sequence_no, item.id
           ) AS items
         FROM appointment_items item
+        JOIN selected_appointments selected
+          ON selected.id = item.appointment_id
+         AND selected.shop_id = item.shop_id
+         AND selected.location_id = item.location_id
         LEFT JOIN assignment_projection
           ON assignment_projection.shop_id = item.shop_id
          AND assignment_projection.location_id = item.location_id
@@ -1582,12 +1603,23 @@ app.get(
             ORDER BY item.sequence_no, assignment.role, assignment.id
           ) AS staff_assignments
         FROM appointment_items item
+        JOIN selected_appointments selected
+          ON selected.id = item.appointment_id
+         AND selected.shop_id = item.shop_id
+         AND selected.location_id = item.location_id
         JOIN appointment_item_staff_assignments assignment
           ON assignment.shop_id = item.shop_id
          AND assignment.location_id = item.location_id
          AND assignment.appointment_item_id = item.id
         WHERE item.shop_id = $1
         GROUP BY item.shop_id, item.location_id, item.appointment_id
+      ),
+      selected_checkouts AS (
+        SELECT checkout.*
+        FROM checkout_transactions checkout
+        JOIN selected_appointments selected
+          ON selected.id = checkout.appointment_id
+         AND selected.shop_id = checkout.shop_id
       ),
       checkout_line_projection AS (
         SELECT
@@ -1599,6 +1631,9 @@ app.get(
           SUM(line.discount_minor)::TEXT AS line_discount_total_minor,
           SUM(line.final_value_minor)::TEXT AS line_final_total_minor
         FROM checkout_line_items line
+        JOIN selected_checkouts checkout
+          ON checkout.id = line.checkout_id
+         AND checkout.shop_id = line.shop_id
         WHERE line.shop_id = $1
         GROUP BY line.shop_id, line.checkout_id
       ),
@@ -1613,8 +1648,29 @@ app.get(
             WHERE payment.value_kind = 'refund'
           ), 0)::TEXT AS refund_total_minor
         FROM checkout_payments payment
+        JOIN selected_checkouts checkout
+          ON checkout.id = payment.checkout_id
+         AND checkout.shop_id = payment.shop_id
         WHERE payment.shop_id = $1
         GROUP BY payment.shop_id, payment.checkout_id
+      ),
+      audit_projection AS (
+        SELECT
+          audit.shop_id,
+          audit.checkout_id,
+          COUNT(*) FILTER (
+            WHERE audit.event_type = 'refund'
+          )::TEXT AS refund_audit_count,
+          COUNT(*) FILTER (
+            WHERE audit.event_type = 'void'
+          )::TEXT AS void_audit_count
+        FROM checkout_financial_audit audit
+        JOIN selected_checkouts checkout
+          ON checkout.id = audit.checkout_id
+         AND checkout.shop_id = audit.shop_id
+         AND checkout.appointment_id = audit.appointment_id
+        WHERE audit.shop_id = $1
+        GROUP BY audit.shop_id, audit.checkout_id
       )
       SELECT
         a.id,
@@ -1656,9 +1712,13 @@ app.get(
         COALESCE(payment_projection.payment_total_minor, '0')
           AS payment_total_minor,
         COALESCE(payment_projection.refund_total_minor, '0')
-          AS refund_total_minor
+          AS refund_total_minor,
+        COALESCE(audit_projection.refund_audit_count, '0')
+          AS refund_audit_count,
+        COALESCE(audit_projection.void_audit_count, '0')
+          AS void_audit_count
 
-      FROM appointments a
+      FROM selected_appointments a
 
       JOIN customers c
         ON c.id = a.customer_id
@@ -1686,7 +1746,7 @@ app.get(
        AND legacy_assignment_projection.location_id = a.location_id
        AND legacy_assignment_projection.appointment_id = a.id
 
-      LEFT JOIN checkout_transactions checkout
+      LEFT JOIN selected_checkouts checkout
         ON checkout.shop_id = a.shop_id
        AND checkout.appointment_id = a.id
 
@@ -1698,11 +1758,9 @@ app.get(
         ON payment_projection.shop_id = checkout.shop_id
        AND payment_projection.checkout_id = checkout.id
 
-      WHERE a.shop_id = $1
-        AND (
-          $2::UUID IS NULL
-          OR a.location_id = $2::UUID
-        )
+      LEFT JOIN audit_projection
+        ON audit_projection.shop_id = checkout.shop_id
+       AND audit_projection.checkout_id = checkout.id
 
       ORDER BY a.start_at DESC
     `, [

@@ -76,7 +76,7 @@ const makePool = ({ role = 'owner', validSession = true, locationOwned = true, r
       }
       if (/FROM appointments/.test(normalized)) {
         const tenantScoped =
-          /WHERE a\.shop_id = \$1/.test(normalized) &&
+          /WHERE appointment\.shop_id = \$1/.test(normalized) &&
           params[0] === ID.shopA;
         return {
           rows: tenantScoped
@@ -195,7 +195,7 @@ test('appointment query is tenant-scoped in SQL', async () => {
     assert.equal(JSON.stringify(payload).includes('B-1'), false);
   });
   const read = fixture.state.clientQueries.find(q => /FROM appointments/.test(q.sql));
-  assert.match(read.sql, /WHERE a\.shop_id = \$1/);
+  assert.match(read.sql, /WHERE appointment\.shop_id = \$1/);
 });
 
 test('customer join is tenant-scoped in SQL', async () => {
@@ -229,8 +229,10 @@ test('checkout projection is one tenant-scoped appointment query without N+1 rea
     'item.shop_id = $1',
     'line.shop_id = $1',
     'payment.shop_id = $1',
-    'checkout.shop_id = a.shop_id',
-    'payment_projection.shop_id = checkout.shop_id'
+    'audit.shop_id = $1',
+    'selected.shop_id = checkout.shop_id',
+    'payment_projection.shop_id = checkout.shop_id',
+    'audit_projection.shop_id = checkout.shop_id'
   ]) assert.match(read, new RegExp(scope.replace(/[.$]/g, '\\$&')));
   assert.match(read, /ORDER BY a\.start_at DESC/);
 });
