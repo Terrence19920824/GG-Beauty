@@ -32,7 +32,11 @@ const ID = {
   assignmentA2: '88888888-8888-4888-8888-333333333333',
   assistantA2: '88888888-8888-4888-8888-444444444444',
   checkoutA: '99999999-9999-4999-8999-111111111111',
-  checkoutB: '99999999-9999-4999-8999-222222222222'
+  checkoutB: '99999999-9999-4999-8999-222222222222',
+  appointmentTime: '66666666-6666-4666-8666-333333333333',
+  itemTime: '77777777-7777-4777-8777-444444444444',
+  assignmentTime: '88888888-8888-4888-8888-555555555555',
+  assistantTime: '88888888-8888-4888-8888-666666666666'
 };
 
 const connectWhenReady = async url => {
@@ -86,6 +90,7 @@ test('owner appointment checkout projection executes once on PostgreSQL and isol
         service_name_snapshot text NOT NULL, service_locale_snapshot text,
         duration_minutes_snapshot integer NOT NULL, price_snapshot numeric,
         start_at timestamptz NOT NULL, end_at timestamptz NOT NULL, status text NOT NULL,
+        CHECK(end_at > start_at),
         UNIQUE(shop_id,id), UNIQUE(shop_id,location_id,id),
         FOREIGN KEY(shop_id,location_id,appointment_id) REFERENCES appointments(shop_id,location_id,id)
       );
@@ -93,6 +98,7 @@ test('owner appointment checkout projection executes once on PostgreSQL and isol
         id uuid PRIMARY KEY, shop_id uuid NOT NULL, location_id uuid NOT NULL,
         appointment_item_id uuid NOT NULL, staff_id uuid NOT NULL, role text NOT NULL,
         start_at timestamptz NOT NULL, end_at timestamptz NOT NULL,
+        CHECK(end_at > start_at),
         FOREIGN KEY(shop_id,location_id,appointment_item_id) REFERENCES appointment_items(shop_id,location_id,id),
         FOREIGN KEY(shop_id,staff_id) REFERENCES staff(shop_id,id)
       );
@@ -101,7 +107,7 @@ test('owner appointment checkout projection executes once on PostgreSQL and isol
         status text NOT NULL, currency_code char(3) NOT NULL,
         quote_total_minor bigint NOT NULL, actual_total_minor bigint NOT NULL,
         discount_total_minor bigint NOT NULL, final_due_minor bigint NOT NULL,
-        paid_minor bigint NOT NULL, UNIQUE(shop_id,id),
+        paid_minor bigint NOT NULL, UNIQUE(shop_id,id), UNIQUE(shop_id,appointment_id),
         FOREIGN KEY(shop_id,appointment_id) REFERENCES appointments(shop_id,id)
       );
       CREATE TABLE checkout_line_items (
@@ -189,6 +195,17 @@ test('owner appointment checkout projection executes once on PostgreSQL and isol
     [ID.shopB, ID.checkoutA, ID.appointmentB]);
     await db.query('COMMIT');
 
+    await db.query(`INSERT INTO appointments VALUES
+      ($1,$2,$3,$4,$5,$6,'A-TIME','2030-01-03T02:00Z','2030-01-03T03:00Z','in_service','online')`,
+    [ID.appointmentTime, ID.shopA, ID.locationA, ID.customerA, ID.serviceA, ID.staffA]);
+    await db.query(`INSERT INTO appointment_items VALUES
+      ($1,$2,$3,$4,$5,1,'A Service','en',60,60,'2030-01-03T02:00:00.000000Z','2030-01-03T03:00:00.000000Z','in_service')`,
+    [ID.itemTime, ID.shopA, ID.locationA, ID.appointmentTime, ID.serviceA]);
+    await db.query(`INSERT INTO appointment_item_staff_assignments VALUES
+      ($1,$2,$3,$4,$5,'primary','2030-01-03T02:00:00.000000Z','2030-01-03T03:00:00.000000Z'),
+      ($6,$2,$3,$4,$5,'assistant','2030-01-03T02:00:00.000000Z','2030-01-03T03:00:00.000000Z')`,
+    [ID.assignmentTime, ID.shopA, ID.locationA, ID.itemTime, ID.staffA, ID.assistantTime]);
+
     pool = new Pool({ connectionString: url, ssl: false });
     let connectCount = 0;
     app.locals.ownerAuthPool = {
@@ -204,25 +221,136 @@ test('owner appointment checkout projection executes once on PostgreSQL and isol
     };
     process.env.CHECKOUT_WRITE_ENABLED = 'true';
     await withServer(async base => {
-      const response = await fetch(`${base}/api/appointments-db?shopId=${ID.shopB}`, {
-        headers: { cookie: 'gg_beauty_owner_session=local-token', 'x-shop-id': ID.shopB }
-      });
-      assert.equal(response.status, 200);
-      const body = await response.json();
-      assert.equal(body.data.length, 1);
-      assert.equal(body.data[0].id, ID.appointmentA);
+      let projectionRequestCount = 0;
+      const readProjection = async () => {
+        projectionRequestCount += 1;
+        const response = await fetch(`${base}/api/appointments-db?shopId=${ID.shopB}`, {
+          headers: { cookie: 'gg_beauty_owner_session=local-token', 'x-shop-id': ID.shopB }
+        });
+        assert.equal(response.status, 200);
+        return response.json();
+      };
+      const projectionFor = async appointmentId => {
+        const body = await readProjection();
+        return { body, appointment: body.data.find(row => row.id === appointmentId) };
+      };
+      const setCheckoutState = async ({ status, paid, refund = 0, auditEvents = [] }) => {
+        await db.query('BEGIN');
+        try {
+          await db.query('DELETE FROM checkout_financial_audit WHERE shop_id=$1 AND checkout_id=$2', [ID.shopA, ID.checkoutA]);
+          await db.query('DELETE FROM checkout_payments WHERE shop_id=$1 AND checkout_id=$2', [ID.shopA, ID.checkoutA]);
+          await db.query('UPDATE checkout_transactions SET status=$1, paid_minor=$2 WHERE shop_id=$3 AND id=$4', [status, paid, ID.shopA, ID.checkoutA]);
+          if (paid > 0) await db.query(`INSERT INTO checkout_payments VALUES
+            (gen_random_uuid(),$1,$2,'cash_collected',$3)`, [ID.shopA, ID.checkoutA, paid]);
+          if (refund > 0) await db.query(`INSERT INTO checkout_payments VALUES
+            (gen_random_uuid(),$1,$2,'refund',$3)`, [ID.shopA, ID.checkoutA, refund]);
+          for (const eventType of auditEvents) await db.query(`INSERT INTO checkout_financial_audit VALUES
+            (gen_random_uuid(),$1,$2,$3,$4)`, [ID.shopA, ID.checkoutA, ID.appointmentA, eventType]);
+          await db.query('COMMIT');
+        } catch (error) {
+          await db.query('ROLLBACK');
+          throw error;
+        }
+      };
+      const assertTimeMutationFailsClosed = async (updateSql, restoreSql) => {
+        await db.query('BEGIN');
+        await db.query(updateSql);
+        await db.query('COMMIT');
+        try {
+          const { appointment } = await projectionFor(ID.appointmentTime);
+          assert.equal(appointment.can_start_checkout, false);
+        } finally {
+          await db.query('BEGIN');
+          await db.query(restoreSql);
+          await db.query('COMMIT');
+        }
+      };
+
+      const body = await readProjection();
+      assert.equal(body.data.length, 2);
+      const projectedA = body.data.find(row => row.id === ID.appointmentA);
+      assert.ok(projectedA);
       const serialized = JSON.stringify(body);
       for (const forbidden of [
         'B Customer', 'B Service', 'B Staff', ID.appointmentB,
         ID.itemB, ID.checkoutB
       ]) assert.equal(serialized.includes(forbidden), false, forbidden);
-      assert.deepEqual(body.data[0].items.map(item => item.sequence_no), [1, 2]);
-      assert.deepEqual(body.data[0].items[1].staff_assignments.map(row => row.role), ['primary', 'assistant']);
-      assert.equal(body.data[0].checkout.payment_state, 'paid');
-      assert.equal(body.data[0].checkout.reconciliation_valid, true);
-      assert.equal(body.data[0].can_start_checkout, false);
+      assert.deepEqual(projectedA.items.map(item => item.sequence_no), [1, 2]);
+      assert.deepEqual(projectedA.items[1].staff_assignments.map(row => row.role), ['primary', 'assistant']);
+      assert.equal(projectedA.checkout.payment_state, 'paid');
+      assert.equal(projectedA.checkout.reconciliation_valid, true);
+      assert.equal(projectedA.can_start_checkout, false);
+      assert.equal((await projectionFor(ID.appointmentTime)).appointment.can_start_checkout, true);
+
+      await db.query('BEGIN');
+      await db.query('SAVEPOINT invalid_item_range');
+      await assert.rejects(
+        db.query('UPDATE appointment_items SET end_at=start_at WHERE id=$1', [ID.itemTime]),
+        error => error.code === '23514'
+      );
+      await db.query('ROLLBACK TO SAVEPOINT invalid_item_range');
+      await db.query('COMMIT');
+
+      await assertTimeMutationFailsClosed(
+        `UPDATE appointment_items SET duration_minutes_snapshot=59 WHERE id='${ID.itemTime}'`,
+        `UPDATE appointment_items SET duration_minutes_snapshot=60 WHERE id='${ID.itemTime}'`
+      );
+      await assertTimeMutationFailsClosed(
+        `UPDATE appointment_items SET end_at='2030-01-03T03:00:01Z' WHERE id='${ID.itemTime}'`,
+        `UPDATE appointment_items SET end_at='2030-01-03T03:00:00Z' WHERE id='${ID.itemTime}'`
+      );
+      await assertTimeMutationFailsClosed(
+        `UPDATE appointment_items SET end_at='2030-01-03T03:00:00.000001Z' WHERE id='${ID.itemTime}'`,
+        `UPDATE appointment_items SET end_at='2030-01-03T03:00:00Z' WHERE id='${ID.itemTime}'`
+      );
+      await assertTimeMutationFailsClosed(
+        `UPDATE appointment_item_staff_assignments SET start_at='2030-01-03T02:01:00Z' WHERE id='${ID.assignmentTime}'`,
+        `UPDATE appointment_item_staff_assignments SET start_at='2030-01-03T02:00:00Z' WHERE id='${ID.assignmentTime}'`
+      );
+      await assertTimeMutationFailsClosed(
+        `UPDATE appointment_item_staff_assignments SET start_at='2030-01-03T02:01:00Z' WHERE id='${ID.assistantTime}'`,
+        `UPDATE appointment_item_staff_assignments SET start_at='2030-01-03T02:00:00Z' WHERE id='${ID.assistantTime}'`
+      );
+      await assertTimeMutationFailsClosed(
+        `UPDATE appointment_item_staff_assignments SET end_at='2030-01-03T03:01:00Z' WHERE id='${ID.assistantTime}'`,
+        `UPDATE appointment_item_staff_assignments SET end_at='2030-01-03T03:00:00Z' WHERE id='${ID.assistantTime}'`
+      );
+
+      for (const status of ['partially_refunded', 'refunded']) {
+        const refund = status === 'partially_refunded' ? 4000 : 14000;
+        await setCheckoutState({ status, paid: 14000, refund });
+        assert.equal((await projectionFor(ID.appointmentA)).appointment.checkout.payment_state, 'inconsistent');
+        await setCheckoutState({ status, paid: 14000, refund, auditEvents: ['void'] });
+        assert.equal((await projectionFor(ID.appointmentA)).appointment.checkout.payment_state, 'inconsistent');
+        await setCheckoutState({ status, paid: 14000, refund, auditEvents: ['refund'] });
+        assert.equal((await projectionFor(ID.appointmentA)).appointment.checkout.payment_state, status);
+      }
+
+      await setCheckoutState({ status: 'partially_refunded', paid: 14000, refund: 4000 });
+      assert.equal((await projectionFor(ID.appointmentA)).appointment.checkout.payment_state, 'inconsistent', 'Shop B audit cannot prove Shop A refund');
+
+      await setCheckoutState({ status: 'void', paid: 0 });
+      assert.equal((await projectionFor(ID.appointmentA)).appointment.checkout.payment_state, 'inconsistent');
+      await setCheckoutState({ status: 'void', paid: 0, auditEvents: ['refund'] });
+      assert.equal((await projectionFor(ID.appointmentA)).appointment.checkout.payment_state, 'inconsistent');
+      await setCheckoutState({ status: 'void', paid: 0, auditEvents: ['void'] });
+      assert.equal((await projectionFor(ID.appointmentA)).appointment.checkout.payment_state, 'void');
+
+      await setCheckoutState({
+        status: 'partially_refunded', paid: 14000, refund: 4000,
+        auditEvents: ['refund', 'refund']
+      });
+      const multipleAudit = await projectionFor(ID.appointmentA);
+      assert.equal(multipleAudit.body.data.filter(row => row.id === ID.appointmentA).length, 1);
+      assert.equal(multipleAudit.appointment.items.length, 2);
+      assert.equal(multipleAudit.appointment.items[1].staff_assignments.length, 2);
+      assert.equal(multipleAudit.appointment.checkout.payment_total_minor, 14000);
+      assert.equal(multipleAudit.appointment.checkout.refund_total_minor, 4000);
+      assert.equal(multipleAudit.appointment.checkout.payment_state, 'partially_refunded');
+
+      await setCheckoutState({ status: 'paid', paid: 14000 });
+      assert.equal(connectCount, projectionRequestCount, 'exactly one projection connection per route request, no N+1 connection');
     });
-    assert.equal(connectCount, 1, 'one appointment projection query connection, no N+1 connection');
   } finally {
     if (originalGate === undefined) delete process.env.CHECKOUT_WRITE_ENABLED;
     else process.env.CHECKOUT_WRITE_ENABLED = originalGate;
