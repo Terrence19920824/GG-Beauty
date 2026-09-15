@@ -649,6 +649,19 @@ const requireOwnerRole = allowedRoles =>
     next();
   };
 
+// Checkout writes are independently gated on the server. The browser feature
+// flag is presentation-only and must never authorize a financial mutation.
+const requireCheckoutWriteEnabled = (req, res, next) => {
+  if (process.env.CHECKOUT_WRITE_ENABLED !== 'true') {
+    return res.status(503).json({
+      success: false,
+      code: 'CHECKOUT_WRITE_DISABLED'
+    });
+  }
+
+  next();
+};
+
 // Checkout is an owner/manager-only financial operation.  The handler derives
 // the appointment/customer scope from the authenticated shop; UI-supplied IDs
 // can never choose a tenant or an existing checkout.
@@ -668,6 +681,7 @@ app.post(
   '/api/owner/appointments/:appointmentId/checkout',
   requireOwnerAuth,
   requireOwnerRole(['owner', 'manager']),
+  requireCheckoutWriteEnabled,
   checkoutPos.create
 );
 
