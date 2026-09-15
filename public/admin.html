@@ -473,7 +473,8 @@
       font-size: 13px;
       font-weight: 600;
       margin-left: 4px;
-      min-height: 40px;
+      min-height: 44px;
+      min-width: 44px;
       display: inline-flex;
       align-items: center;
       justify-content: center;
@@ -540,6 +541,18 @@
     @media (min-width: 768px) {
       .checkout-btn {
         min-height: 44px;
+        min-width: 44px;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
       }
     }
   </style>
@@ -712,7 +725,7 @@
 
   <div class="card">
 
-    <div id="content" class="loading">
+    <div id="content" class="loading" aria-busy="true">
       <span data-i18n="loadingAppointments">正在读取预约...</span>
     </div>
 
@@ -813,6 +826,7 @@ function escapeHtml(str) {
 }
 
 const globalScope = typeof globalThis !== 'undefined' ? globalThis : (typeof window !== 'undefined' ? window : this);
+globalScope.escapeHtml = escapeHtml;
 globalScope.FEATURE_CHECKOUT_ENABLED = false;
 
 function openCheckoutWorkflow(appointmentId) {
@@ -825,66 +839,44 @@ function openCheckoutWorkflow(appointmentId) {
 }
 globalScope.openCheckoutWorkflow = openCheckoutWorkflow;
 
+const ALLOWED_PAYMENT_STATES = new Set([
+  'unpaid',
+  'partially_paid',
+  'paid',
+  'partially_refunded',
+  'refunded',
+  'void',
+  'inconsistent'
+]);
+
 function resolveCheckoutFinancialState(item) {
   if (!item || typeof item !== 'object') return null;
 
-  // Terminal or non-service appointment statuses cannot have active checkout financial state
-  // Even if inconsistent client data exists, fail closed
-  const apptStatus = item.status;
-  if (apptStatus === 'cancelled' || apptStatus === 'no_show' || apptStatus === 'pending') {
-    return null;
-  }
-
   // Authoritative projection from backend: item.checkout
-  if (item.checkout && typeof item.checkout === 'object') {
-    if (
-      item.checkout.payment_state === 'inconsistent' ||
-      item.checkout.reconciliation_valid === false ||
-      item.checkout.has_inconsistency === true
-    ) {
-      return 'inconsistent';
-    }
-    const state = String(item.checkout.payment_state || item.checkout.payment_status || '').toLowerCase().trim();
-    if (state === 'paid') return 'paid';
-    if (state === 'unpaid' || state === 'draft') return 'unpaid';
-    if (state === 'partially_paid') return 'partially_paid';
-    if (state === 'partially_refunded') return 'partially_refunded';
-    if (state === 'refunded') return 'refunded';
-    if (state === 'void' || state === 'voided') return 'void';
-    if (state === 'inconsistent') return 'inconsistent';
+  // When checkout is null / undefined / not an object, return null (fail closed, no fake none object)
+  if (!item.checkout || typeof item.checkout !== 'object') {
     return null;
   }
 
-  // Fallback for flat fields (e.g. from previous fixtures / legacy)
-  const rawState = String(
-    item.checkout_status ||
-    item.checkoutStatus ||
-    item.payment_status ||
-    item.paymentStatus ||
-    ''
-  ).toLowerCase().trim();
+  // reconciliation_valid must be strictly boolean true
+  // Missing, null, undefined, 0, 1, 'true', 'false', false, NaN all fail closed to inconsistent
+  if (item.checkout.reconciliation_valid !== true || item.checkout.has_inconsistency === true) {
+    return 'inconsistent';
+  }
 
-  if (rawState === 'paid') return 'paid';
-  if (rawState === 'awaiting_checkout') return 'awaiting_checkout';
-  if (rawState === 'unpaid' || rawState === 'draft') return 'unpaid';
-  if (rawState === 'partially_paid') return 'partially_paid';
-  if (rawState === 'partially_refunded') return 'partially_refunded';
-  if (rawState === 'refunded') return 'refunded';
-  if (rawState === 'void' || rawState === 'voided') return 'void';
-  if (rawState === 'inconsistent') return 'inconsistent';
+  const state = item.checkout.payment_state;
+  if (typeof state !== 'string' || !ALLOWED_PAYMENT_STATES.has(state)) {
+    return 'inconsistent';
+  }
 
-  // Decoupled architecture: appointment.status === 'completed' NEVER implies checkout is paid
-  // If no explicit checkout state is provided, return null (fail closed)
-  return null;
+  return state;
 }
 globalScope.resolveCheckoutFinancialState = resolveCheckoutFinancialState;
 
 function canStartCheckout(item) {
   if (!item || typeof item !== 'object') return false;
-  // Authoritative gate from backend projection
+  // Authoritative gate from backend projection: strict boolean true only
   if (item.can_start_checkout !== true) return false;
-  // Defense-in-depth: only in_service and completed can start checkout
-  if (item.status !== 'in_service' && item.status !== 'completed') return false;
   // If payment state is inconsistent, fail closed
   const financialState = resolveCheckoutFinancialState(item);
   if (financialState === 'inconsistent') return false;
@@ -896,72 +888,96 @@ function getCheckoutBadgeHtml(financialState) {
   if (!financialState) return '';
   switch (financialState) {
     case 'unpaid':
-    case 'draft':
-      return `<span class="pill status-draft notranslate" translate="no" role="status">${adminT('checkoutStateDraft')}</span>`;
+      return `<span class="pill status-draft notranslate" translate="no" role="status" aria-label="${escapeHtml(adminT('checkoutStateUnpaid'))}">${escapeHtml(adminT('checkoutStateUnpaid'))}</span>`;
     case 'partially_paid':
-      return `<span class="pill status-partially-paid notranslate" translate="no" role="status">${adminT('checkoutStatePartiallyPaid')}</span>`;
+      return `<span class="pill status-partially-paid notranslate" translate="no" role="status" aria-label="${escapeHtml(adminT('checkoutStatePartiallyPaid'))}">${escapeHtml(adminT('checkoutStatePartiallyPaid'))}</span>`;
     case 'paid':
-      return `<span class="pill status-paid notranslate" translate="no" role="status">${adminT('checkoutStatePaid')}</span>`;
+      return `<span class="pill status-paid notranslate" translate="no" role="status" aria-label="${escapeHtml(adminT('checkoutStatePaid'))}">${escapeHtml(adminT('checkoutStatePaid'))}</span>`;
     case 'partially_refunded':
-      return `<span class="pill status-refunded notranslate" translate="no" role="status">${adminT('checkoutStatePartiallyRefunded')}</span>`;
+      return `<span class="pill status-refunded notranslate" translate="no" role="status" aria-label="${escapeHtml(adminT('checkoutStatePartiallyRefunded'))}">${escapeHtml(adminT('checkoutStatePartiallyRefunded'))}</span>`;
     case 'refunded':
-      return `<span class="pill status-refunded notranslate" translate="no" role="status">${adminT('checkoutStateRefunded')}</span>`;
+      return `<span class="pill status-refunded notranslate" translate="no" role="status" aria-label="${escapeHtml(adminT('checkoutStateRefunded'))}">${escapeHtml(adminT('checkoutStateRefunded'))}</span>`;
     case 'void':
-      return `<span class="pill status-void notranslate" translate="no" role="status">${adminT('checkoutStateVoid')}</span>`;
+      return `<span class="pill status-void notranslate" translate="no" role="status" aria-label="${escapeHtml(adminT('checkoutStateVoid'))}">${escapeHtml(adminT('checkoutStateVoid'))}</span>`;
     case 'inconsistent':
-      return `<span class="pill status-inconsistent notranslate" translate="no" role="status" aria-label="${adminT('checkoutStateInconsistent')}">${adminT('checkoutStateInconsistent')}</span>`;
-    case 'awaiting_checkout':
-      return `<span class="pill status-awaiting-checkout notranslate" translate="no" role="status">${adminT('awaitingCheckout')}</span>`;
     default:
-      return '';
+      return `<span class="pill status-inconsistent notranslate" translate="no" role="status" aria-label="${escapeHtml(adminT('checkoutStateInconsistent'))}">${escapeHtml(adminT('checkoutStateInconsistent'))}</span>`;
   }
 }
 globalScope.getCheckoutBadgeHtml = getCheckoutBadgeHtml;
 
 function formatServiceCell(item) {
-  if (Array.isArray(item.items) && item.items.length > 0) {
-    const sorted = [...item.items].sort((a, b) => (Number(a.sequence_no) || 0) - (Number(b.sequence_no) || 0));
+  if (!item || typeof item !== 'object') {
+    return `<span class="notranslate" translate="no">-</span>`;
+  }
+  if (Array.isArray(item.items)) {
+    if (item.items.length === 0) {
+      return `<span class="muted notranslate" translate="no">${escapeHtml(adminT('noServiceItems'))}</span>`;
+    }
+    const sorted = [...item.items].sort((a, b) => {
+      const seqA = Number(a?.sequence_no) || 0;
+      const seqB = Number(b?.sequence_no) || 0;
+      if (seqA !== seqB) return seqA - seqB;
+      const idA = String(a?.item_id || a?.id || '');
+      const idB = String(b?.item_id || b?.id || '');
+      return idA.localeCompare(idB);
+    });
     if (sorted.length === 1) {
-      const name = sorted[0].service_name_snapshot || sorted[0].service_name || item.service_name || '-';
+      const name = sorted[0]?.service_name_snapshot || sorted[0]?.service_name || '-';
       return `<div class="service-item notranslate" translate="no">${escapeHtml(name)}</div>`;
     }
     return `<div class="multi-service-list">${sorted.map((s, idx) => `
       <div class="service-item notranslate" translate="no">
-        <span class="service-idx">${idx + 1}.</span> ${escapeHtml(s.service_name_snapshot || s.service_name || '-')}
+        <span class="service-idx">${idx + 1}.</span> ${escapeHtml(s?.service_name_snapshot || s?.service_name || '-')}
       </div>
     `).join('')}</div>`;
   }
+  // Legacy fallback ONLY when items is missing or not an array
   return `<span class="notranslate" translate="no">${escapeHtml(item.service_name || '-')}</span>`;
 }
 
 function formatStaffCell(item) {
-  if (Array.isArray(item.items) && item.items.length > 0) {
-    const sorted = [...item.items].sort((a, b) => (Number(a.sequence_no) || 0) - (Number(b.sequence_no) || 0));
+  if (!item || typeof item !== 'object') {
+    return `<span class="notranslate" translate="no">-</span>`;
+  }
+  if (Array.isArray(item.items)) {
+    if (item.items.length === 0) {
+      return `<span class="muted notranslate" translate="no">${escapeHtml(adminT('noStaffAssigned'))}</span>`;
+    }
+    const sorted = [...item.items].sort((a, b) => {
+      const seqA = Number(a?.sequence_no) || 0;
+      const seqB = Number(b?.sequence_no) || 0;
+      if (seqA !== seqB) return seqA - seqB;
+      const idA = String(a?.item_id || a?.id || '');
+      const idB = String(b?.item_id || b?.id || '');
+      return idA.localeCompare(idB);
+    });
     if (sorted.length === 1) {
-      const assignments = Array.isArray(sorted[0].staff_assignments) ? sorted[0].staff_assignments : [];
+      const assignments = Array.isArray(sorted[0]?.staff_assignments) ? sorted[0].staff_assignments : [];
       if (assignments.length > 0) {
         return assignments.map(a => {
-          const roleLabel = a.role === 'assistant' ? adminT('assistantStaff') : (a.role === 'primary' ? adminT('primaryStaff') : '');
-          return `<span class="staff-assignment notranslate" translate="no">${escapeHtml(a.staff_name)}${roleLabel ? ` (${roleLabel})` : ''}</span>`;
+          const roleLabel = a?.role === 'assistant' ? adminT('assistantStaff') : (a?.role === 'primary' ? adminT('primaryStaff') : '');
+          return `<span class="staff-assignment notranslate" translate="no">${escapeHtml(a?.staff_name || '-')}${roleLabel ? ` (${escapeHtml(roleLabel)})` : ''}</span>`;
         }).join(', ');
       }
-      return `<span class="notranslate" translate="no">${escapeHtml(item.staff_name || '-')}</span>`;
+      return `<span class="muted notranslate" translate="no">${escapeHtml(adminT('noStaffAssigned'))}</span>`;
     }
     const rows = sorted.map((s, idx) => {
-      const assignments = Array.isArray(s.staff_assignments) ? s.staff_assignments : [];
+      const assignments = Array.isArray(s?.staff_assignments) ? s.staff_assignments : [];
       let text = '';
       if (assignments.length > 0) {
         text = assignments.map(a => {
-          const roleLabel = a.role === 'assistant' ? adminT('assistantStaff') : (a.role === 'primary' ? adminT('primaryStaff') : '');
-          return `${escapeHtml(a.staff_name)}${roleLabel ? ` (${roleLabel})` : ''}`;
+          const roleLabel = a?.role === 'assistant' ? adminT('assistantStaff') : (a?.role === 'primary' ? adminT('primaryStaff') : '');
+          return `${escapeHtml(a?.staff_name || '-')}${roleLabel ? ` (${escapeHtml(roleLabel)})` : ''}`;
         }).join(', ');
       } else {
-        text = escapeHtml(item.staff_name || '-');
+        text = escapeHtml(adminT('noStaffAssigned'));
       }
       return `<div class="staff-item notranslate" translate="no"><span class="service-idx">${idx + 1}.</span> ${text}</div>`;
     });
     return `<div class="multi-staff-list">${rows.join('')}</div>`;
   }
+  // Legacy fallback ONLY when items is missing or not an array
   return `<span class="notranslate" translate="no">${escapeHtml(item.staff_name || '-')}</span>`;
 }
 
@@ -1023,6 +1039,7 @@ function showLogin(message = '') {
   document.getElementById('todayCount').textContent = '0';
 
   content.className = 'loading';
+  content.setAttribute?.('aria-busy', 'true');
   currentAppointments = [];
   globalThis.currentAppointments = currentAppointments;
   content.textContent = adminT('loginRequired');
@@ -1166,7 +1183,7 @@ function formatSingaporeTime(dateString) {
 
 
 function getStatusText(status) {
-  return globalThis.ggI18n.formatStatus(status, globalThis.ownerSelfService?._state.locale || 'en') || status || '-';
+  return escapeHtml(globalThis.ggI18n.formatStatus(status, globalThis.ownerSelfService?._state.locale || 'en') || status || '-');
 }
 
 
@@ -1189,6 +1206,7 @@ function getSingaporeToday() {
 async function loadAppointments() {
 
   content.className = 'loading';
+  content.setAttribute?.('aria-busy', 'true');
 
   content.textContent =
     adminT('loadingAppointments');
@@ -1228,6 +1246,7 @@ async function loadAppointments() {
   } catch (error) {
 
     content.className = 'error';
+    content.setAttribute?.('aria-busy', 'false');
 
     content.textContent =
       error.message;
@@ -1298,6 +1317,7 @@ function renderAppointments(appointments) {
   ) {
 
     content.className = 'empty';
+    content.setAttribute?.('aria-busy', 'false');
 
     content.textContent =
       adminT('noAppointments');
@@ -1306,18 +1326,23 @@ function renderAppointments(appointments) {
   }
 
   content.className = '';
+  content.setAttribute?.('aria-busy', 'false');
 
   const rows =
-    appointments.map(item => {
+    appointments.map(rawItem => {
+      const item = (rawItem && typeof rawItem === 'object')
+        ? { ...rawItem, id: escapeHtml(String(rawItem.id == null ? '' : rawItem.id)) }
+        : rawItem;
 
       const statusClass =
-        item.status || 'pending';
+        escapeHtml(String(item.status || 'pending'));
 
       const checkoutFinancialState =
         resolveCheckoutFinancialState(item);
 
-      const checkoutBtnHtml = canStartCheckout(item)
-        ? `<button type="button" class="checkout-btn" onclick="openCheckoutWorkflow('${item.id}')" data-feature-gated="${!globalScope.FEATURE_CHECKOUT_ENABLED}" title="${globalScope.FEATURE_CHECKOUT_ENABLED ? adminT('goToCheckout') : adminT('checkoutDisabledNotice')}">${adminT('goToCheckout')}</button>`
+      const canCheckout = (globalScope.FEATURE_CHECKOUT_ENABLED === true) && (canStartCheckout(item) === true);
+      const checkoutBtnHtml = canCheckout
+        ? `<button type="button" class="checkout-btn" onclick="openCheckoutWorkflow('${item.id}')" title="${escapeHtml(adminT('goToCheckout'))}">${escapeHtml(adminT('goToCheckout'))}</button>`
         : '';
 
       return `
@@ -1346,11 +1371,11 @@ function renderAppointments(appointments) {
             ${getCheckoutBadgeHtml(checkoutFinancialState)}
           </td>
           <td>
-  ${item.status === 'pending' ? `<button onclick="updateAppointmentStatus('${item.id}', 'confirmed')">${adminT('confirm')}</button><button onclick="updateAppointmentStatus('${item.id}', 'cancelled')">${adminT('cancel')}</button>` : ''}
-  ${item.status === 'confirmed' ? `<button onclick="updateAppointmentStatus('${item.id}', 'arrived')">${adminT('arrived')}</button><button onclick="updateAppointmentStatus('${item.id}', 'no_show')">${adminT('noShow')}</button><button onclick="updateAppointmentStatus('${item.id}', 'cancelled')">${adminT('cancel')}</button>` : ''}
-  ${item.status === 'arrived' ? `<button onclick="updateAppointmentStatus('${item.id}', 'in_service')">${adminT('in_service')}</button>` : ''}
-  ${item.status === 'in_service' ? `<button onclick="updateAppointmentStatus('${item.id}', 'completed')">${adminT('complete')}</button>${checkoutBtnHtml}` : ''}
-  ${item.status === 'completed' ? checkoutBtnHtml : ''}
+  ${item.status === 'pending' ? `<button onclick="updateAppointmentStatus('${item.id}', 'confirmed')">${escapeHtml(adminT('confirm'))}</button><button onclick="updateAppointmentStatus('${item.id}', 'cancelled')">${escapeHtml(adminT('cancel'))}</button>` : ''}
+  ${item.status === 'confirmed' ? `<button onclick="updateAppointmentStatus('${item.id}', 'arrived')">${escapeHtml(adminT('arrived'))}</button><button onclick="updateAppointmentStatus('${item.id}', 'no_show')">${escapeHtml(adminT('noShow'))}</button><button onclick="updateAppointmentStatus('${item.id}', 'cancelled')">${escapeHtml(adminT('cancel'))}</button>` : ''}
+  ${item.status === 'arrived' ? `<button onclick="updateAppointmentStatus('${item.id}', 'in_service')">${escapeHtml(adminT('in_service'))}</button>` : ''}
+  ${item.status === 'in_service' ? `<button onclick="updateAppointmentStatus('${item.id}', 'completed')">${escapeHtml(adminT('complete'))}</button>` : ''}
+  ${checkoutBtnHtml}
 </td>
 </tr>
 `;
@@ -1362,13 +1387,13 @@ function renderAppointments(appointments) {
 
       <thead>
         <tr>
-          <th>${adminT('appointmentTime')}</th>
-          <th>${adminT('customerName')}</th>
-          <th>${adminT('phone')}</th>
-          <th>${adminT('service')}</th>
-          <th>${adminT('staff')}</th>
-          <th>${adminT('status')}</th>
-          <th>${adminT('actions')}</th>
+          <th>${escapeHtml(adminT('appointmentTime'))}</th>
+          <th>${escapeHtml(adminT('customerName'))}</th>
+          <th>${escapeHtml(adminT('phone'))}</th>
+          <th>${escapeHtml(adminT('service'))}</th>
+          <th>${escapeHtml(adminT('staff'))}</th>
+          <th>${escapeHtml(adminT('status'))}</th>
+          <th>${escapeHtml(adminT('actions'))}</th>
         </tr>
       </thead>
 
