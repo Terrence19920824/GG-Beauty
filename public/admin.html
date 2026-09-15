@@ -827,7 +827,11 @@ function escapeHtml(str) {
 
 const globalScope = typeof globalThis !== 'undefined' ? globalThis : (typeof window !== 'undefined' ? window : this);
 globalScope.escapeHtml = escapeHtml;
-globalScope.FEATURE_CHECKOUT_ENABLED = false;
+
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const ALLOWED_STATUS_MUTATIONS = new Set(['confirmed', 'arrived', 'in_service', 'completed', 'cancelled', 'no_show']);
+
+let _featureCheckoutEnabled = false;
 
 function openCheckoutWorkflow(appointmentId) {
   if (!globalScope.FEATURE_CHECKOUT_ENABLED) {
@@ -836,8 +840,91 @@ function openCheckoutWorkflow(appointmentId) {
     }
     return;
   }
+  const safeId = String(appointmentId || '').trim();
+  if (!UUID_REGEX.test(safeId)) {
+    console.warn('Invalid appointment ID format rejected for checkout');
+    return;
+  }
 }
-globalScope.openCheckoutWorkflow = openCheckoutWorkflow;
+
+Object.defineProperty(globalScope, 'FEATURE_CHECKOUT_ENABLED', {
+  get() {
+    return _featureCheckoutEnabled;
+  },
+  set(val) {
+    _featureCheckoutEnabled = val === true;
+    if (_featureCheckoutEnabled) {
+      globalScope.openCheckoutWorkflow = openCheckoutWorkflow;
+    } else {
+      delete globalScope.openCheckoutWorkflow;
+    }
+  },
+  configurable: true,
+  enumerable: true
+});
+globalScope.FEATURE_CHECKOUT_ENABLED = false;
+
+let actionKeySeq = 0;
+const appointmentActionRegistry = new Map();
+globalScope.appointmentActionRegistry = appointmentActionRegistry;
+
+function registerStatusAction(appointmentId, targetStatus) {
+  const key = String(++actionKeySeq);
+  appointmentActionRegistry.set(key, {
+    type: 'status',
+    appointmentId,
+    targetStatus
+  });
+  return key;
+}
+
+function registerCheckoutAction(appointmentId) {
+  const key = String(++actionKeySeq);
+  appointmentActionRegistry.set(key, {
+    type: 'checkout',
+    appointmentId
+  });
+  return key;
+}
+
+function executeAppointmentActionByKey(key) {
+  if (!key) return;
+  const action = appointmentActionRegistry.get(String(key));
+  if (!action) return;
+
+  if (action.type === 'status') {
+    if (ALLOWED_STATUS_MUTATIONS.has(action.targetStatus)) {
+      updateAppointmentStatus(action.appointmentId, action.targetStatus);
+    }
+  } else if (action.type === 'checkout') {
+    if (globalScope.FEATURE_CHECKOUT_ENABLED === true && typeof openCheckoutWorkflow === 'function') {
+      openCheckoutWorkflow(action.appointmentId);
+    }
+  }
+}
+globalScope.executeAppointmentActionByKey = executeAppointmentActionByKey;
+
+function onAppointmentActionClick(event) {
+  if (event && typeof event.preventDefault === 'function') {
+    event.preventDefault();
+  }
+  const btn = event.currentTarget || (event.target && event.target.closest ? event.target.closest('button[data-action-key]') : event.target);
+  const key = btn?.getAttribute ? btn.getAttribute('data-action-key') : (btn?.dataset?.actionKey || btn?.['data-action-key']);
+  executeAppointmentActionByKey(key);
+}
+
+function bindAppointmentActionListeners() {
+  if (typeof content?.querySelectorAll === 'function') {
+    const buttons = content.querySelectorAll('button[data-action-key]');
+    if (buttons && typeof buttons.forEach === 'function') {
+      buttons.forEach(btn => {
+        if (typeof btn?.addEventListener === 'function') {
+          btn.addEventListener('click', onAppointmentActionClick);
+        }
+      });
+    }
+  }
+}
 
 const ALLOWED_PAYMENT_STATES = new Set([
   'unpaid',
@@ -1311,6 +1398,8 @@ function renderAppointments(appointments) {
     globalScope.currentAppointments = appointments;
   }
 
+  appointmentActionRegistry.clear();
+
   if (
     !appointments ||
     appointments.length === 0
@@ -1330,9 +1419,7 @@ function renderAppointments(appointments) {
 
   const rows =
     appointments.map(rawItem => {
-      const item = (rawItem && typeof rawItem === 'object')
-        ? { ...rawItem, id: escapeHtml(String(rawItem.id == null ? '' : rawItem.id)) }
-        : rawItem;
+      const item = rawItem || {};
 
       const statusClass =
         escapeHtml(String(item.status || 'pending'));
@@ -1341,9 +1428,29 @@ function renderAppointments(appointments) {
         resolveCheckoutFinancialState(item);
 
       const canCheckout = (globalScope.FEATURE_CHECKOUT_ENABLED === true) && (canStartCheckout(item) === true);
-      const checkoutBtnHtml = canCheckout
-        ? `<button type="button" class="checkout-btn" onclick="openCheckoutWorkflow('${item.id}')" title="${escapeHtml(adminT('goToCheckout'))}">${escapeHtml(adminT('goToCheckout'))}</button>`
-        : '';
+      let checkoutBtnHtml = '';
+      if (canCheckout) {
+        const kCheckout = registerCheckoutAction(item.id);
+        checkoutBtnHtml = `<button type="button" class="checkout-btn" data-action="checkout" data-action-key="${kCheckout}" title="${escapeHtml(adminT('goToCheckout'))}">${escapeHtml(adminT('goToCheckout'))}</button>`;
+      }
+
+      let statusBtnsHtml = '';
+      if (item.status === 'pending') {
+        const kConfirm = registerStatusAction(item.id, 'confirmed');
+        const kCancel = registerStatusAction(item.id, 'cancelled');
+        statusBtnsHtml = `<button type="button" data-action="status" data-action-key="${kConfirm}" data-target-status="confirmed">${escapeHtml(adminT('confirm'))}</button><button type="button" data-action="status" data-action-key="${kCancel}" data-target-status="cancelled">${escapeHtml(adminT('cancel'))}</button>`;
+      } else if (item.status === 'confirmed') {
+        const kArrive = registerStatusAction(item.id, 'arrived');
+        const kNoShow = registerStatusAction(item.id, 'no_show');
+        const kCancel = registerStatusAction(item.id, 'cancelled');
+        statusBtnsHtml = `<button type="button" data-action="status" data-action-key="${kArrive}" data-target-status="arrived">${escapeHtml(adminT('arrived'))}</button><button type="button" data-action="status" data-action-key="${kNoShow}" data-target-status="no_show">${escapeHtml(adminT('noShow'))}</button><button type="button" data-action="status" data-action-key="${kCancel}" data-target-status="cancelled">${escapeHtml(adminT('cancel'))}</button>`;
+      } else if (item.status === 'arrived') {
+        const kInService = registerStatusAction(item.id, 'in_service');
+        statusBtnsHtml = `<button type="button" data-action="status" data-action-key="${kInService}" data-target-status="in_service">${escapeHtml(adminT('in_service'))}</button>`;
+      } else if (item.status === 'in_service') {
+        const kComplete = registerStatusAction(item.id, 'completed');
+        statusBtnsHtml = `<button type="button" data-action="status" data-action-key="${kComplete}" data-target-status="completed">${escapeHtml(adminT('complete'))}</button>`;
+      }
 
       return `
         <tr>
@@ -1371,10 +1478,7 @@ function renderAppointments(appointments) {
             ${getCheckoutBadgeHtml(checkoutFinancialState)}
           </td>
           <td>
-  ${item.status === 'pending' ? `<button onclick="updateAppointmentStatus('${item.id}', 'confirmed')">${escapeHtml(adminT('confirm'))}</button><button onclick="updateAppointmentStatus('${item.id}', 'cancelled')">${escapeHtml(adminT('cancel'))}</button>` : ''}
-  ${item.status === 'confirmed' ? `<button onclick="updateAppointmentStatus('${item.id}', 'arrived')">${escapeHtml(adminT('arrived'))}</button><button onclick="updateAppointmentStatus('${item.id}', 'no_show')">${escapeHtml(adminT('noShow'))}</button><button onclick="updateAppointmentStatus('${item.id}', 'cancelled')">${escapeHtml(adminT('cancel'))}</button>` : ''}
-  ${item.status === 'arrived' ? `<button onclick="updateAppointmentStatus('${item.id}', 'in_service')">${escapeHtml(adminT('in_service'))}</button>` : ''}
-  ${item.status === 'in_service' ? `<button onclick="updateAppointmentStatus('${item.id}', 'completed')">${escapeHtml(adminT('complete'))}</button>` : ''}
+  ${statusBtnsHtml}
   ${checkoutBtnHtml}
 </td>
 </tr>
@@ -1403,8 +1507,20 @@ function renderAppointments(appointments) {
 
     </table>
   `;
+
+  bindAppointmentActionListeners();
 }
 async function updateAppointmentStatus(id, status) {
+  const safeId = String(id || '').trim();
+  if (!UUID_REGEX.test(safeId)) {
+    console.warn('Invalid appointment ID format rejected');
+    return;
+  }
+  if (typeof status !== 'string' || !ALLOWED_STATUS_MUTATIONS.has(status)) {
+    console.warn('Invalid status mutation rejected');
+    return;
+  }
+
   const promptKey = { confirmed: 'confirmAppointmentPrompt', arrived: 'arrivedAppointmentPrompt', in_service: 'startServicePrompt', completed: 'completeAppointmentPrompt', no_show: 'noShowAppointmentPrompt', cancelled: 'cancelAppointmentPrompt' }[status];
 
   if (!confirm(adminT(promptKey))) {
@@ -1419,7 +1535,7 @@ async function updateAppointmentStatus(id, status) {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        appointmentId: id,
+        appointmentId: safeId,
         status: status
       })
     });

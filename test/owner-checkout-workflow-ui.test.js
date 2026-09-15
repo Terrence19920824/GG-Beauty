@@ -27,10 +27,79 @@ const sampleAppointment = {
   can_start_checkout: false
 };
 
+function parseMockButtons(html) {
+  const buttons = [];
+  const buttonRegex = /<button\b([^>]*)>([\s\S]*?)<\/button>/gi;
+  let match;
+  while ((match = buttonRegex.exec(html)) !== null) {
+    const rawAttrs = match[1];
+    const text = match[2];
+    const attrs = new Map();
+    const attrRegex = /([a-zA-Z0-9_\-]+)(?:=(?:"([^"]*)"|'([^']*)'|([^\s>]+)))?/g;
+    let aMatch;
+    while ((aMatch = attrRegex.exec(rawAttrs)) !== null) {
+      const name = aMatch[1].toLowerCase();
+      const val = aMatch[2] !== undefined ? aMatch[2] : (aMatch[3] !== undefined ? aMatch[3] : (aMatch[4] !== undefined ? aMatch[4] : ''));
+      attrs.set(name, val);
+    }
+    const listeners = new Map();
+    const btn = {
+      tagName: 'BUTTON',
+      textContent: text.replace(/<[^>]*>/g, '').trim(),
+      innerHTML: text,
+      dataset: {},
+      listeners,
+      getAttribute(name) {
+        return attrs.has(name.toLowerCase()) ? attrs.get(name.toLowerCase()) : null;
+      },
+      hasAttribute(name) {
+        return attrs.has(name.toLowerCase());
+      },
+      setAttribute(name, val) {
+        attrs.set(name.toLowerCase(), String(val));
+      },
+      addEventListener(event, fn) {
+        if (!listeners.has(event)) listeners.set(event, []);
+        listeners.get(event).push(fn);
+      },
+      removeEventListener(event, fn) {
+        if (listeners.has(event)) {
+          const arr = listeners.get(event).filter(f => f !== fn);
+          listeners.set(event, arr);
+        }
+      },
+      closest(selector) {
+        if (selector === 'button' || selector.includes('button')) return this;
+        return null;
+      },
+      click() {
+        const ev = {
+          type: 'click',
+          target: this,
+          currentTarget: this,
+          preventDefault() {},
+          stopPropagation() {}
+        };
+        const handlers = (listeners.get('click') || []).slice();
+        for (const h of handlers) {
+          h(ev);
+        }
+      }
+    };
+    for (const [k, v] of attrs.entries()) {
+      if (k.startsWith('data-')) {
+        const camel = k.slice(5).replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+        btn.dataset[camel] = v;
+      }
+    }
+    buttons.push(btn);
+  }
+  return buttons;
+}
+
 const createPageContext = (customElements = {}) => {
   const elements = new Map();
   for (const id of [
-    'content',
     'loginOverlay',
     'adminContent',
     'loginMessage',
@@ -59,6 +128,45 @@ const createPageContext = (customElements = {}) => {
     });
   }
 
+  let _contentHtml = '';
+  let _contentButtons = [];
+  const contentEl = {
+    id: 'content',
+    get innerHTML() {
+      return _contentHtml;
+    },
+    set innerHTML(val) {
+      _contentHtml = String(val || '');
+      _contentButtons = parseMockButtons(_contentHtml);
+    },
+    textContent: '',
+    className: '',
+    hidden: false,
+    disabled: false,
+    style: {},
+    setAttribute(k, v) {
+      this[k] = v;
+    },
+    querySelectorAll(sel) {
+      if (sel === 'button[data-action-key]') {
+        return _contentButtons.filter(b => b.hasAttribute('data-action-key'));
+      }
+      if (sel === 'button') {
+        return _contentButtons;
+      }
+      if (sel.startsWith('[') && sel.endsWith(']')) {
+        const attrName = sel.slice(1, -1).toLowerCase();
+        return _contentButtons.filter(b => b.hasAttribute(attrName));
+      }
+      return [];
+    },
+    querySelector(sel) {
+      return this.querySelectorAll(sel)[0] || null;
+    },
+    ...(customElements['content'] || {})
+  };
+  elements.set('content', contentEl);
+
   const requests = [];
   const alerts = [];
   let initialize;
@@ -84,7 +192,12 @@ const createPageContext = (customElements = {}) => {
       return {
         status: 200,
         ok: true,
-        async json() { return { success: true }; }
+        async json() {
+          if (url.includes('/api/appointments-db')) {
+            return { success: true, data: [sampleAppointment], appointments: [sampleAppointment] };
+          }
+          return { success: true };
+        }
       };
     },
     document: {
@@ -94,7 +207,7 @@ const createPageContext = (customElements = {}) => {
         return element;
       },
       querySelectorAll(selector) {
-        return [];
+        return elements.get('content')?.querySelectorAll(selector) || [];
       },
       addEventListener(name, handler) {
         if (name === 'DOMContentLoaded') initialize = handler;
@@ -324,7 +437,7 @@ test('62. gate=true but can_start_checkout=false omits checkout button', () => {
   assert.doesNotMatch(rendered, /openCheckoutWorkflow/);
 });
 
-test('63. gate=true and can_start_checkout=true renders checkout button', () => {
+test('63. gate=true and can_start_checkout=true renders checkout button with safe event binding', () => {
   const { context, elements } = createPageContext();
   context.FEATURE_CHECKOUT_ENABLED = true;
   context.renderAppointments([{
@@ -334,7 +447,9 @@ test('63. gate=true and can_start_checkout=true renders checkout button', () => 
   }]);
   const rendered = elements.get('content').innerHTML;
   assert.match(rendered, /class="checkout-btn"/);
-  assert.match(rendered, /openCheckoutWorkflow\('00000000-0000-4000-8000-000000000001'\)/);
+  assert.match(rendered, /data-action="checkout"/);
+  assert.doesNotMatch(rendered, /onclick/i);
+  assert.doesNotMatch(rendered, /openCheckoutWorkflow/);
   assert.match(rendered, />去结账<\/button>/);
 });
 
@@ -606,4 +721,300 @@ test('75. owner auth and existing appointments functionality is verified without
   assert.strictEqual(typeof context.ownerLogout, 'function');
   assert.strictEqual(typeof context.showLogin, 'function');
   assert.strictEqual(typeof context.showAdmin, 'function');
+});
+
+// 9. Safe DOM Event Binding & Inline Handler Elimination (Requirements 31-43)
+test('76. malicious appointment IDs cannot inject inline JS or escape into executable event handlers (Req 31 & 33)', () => {
+  const maliciousIds = [
+    "');alert(1);//",
+    "&#39;);alert(1);//",
+    "&apos;);alert(1);//",
+    '"><svg onload=alert(1)>',
+    '</button><script>alert(1)</script>'
+  ];
+
+  for (const maliciousId of maliciousIds) {
+    const { context, elements, alerts } = createPageContext();
+    context.FEATURE_CHECKOUT_ENABLED = true;
+
+    context.renderAppointments([{
+      ...sampleAppointment,
+      id: maliciousId,
+      status: 'pending',
+      can_start_checkout: true
+    }]);
+
+    const rendered = elements.get('content').innerHTML;
+
+    // No executable injection tags
+    assert.doesNotMatch(rendered, /<script\b/i, `Payload ID must not generate script tag: ${maliciousId}`);
+    assert.doesNotMatch(rendered, /<svg\b/i, `Payload ID must not generate svg tag: ${maliciousId}`);
+    assert.doesNotMatch(rendered, /<img\b/i, `Payload ID must not generate img tag: ${maliciousId}`);
+
+    // No inline on* handler attributes anywhere in rendered HTML
+    assert.doesNotMatch(rendered, /\bon[a-z]+\s*=/i, `Rendered markup must not contain any inline event attribute: ${maliciousId}`);
+    assert.doesNotMatch(rendered, /onclick/i, `Rendered markup must not contain onclick: ${maliciousId}`);
+    assert.doesNotMatch(rendered, /onload/i, `Rendered markup must not contain onload: ${maliciousId}`);
+    assert.doesNotMatch(rendered, /onerror/i, `Rendered markup must not contain onerror: ${maliciousId}`);
+
+    // No alert executed
+    assert.strictEqual(alerts.length, 0, `No window.alert must be executed for malicious ID: ${maliciousId}`);
+
+    // DOM parsed buttons must not contain onclick or on* attributes
+    const buttons = elements.get('content').querySelectorAll('button');
+    assert.ok(buttons.length > 0, 'Buttons should be rendered');
+    for (const btn of buttons) {
+      assert.strictEqual(btn.getAttribute('onclick'), null, 'Button must not have onclick attribute');
+      assert.doesNotMatch(btn.getAttribute('data-action-key') || '', /alert|script|<|>/i, 'Action key must be safe numeric');
+    }
+  }
+});
+
+test('77. malicious customer, staff, and service names cannot inject executable tags or event attributes (Req 32 & 33)', () => {
+  const maliciousPayloads = [
+    '<img src=x onerror=alert(1)>',
+    '</span><script>alert(1)</script>',
+    '"><svg onload=alert(1)>'
+  ];
+
+  for (const payload of maliciousPayloads) {
+    const { context, elements, alerts } = createPageContext();
+    context.FEATURE_CHECKOUT_ENABLED = true;
+
+    context.renderAppointments([{
+      ...sampleAppointment,
+      customer_name: payload,
+      staff_name: payload,
+      service_name: payload,
+      items: [
+        {
+          id: 'item-payload',
+          sequence_no: 1,
+          service_name: payload,
+          primary_staff_name: payload,
+          assistant_staff: [
+            { id: 'as-1', staff_name: payload }
+          ]
+        }
+      ]
+    }]);
+
+    const rendered = elements.get('content').innerHTML;
+
+    // Parse all HTML tags and ensure no script/img/svg and no on* event attributes exist
+    const tagRegex = /<([a-zA-Z0-9-]+)((?:\s+[a-zA-Z0-9-_:]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+))?)*)\s*\/?>/g;
+    let tagMatch;
+    while ((tagMatch = tagRegex.exec(rendered)) !== null) {
+      const tagName = tagMatch[1].toLowerCase();
+      assert.notStrictEqual(tagName, 'script', `Payload must not generate script tag: ${payload}`);
+      assert.notStrictEqual(tagName, 'img', `Payload must not generate img tag: ${payload}`);
+      assert.notStrictEqual(tagName, 'svg', `Payload must not generate svg tag: ${payload}`);
+
+      const attrString = tagMatch[2];
+      const attrRegex = /([a-zA-Z0-9-_:]+)\s*=/g;
+      let attrMatch;
+      while ((attrMatch = attrRegex.exec(attrString)) !== null) {
+        const attrName = attrMatch[1].toLowerCase();
+        assert.ok(!attrName.startsWith('on'), `Tag <${tagName}> must not have event attribute: ${attrName} from payload: ${payload}`);
+      }
+    }
+    assert.strictEqual(alerts.length, 0, `Alert must not be called: ${payload}`);
+  }
+});
+
+test('78. clicking status button with malicious appointment ID is rejected before any network request (Req 34)', async () => {
+  const maliciousIds = [
+    "');alert(1);//",
+    "&#39;);alert(1);//",
+    '"><svg onload=alert(1)>',
+    '</button><script>alert(1)</script>'
+  ];
+
+  for (const maliciousId of maliciousIds) {
+    const { context, elements, alerts, requests } = createPageContext();
+
+    context.renderAppointments([{
+      ...sampleAppointment,
+      id: maliciousId,
+      status: 'pending'
+    }]);
+
+    const buttons = elements.get('content').querySelectorAll('button[data-action-key]');
+    assert.ok(buttons.length >= 2, 'Pending status buttons should exist');
+
+    // Click the first button (confirm)
+    buttons[0].click();
+
+    // Verify rejection: no network requests sent because UUID regex failed
+    assert.strictEqual(requests.length, 0, `Mutating network request must not be sent for malicious ID: ${maliciousId}`);
+    assert.strictEqual(alerts.length, 0, `No alert must be called for malicious ID: ${maliciousId}`);
+  }
+});
+
+test('79. clicking normal UUID status button invokes action exactly once with valid request payload (Req 35 & 42)', async () => {
+  const { context, elements, requests } = createPageContext();
+
+  context.renderAppointments([{
+    ...sampleAppointment,
+    id: '00000000-0000-4000-8000-000000000001',
+    status: 'pending'
+  }]);
+
+  const buttons = elements.get('content').querySelectorAll('button[data-action-key]');
+  const confirmBtn = buttons.find(b => b.getAttribute('data-target-status') === 'confirmed');
+  assert.ok(confirmBtn, 'Confirm button must exist');
+  assert.strictEqual(confirmBtn.getAttribute('data-action'), 'status');
+  assert.strictEqual(confirmBtn.getAttribute('onclick'), null, 'Must have no inline onclick');
+
+  // Click once
+  confirmBtn.click();
+  await new Promise(r => setTimeout(r, 10));
+
+  const statusMutations = requests.filter(r => r.url === '/api/admin/update-status-db');
+  assert.strictEqual(statusMutations.length, 1, 'Exactly one status mutation request should be sent');
+  assert.strictEqual(statusMutations[0].options.method, 'POST');
+  const body = JSON.parse(statusMutations[0].options.body);
+  assert.strictEqual(body.appointmentId, '00000000-0000-4000-8000-000000000001');
+  assert.strictEqual(body.status, 'confirmed');
+
+  // Stale button click must NOT trigger any new request (Requirement 14)
+  confirmBtn.click();
+  await new Promise(r => setTimeout(r, 10));
+  const mutationsAfterStaleClick = requests.filter(r => r.url === '/api/admin/update-status-db');
+  assert.strictEqual(mutationsAfterStaleClick.length, 1, 'Stale detached button must not trigger operations');
+
+  // The re-rendered button in the active DOM triggers the next request
+  const newConfirmBtn = elements.get('content').querySelectorAll('button[data-action-key]').find(b => b.getAttribute('data-target-status') === 'confirmed');
+  assert.ok(newConfirmBtn, 'Newly rendered confirm button must exist after loadAppointments re-render');
+  newConfirmBtn.click();
+  await new Promise(r => setTimeout(r, 10));
+
+  const statusMutationsAfterSecondClick = requests.filter(r => r.url === '/api/admin/update-status-db');
+  assert.strictEqual(statusMutationsAfterSecondClick.length, 2, 'Newly rendered button click sends second mutation request');
+});
+
+test('80. re-rendering and locale switching cleans previous action registry without duplicate listeners (Req 36 & 43)', async () => {
+  const { context, elements, requests } = createPageContext();
+
+  // Initial render
+  context.renderAppointments([{
+    ...sampleAppointment,
+    id: '00000000-0000-4000-8000-000000000001',
+    status: 'pending'
+  }]);
+  const initialButtons = elements.get('content').querySelectorAll('button[data-action-key]');
+  const staleConfirmBtn = initialButtons.find(b => b.getAttribute('data-target-status') === 'confirmed');
+
+  // Re-render multiple times
+  context.renderAppointments([{
+    ...sampleAppointment,
+    id: '00000000-0000-4000-8000-000000000001',
+    status: 'pending'
+  }]);
+
+  // Switch locale (triggers re-render)
+  context.setAdminLocale('en');
+
+  // Get current button
+  const currentButtons = elements.get('content').querySelectorAll('button[data-action-key]');
+  const currentConfirmBtn = currentButtons.find(b => b.getAttribute('data-target-status') === 'confirmed');
+  assert.ok(currentConfirmBtn, 'Current confirm button must exist in English locale');
+
+  // Click the current button: must trigger exactly 1 mutation request
+  currentConfirmBtn.click();
+  await new Promise(r => setTimeout(r, 10));
+  const currentMutations = requests.filter(r => r.url === '/api/admin/update-status-db');
+  assert.strictEqual(currentMutations.length, 1, 'Current button click must trigger exactly 1 status mutation request');
+
+  // Click the stale button from before re-rendering: registry was cleared, so nothing happens
+  staleConfirmBtn.click();
+  await new Promise(r => setTimeout(r, 10));
+  const afterStaleMutations = requests.filter(r => r.url === '/api/admin/update-status-db');
+  assert.strictEqual(afterStaleMutations.length, 1, 'Stale button click must NOT trigger any new request');
+});
+
+test('81. FEATURE_CHECKOUT_ENABLED=false: checkout button omitted, globalScope handler deleted, 0 requests (Req 40)', () => {
+  const { context, elements, requests } = createPageContext();
+
+  assert.strictEqual(context.FEATURE_CHECKOUT_ENABLED, false);
+  assert.strictEqual(typeof context.openCheckoutWorkflow, 'undefined', 'globalScope.openCheckoutWorkflow must be deleted when false');
+
+  context.renderAppointments([{
+    ...sampleAppointment,
+    can_start_checkout: true
+  }]);
+
+  const rendered = elements.get('content').innerHTML;
+  assert.doesNotMatch(rendered, /class="checkout-btn"/);
+  assert.doesNotMatch(rendered, /data-action="checkout"/);
+  assert.strictEqual(requests.length, 0, 'Zero checkout requests made');
+});
+
+test('82. FEATURE_CHECKOUT_ENABLED=true and can_start_checkout=true: button present with safe addEventListener and no inline onclick (Req 41)', () => {
+  const { context, elements, requests } = createPageContext();
+
+  // Enable feature gate
+  context.FEATURE_CHECKOUT_ENABLED = true;
+  assert.strictEqual(context.FEATURE_CHECKOUT_ENABLED, true);
+  assert.strictEqual(typeof context.openCheckoutWorkflow, 'function', 'globalScope.openCheckoutWorkflow registered');
+
+  context.renderAppointments([{
+    ...sampleAppointment,
+    can_start_checkout: true
+  }]);
+
+  const rendered = elements.get('content').innerHTML;
+  assert.match(rendered, /class="checkout-btn"/);
+  assert.match(rendered, /data-action="checkout"/);
+  assert.doesNotMatch(rendered, /onclick/i);
+  assert.doesNotMatch(rendered, /openCheckoutWorkflow/);
+
+  const buttons = elements.get('content').querySelectorAll('button[data-action-key]');
+  const checkoutBtn = buttons.find(b => b.getAttribute('data-action') === 'checkout');
+  assert.ok(checkoutBtn, 'Checkout button must exist');
+  assert.strictEqual(checkoutBtn.getAttribute('onclick'), null);
+  assert.ok(checkoutBtn.hasAttribute('data-action-key'));
+
+  // Click checkout button: dispatches safely to openCheckoutWorkflow
+  checkoutBtn.click();
+  assert.strictEqual(requests.length, 0, 'Zero mutating checkout requests made');
+
+  // Disable feature gate again
+  context.FEATURE_CHECKOUT_ENABLED = false;
+  assert.strictEqual(typeof context.openCheckoutWorkflow, 'undefined', 'globalScope.openCheckoutWorkflow must be deleted when false');
+});
+
+test('83. absence of dynamic inline onclick across all appointment statuses and entity decoding safety (Req 37 & 39)', () => {
+  const allStatuses = ['pending', 'confirmed', 'arrived', 'in_service', 'completed', 'cancelled', 'no_show'];
+
+  for (const st of allStatuses) {
+    const { context, elements } = createPageContext();
+    context.FEATURE_CHECKOUT_ENABLED = true;
+
+    context.renderAppointments([{
+      ...sampleAppointment,
+      status: st,
+      can_start_checkout: true
+    }]);
+
+    const rendered = elements.get('content').innerHTML;
+    assert.doesNotMatch(rendered, /\bon[a-z]+\s*=/i, `Status ${st} must not contain any inline on* attributes in markup`);
+    assert.doesNotMatch(rendered, /onclick/i, `Status ${st} must not contain onclick`);
+
+    const buttons = elements.get('content').querySelectorAll('button');
+    for (const btn of buttons) {
+      assert.strictEqual(btn.getAttribute('onclick'), null, `Button in status ${st} must have no onclick`);
+    }
+  }
+
+  // Entity decoding test: &quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;
+  const { context, elements, alerts } = createPageContext();
+  context.renderAppointments([{
+    ...sampleAppointment,
+    id: '&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;',
+    customer_name: '&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;'
+  }]);
+  const rendered = elements.get('content').innerHTML;
+  assert.doesNotMatch(rendered, /<script[\s>]/i);
+  assert.strictEqual(alerts.length, 0);
 });

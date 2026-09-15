@@ -76,7 +76,7 @@ test('shared locale persistence cannot store authentication material and databas
   const frontend = `${adminHtml}\n${adminJs}\n${customerHtml}\n${fs.readFileSync(path.join(root, 'public/shared-i18n.js'), 'utf8')}`;
   assert.equal(i18n.STORAGE_KEY, 'gg_beauty_locale');
   assert.doesNotMatch(frontend, /localStorage[^\n]*(token|session|auth|password)|(token|session|auth|password)[^\n]*localStorage/i);
-  assert.match(adminHtml, /updateAppointmentStatus\('\$\{item\.id\}', 'confirmed'\)/);
-  assert.match(adminHtml, /updateAppointmentStatus\('\$\{item\.id\}', 'completed'\)/);
-  assert.match(adminHtml, /updateAppointmentStatus\('\$\{item\.id\}', 'cancelled'\)/);
+  assert.match(adminHtml, /data-target-status="confirmed"/);
+  assert.match(adminHtml, /data-target-status="completed"/);
+  assert.match(adminHtml, /data-target-status="cancelled"/);
 });

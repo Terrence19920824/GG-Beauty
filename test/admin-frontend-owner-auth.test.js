@@ -221,9 +221,11 @@ test('rendering and status action buttons remain available', () => {
   page.context.renderAppointments([appointment]);
   const rendered = page.elements.get('content').innerHTML;
   assert.match(rendered, /Customer A/);
-  assert.match(rendered, /updateAppointmentStatus\('[^']+', 'confirmed'\)/);
-  assert.match(rendered, /updateAppointmentStatus\('[^']+', 'cancelled'\)/);
-  assert.doesNotMatch(rendered, /updateAppointmentStatus\('[^']+', 'completed'\)/);
+  assert.match(rendered, /data-action="status"/);
+  assert.match(rendered, /data-target-status="confirmed"/);
+  assert.match(rendered, /data-target-status="cancelled"/);
+  assert.doesNotMatch(rendered, /data-target-status="completed"/);
+  assert.doesNotMatch(rendered, /onclick/i);
 });
 
 test('owner status actions expose only the canonical lifecycle transitions', () => {
@@ -233,14 +235,14 @@ test('owner status actions expose only the canonical lifecycle transitions', () 
     return page.elements.get('content').innerHTML;
   };
   const pending = render('pending');
-  assert.match(pending, /'confirmed'/); assert.match(pending, /'cancelled'/);
-  assert.doesNotMatch(pending, /'arrived'|'no_show'|'in_service'|'completed'/);
+  assert.match(pending, /data-target-status="confirmed"/); assert.match(pending, /data-target-status="cancelled"/);
+  assert.doesNotMatch(pending, /data-target-status="arrived"|data-target-status="no_show"|data-target-status="in_service"|data-target-status="completed"/);
   const confirmed = render('confirmed');
-  assert.match(confirmed, /'arrived'/); assert.match(confirmed, /'no_show'/); assert.match(confirmed, /'cancelled'/);
-  assert.doesNotMatch(confirmed, /'pending'|'in_service'|'completed'/);
-  assert.match(render('arrived'), /'in_service'/);
-  assert.match(render('in_service'), /'completed'/);
-  for (const terminal of ['completed', 'no_show', 'cancelled']) assert.doesNotMatch(render(terminal), /updateAppointmentStatus/);
+  assert.match(confirmed, /data-target-status="arrived"/); assert.match(confirmed, /data-target-status="no_show"/); assert.match(confirmed, /data-target-status="cancelled"/);
+  assert.doesNotMatch(confirmed, /data-target-status="pending"|data-target-status="in_service"|data-target-status="completed"/);
+  assert.match(render('arrived'), /data-target-status="in_service"/);
+  assert.match(render('in_service'), /data-target-status="completed"/);
+  for (const terminal of ['completed', 'no_show', 'cancelled']) assert.doesNotMatch(render(terminal), /data-action="status"/);
 });
 
 test('owner and staff use the shared blue confirmed-status token', () => {
