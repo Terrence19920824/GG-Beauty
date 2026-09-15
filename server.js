@@ -54,6 +54,9 @@ const {
 const { isKnownStatus, canTransition, recordStatusHistory } = require('./lib/appointment-status');
 const { createCheckoutPos } = require('./lib/checkout-pos');
 const { createCheckoutPosRead } = require('./lib/checkout-pos-read');
+const {
+  projectOwnerAppointmentCheckout
+} = require('./lib/owner-appointment-checkout-projection');
 
 const app = express();
 
@@ -1498,6 +1501,121 @@ app.get(
     }
 
     const result = await client.query(`
+      WITH assignment_projection AS (
+        SELECT
+          assignment.shop_id,
+          assignment.location_id,
+          assignment.appointment_item_id,
+          JSON_AGG(
+            JSON_BUILD_OBJECT(
+              'assignment_id', assignment.id,
+              'staff_id', assignment.staff_id,
+              'staff_name', assigned_staff.name,
+              'role', assignment.role,
+              'start_at', assignment.start_at,
+              'end_at', assignment.end_at
+            )
+            ORDER BY
+              CASE assignment.role WHEN 'primary' THEN 0 ELSE 1 END,
+              assignment.id
+          ) AS assignments
+        FROM appointment_item_staff_assignments assignment
+        JOIN staff assigned_staff
+          ON assigned_staff.id = assignment.staff_id
+         AND assigned_staff.shop_id = assignment.shop_id
+        WHERE assignment.shop_id = $1
+        GROUP BY
+          assignment.shop_id,
+          assignment.location_id,
+          assignment.appointment_item_id
+      ),
+      item_projection AS (
+        SELECT
+          item.shop_id,
+          item.location_id,
+          item.appointment_id,
+          JSON_AGG(
+            JSON_BUILD_OBJECT(
+              'item_id', item.id,
+              'sequence_no', item.sequence_no,
+              'service_id', item.service_id,
+              'service_name_snapshot', item.service_name_snapshot,
+              'service_locale_snapshot', item.service_locale_snapshot,
+              'duration_minutes_snapshot', item.duration_minutes_snapshot,
+              'price_snapshot_minor',
+                CASE
+                  WHEN item.price_snapshot IS NULL THEN NULL
+                  ELSE (ROUND(item.price_snapshot * 100)::BIGINT)::TEXT
+                END,
+              'start_at', item.start_at,
+              'end_at', item.end_at,
+              'status', item.status,
+              'staff_assignments', COALESCE(
+                assignment_projection.assignments,
+                '[]'::JSON
+              )
+            )
+            ORDER BY item.sequence_no, item.id
+          ) AS items
+        FROM appointment_items item
+        LEFT JOIN assignment_projection
+          ON assignment_projection.shop_id = item.shop_id
+         AND assignment_projection.location_id = item.location_id
+         AND assignment_projection.appointment_item_id = item.id
+        WHERE item.shop_id = $1
+        GROUP BY item.shop_id, item.location_id, item.appointment_id
+      ),
+      legacy_assignment_projection AS (
+        SELECT
+          item.shop_id,
+          item.location_id,
+          item.appointment_id,
+          JSON_AGG(
+            JSON_BUILD_OBJECT(
+              'itemId', item.id,
+              'sequenceNo', item.sequence_no,
+              'staffId', assignment.staff_id,
+              'role', assignment.role,
+              'startAt', assignment.start_at,
+              'endAt', assignment.end_at
+            )
+            ORDER BY item.sequence_no, assignment.role, assignment.id
+          ) AS staff_assignments
+        FROM appointment_items item
+        JOIN appointment_item_staff_assignments assignment
+          ON assignment.shop_id = item.shop_id
+         AND assignment.location_id = item.location_id
+         AND assignment.appointment_item_id = item.id
+        WHERE item.shop_id = $1
+        GROUP BY item.shop_id, item.location_id, item.appointment_id
+      ),
+      checkout_line_projection AS (
+        SELECT
+          line.shop_id,
+          line.checkout_id,
+          COUNT(*)::TEXT AS line_item_count,
+          SUM(line.quote_price_minor)::TEXT AS line_quote_total_minor,
+          SUM(line.actual_price_minor)::TEXT AS line_actual_total_minor,
+          SUM(line.discount_minor)::TEXT AS line_discount_total_minor,
+          SUM(line.final_value_minor)::TEXT AS line_final_total_minor
+        FROM checkout_line_items line
+        WHERE line.shop_id = $1
+        GROUP BY line.shop_id, line.checkout_id
+      ),
+      payment_projection AS (
+        SELECT
+          payment.shop_id,
+          payment.checkout_id,
+          COALESCE(SUM(payment.amount_minor) FILTER (
+            WHERE payment.value_kind <> 'refund'
+          ), 0)::TEXT AS payment_total_minor,
+          COALESCE(SUM(payment.amount_minor) FILTER (
+            WHERE payment.value_kind = 'refund'
+          ), 0)::TEXT AS refund_total_minor
+        FROM checkout_payments payment
+        WHERE payment.shop_id = $1
+        GROUP BY payment.shop_id, payment.checkout_id
+      )
       SELECT
         a.id,
         a.appointment_no,
@@ -1516,30 +1634,29 @@ app.get(
 
         st.name AS staff_name,
         st.staff_code,
+        COALESCE(item_projection.items, '[]'::JSON) AS items,
         COALESCE(
-          (
-            SELECT JSON_AGG(
-              JSON_BUILD_OBJECT(
-                'itemId', item.id,
-                'sequenceNo', item.sequence_no,
-                'staffId', assignment.staff_id,
-                'role', assignment.role,
-                'startAt', assignment.start_at,
-                'endAt', assignment.end_at
-              )
-              ORDER BY item.sequence_no, assignment.role, assignment.id
-            )
-            FROM appointment_items item
-            JOIN appointment_item_staff_assignments assignment
-              ON assignment.shop_id = item.shop_id
-             AND assignment.location_id = item.location_id
-             AND assignment.appointment_item_id = item.id
-            WHERE item.shop_id = a.shop_id
-              AND item.location_id = a.location_id
-              AND item.appointment_id = a.id
-          ),
+          legacy_assignment_projection.staff_assignments,
           '[]'::JSON
-        ) AS staff_assignments
+        ) AS staff_assignments,
+
+        checkout.id AS checkout_id,
+        checkout.status AS checkout_status,
+        checkout.currency_code,
+        checkout.quote_total_minor::TEXT AS checkout_quote_total_minor,
+        checkout.actual_total_minor::TEXT AS checkout_actual_total_minor,
+        checkout.discount_total_minor::TEXT AS checkout_discount_total_minor,
+        checkout.final_due_minor::TEXT AS checkout_final_due_minor,
+        checkout.paid_minor::TEXT AS checkout_recorded_paid_minor,
+        checkout_line_projection.line_item_count,
+        checkout_line_projection.line_quote_total_minor,
+        checkout_line_projection.line_actual_total_minor,
+        checkout_line_projection.line_discount_total_minor,
+        checkout_line_projection.line_final_total_minor,
+        COALESCE(payment_projection.payment_total_minor, '0')
+          AS payment_total_minor,
+        COALESCE(payment_projection.refund_total_minor, '0')
+          AS refund_total_minor
 
       FROM appointments a
 
@@ -1559,6 +1676,28 @@ app.get(
         ON l.id = a.location_id
        AND l.shop_id = a.shop_id
 
+      LEFT JOIN item_projection
+        ON item_projection.shop_id = a.shop_id
+       AND item_projection.location_id = a.location_id
+       AND item_projection.appointment_id = a.id
+
+      LEFT JOIN legacy_assignment_projection
+        ON legacy_assignment_projection.shop_id = a.shop_id
+       AND legacy_assignment_projection.location_id = a.location_id
+       AND legacy_assignment_projection.appointment_id = a.id
+
+      LEFT JOIN checkout_transactions checkout
+        ON checkout.shop_id = a.shop_id
+       AND checkout.appointment_id = a.id
+
+      LEFT JOIN checkout_line_projection
+        ON checkout_line_projection.shop_id = checkout.shop_id
+       AND checkout_line_projection.checkout_id = checkout.id
+
+      LEFT JOIN payment_projection
+        ON payment_projection.shop_id = checkout.shop_id
+       AND payment_projection.checkout_id = checkout.id
+
       WHERE a.shop_id = $1
         AND (
           $2::UUID IS NULL
@@ -1573,7 +1712,13 @@ app.get(
 
     res.json({
       success: true,
-      data: result.rows
+      data: result.rows.map(row =>
+        projectOwnerAppointmentCheckout(row, {
+          role: req.ownerAuth.role,
+          checkoutWriteEnabled:
+            process.env.CHECKOUT_WRITE_ENABLED === 'true'
+        })
+      )
     });
 
   } catch (error) {

@@ -45,6 +45,13 @@ const appointmentRow = {
   staff_code: 'A1'
 };
 
+const projectedAppointmentRow = {
+  ...appointmentRow,
+  items: [],
+  checkout: null,
+  can_start_checkout: false
+};
+
 const crossTenantAppointmentRow = {
   ...appointmentRow,
   id: '88888888-8888-4888-8888-888888888888',
@@ -158,7 +165,7 @@ for (const role of ['owner', 'manager', 'admin']) {
     await withServer(async baseUrl => {
       const response = await getAppointments(baseUrl);
       assert.equal(response.status, 200);
-      assert.deepEqual((await response.json()).data, [appointmentRow]);
+      assert.deepEqual((await response.json()).data, [projectedAppointmentRow]);
     });
   });
 }
@@ -209,6 +216,23 @@ test('staff service and location joins are tenant-scoped', async () => {
   await withServer(baseUrl => getAppointments(baseUrl));
   const read = fixture.state.clientQueries.find(q => /FROM appointments/.test(q.sql));
   for (const alias of ['s', 'st', 'l']) assert.match(read.sql, new RegExp(`${alias}\\.shop_id = a\\.shop_id`));
+});
+
+test('checkout projection is one tenant-scoped appointment query without N+1 reads', async () => {
+  const fixture = makePool();
+  installPool(fixture);
+  await withServer(baseUrl => getAppointments(baseUrl));
+  assert.equal(fixture.state.clientQueries.length, 1);
+  const read = fixture.state.clientQueries[0].sql;
+  for (const scope of [
+    'assignment.shop_id = $1',
+    'item.shop_id = $1',
+    'line.shop_id = $1',
+    'payment.shop_id = $1',
+    'checkout.shop_id = a.shop_id',
+    'payment_projection.shop_id = checkout.shop_id'
+  ]) assert.match(read, new RegExp(scope.replace(/[.$]/g, '\\$&')));
+  assert.match(read, /ORDER BY a\.start_at DESC/);
 });
 
 test('cross-tenant location fails closed without appointment query', async () => {
