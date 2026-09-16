@@ -835,6 +835,18 @@ if (typeof globalScope.FEATURE_CHECKOUT_ENABLED === 'undefined') {
   globalScope.FEATURE_CHECKOUT_ENABLED = false;
 }
 
+let currentRenderGeneration = 0;
+const currentAppointmentMap = new Map();
+
+const invalidateAppointmentActionContext = () => {
+  currentRenderGeneration++;
+  currentAppointmentMap.clear();
+  currentAppointments = [];
+  if (typeof globalScope !== 'undefined' && globalScope) {
+    globalScope.currentAppointments = currentAppointments;
+  }
+};
+
 const ALLOWED_PAYMENT_STATES = new Set([
   'unpaid',
   'partially_paid',
@@ -1019,6 +1031,7 @@ function setAdminLocale(locale) {
 globalScope.setAdminLocale = setAdminLocale;
 
 function showLogin(message = '') {
+  invalidateAppointmentActionContext();
   adminContent.hidden = true;
   loginOverlay.style.display = 'flex';
 
@@ -1056,7 +1069,7 @@ async function initializeAdmin() {
       credentials: 'same-origin'
     });
 
-    if (response.status === 401) {
+    if (response.status === 401 || response.status === 403) {
       showLogin();
       return;
     }
@@ -1140,6 +1153,7 @@ async function adminLogin() {
 }
 
 async function ownerLogout() {
+  invalidateAppointmentActionContext();
   try {
     const response = await fetch('/api/owner/logout', {
       method: 'POST',
@@ -1217,7 +1231,7 @@ async function loadAppointments() {
     const result =
       await response.json();
 
-    if (response.status === 401) {
+    if (response.status === 401 || response.status === 403) {
       showLogin(adminT('sessionExpired'));
 
       return;
@@ -1300,17 +1314,22 @@ function updateSummary(appointments) {
 }
 
 
-let currentRenderGeneration = 0;
-
 // 显示预约表格
 function renderAppointments(appointments) {
+  currentRenderGeneration++;
+  const thisGeneration = currentRenderGeneration;
+  currentAppointmentMap.clear();
+
   if (Array.isArray(appointments)) {
     currentAppointments = appointments;
     globalScope.currentAppointments = appointments;
+    for (const item of appointments) {
+      if (item && item.id) {
+        currentAppointmentMap.set(String(item.id).trim(), item);
+      }
+    }
   }
 
-  currentRenderGeneration++;
-  const thisGeneration = currentRenderGeneration;
   const localActionMap = new Map();
   let localKeySeq = 0;
 
@@ -1468,6 +1487,28 @@ function renderAppointments(appointments) {
               return;
             }
 
+            const activeList = (typeof globalScope !== 'undefined' && Array.isArray(globalScope.currentAppointments))
+              ? globalScope.currentAppointments
+              : (Array.isArray(currentAppointments) ? currentAppointments : null);
+
+            if (!activeList) {
+              return;
+            }
+
+            const inArray = activeList.find(a => a && String(a.id || '').trim() === safeId);
+            if (!inArray || String(inArray.id || '').trim() !== safeId) {
+              currentAppointmentMap.delete(safeId);
+              return;
+            }
+
+            if (!currentAppointmentMap.has(safeId)) {
+              return;
+            }
+            const currentAppt = currentAppointmentMap.get(safeId);
+            if (!currentAppt || String(currentAppt.id || '').trim() !== safeId) {
+              return;
+            }
+
             if (recordType === 'checkout') {
               if (globalScope.FEATURE_CHECKOUT_ENABLED !== true) {
                 if (typeof alert === 'function') {
@@ -1476,11 +1517,7 @@ function renderAppointments(appointments) {
                 return;
               }
 
-              const currentAppt = Array.isArray(currentAppointments)
-                ? currentAppointments.find(a => a && String(a.id || '').trim() === safeId)
-                : null;
-              const isCanStartValid = (recordCanStart === true) && (currentAppt ? currentAppt.can_start_checkout === true : true);
-              if (!isCanStartValid) {
+              if (recordCanStart !== true || currentAppt.can_start_checkout !== true) {
                 return;
               }
 
@@ -1532,7 +1569,7 @@ async function updateAppointmentStatus(id, status) {
 
     const result = await response.json();
 
-    if (response.status === 401) {
+    if (response.status === 401 || response.status === 403) {
       showLogin(adminT('sessionExpired'));
       return;
     }

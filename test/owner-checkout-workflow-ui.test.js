@@ -1215,3 +1215,218 @@ test('91. two different appointment buttons only operate on their own appointmen
   assert.strictEqual(m2.length, 2);
   assert.strictEqual(JSON.parse(m2[1].options.body).appointmentId, '00000000-0000-4000-8000-000000000002');
 });
+
+test('92. showLogin() invalidates action context so old status button click triggers 0 fetch and 0 mutation (Req 40-42)', async () => {
+  const { context, elements, requests } = createPageContext();
+  context.renderAppointments([{
+    ...sampleAppointment,
+    status: 'pending'
+  }]);
+
+  const statusBtns = elements.get('content').querySelectorAll('button[data-action="status"]');
+  const confirmBtn = statusBtns.find(b => b.getAttribute('data-target-status') === 'confirmed');
+  assert.ok(confirmBtn);
+
+  // Invoke showLogin to clear protected UI and invalidate action context
+  context.showLogin();
+
+  // Click old status button
+  confirmBtn.click();
+  await new Promise(r => setTimeout(r, 10));
+
+  const mutations = requests.filter(r => r.url === '/api/admin/update-status-db');
+  assert.strictEqual(mutations.length, 0, 'Clicking old status button after showLogin() must trigger 0 mutation requests');
+  assert.strictEqual(requests.length, 0, 'Zero requests must be sent');
+});
+
+test('93. showLogin() invalidates action context so old checkout button click triggers 0 workflow, 0 navigation, 0 requests (Req 43-45)', () => {
+  const { context, elements, requests } = createPageContext();
+  context.FEATURE_CHECKOUT_ENABLED = true;
+  context.renderAppointments([{
+    ...sampleAppointment,
+    can_start_checkout: true
+  }]);
+
+  const checkoutBtn = elements.get('content').querySelector('button[data-action="checkout"]');
+  assert.ok(checkoutBtn);
+
+  // Invoke showLogin
+  context.showLogin();
+
+  // Click old checkout button
+  checkoutBtn.click();
+
+  assert.strictEqual(requests.filter(r => r.url?.includes('/checkout')).length, 0, 'Zero checkout requests');
+  assert.strictEqual(requests.length, 0);
+});
+
+test('94. ownerLogout() invalidates action context immediately at invocation before network completes or on network failure (Req 46)', async () => {
+  const { context, elements, requests } = createPageContext();
+  context.FEATURE_CHECKOUT_ENABLED = true;
+  context.renderAppointments([{
+    ...sampleAppointment,
+    status: 'pending',
+    can_start_checkout: true
+  }]);
+
+  const confirmBtn = elements.get('content').querySelectorAll('button[data-action="status"]').find(b => b.getAttribute('data-target-status') === 'confirmed');
+  const checkoutBtn = elements.get('content').querySelector('button[data-action="checkout"]');
+  assert.ok(confirmBtn);
+  assert.ok(checkoutBtn);
+
+  let resolveLogout;
+  context.fetch = async (url, options = {}) => {
+    requests.push({ url, options });
+    if (url === '/api/owner/logout') {
+      return new Promise(resolve => {
+        resolveLogout = () => resolve({ status: 200, ok: true, json: async () => ({ success: true }) });
+      });
+    }
+    return { status: 200, ok: true, json: async () => ({ success: true }) };
+  };
+
+  // Start logout (asynchronous fetch in progress)
+  const logoutPromise = context.ownerLogout();
+
+  // Immediately click old buttons while logout network request is in-flight
+  confirmBtn.click();
+  checkoutBtn.click();
+  await new Promise(r => setTimeout(r, 10));
+
+  const mutations = requests.filter(r => r.url === '/api/admin/update-status-db');
+  assert.strictEqual(mutations.length, 0, 'Status button clicked during logout must trigger 0 status mutations');
+  assert.strictEqual(requests.filter(r => r.url?.includes('/checkout')).length, 0, 'Checkout button clicked during logout must trigger 0 checkout requests');
+
+  // Resolve logout fetch
+  if (resolveLogout) resolveLogout();
+  await logoutPromise;
+});
+
+test('95. API 401/403 session expiration invalidates context so old buttons trigger 0 operations (Req 47)', async () => {
+  const { context, elements, requests } = createPageContext();
+  context.renderAppointments([{
+    ...sampleAppointment,
+    status: 'pending'
+  }]);
+
+  const confirmBtn = elements.get('content').querySelectorAll('button[data-action="status"]').find(b => b.getAttribute('data-target-status') === 'confirmed');
+  assert.ok(confirmBtn);
+
+  // Configure fetch to return 401 on appointments read
+  context.fetch = async (url, options = {}) => {
+    requests.push({ url, options });
+    if (url.includes('/api/appointments-db')) {
+      return { status: 401, ok: false, json: async () => ({ success: false, message: 'Session expired' }) };
+    }
+    return { status: 200, ok: true, json: async () => ({ success: true }) };
+  };
+
+  await context.loadAppointments();
+
+  // Click old status button after 401 session expiry
+  confirmBtn.click();
+  await new Promise(r => setTimeout(r, 10));
+
+  const statusMutations = requests.filter(r => r.url === '/api/admin/update-status-db');
+  assert.strictEqual(statusMutations.length, 0, 'Status button after 401 must trigger 0 mutation requests');
+});
+
+test('96. current appointment missing from active appointment index strictly fails closed with 0 operations (Req 48-49)', async () => {
+  const { context, elements, requests } = createPageContext();
+  context.FEATURE_CHECKOUT_ENABLED = true;
+  context.renderAppointments([{
+    ...sampleAppointment,
+    id: '00000000-0000-4000-8000-000000000001',
+    status: 'pending',
+    can_start_checkout: true
+  }]);
+
+  const confirmBtn = elements.get('content').querySelectorAll('button[data-action="status"]').find(b => b.getAttribute('data-target-status') === 'confirmed');
+  const checkoutBtn = elements.get('content').querySelector('button[data-action="checkout"]');
+  assert.ok(confirmBtn);
+  assert.ok(checkoutBtn);
+
+  // Remove appointment from active appointments
+  context.currentAppointments = [];
+
+  // Click status button
+  confirmBtn.click();
+  await new Promise(r => setTimeout(r, 10));
+  assert.strictEqual(requests.filter(r => r.url === '/api/admin/update-status-db').length, 0, 'Status button must send 0 requests when appointment missing');
+
+  // Click checkout button
+  checkoutBtn.click();
+  assert.strictEqual(requests.filter(r => r.url?.includes('/checkout')).length, 0, 'Checkout button must send 0 requests when appointment missing');
+
+  // Verify no ?? true fallback exists in admin.html
+  assert.doesNotMatch(html, /\?\?\s*true/, 'No ?? true fallback allowed');
+  assert.doesNotMatch(html, /can_start_checkout\s*===?\s*true\s*:\s*true/, 'No : true fallback allowed for can_start_checkout');
+});
+
+test('97. can_start_checkout changed to false on current appointment before click strictly fails closed (Req 50)', () => {
+  const { context, elements, requests } = createPageContext();
+  context.FEATURE_CHECKOUT_ENABLED = true;
+  const appt = { ...sampleAppointment, can_start_checkout: true };
+  context.renderAppointments([appt]);
+
+  const checkoutBtn = elements.get('content').querySelector('button[data-action="checkout"]');
+  assert.ok(checkoutBtn);
+
+  // Mutate can_start_checkout to false before clicking
+  appt.can_start_checkout = false;
+
+  checkoutBtn.click();
+  assert.strictEqual(requests.filter(r => r.url?.includes('/checkout')).length, 0, 'Checkout 0 operations when can_start_checkout changed to false');
+});
+
+test('98. re-login and re-render activates new buttons while old buttons from previous session remain completely inert (Req 53)', async () => {
+  const { context, elements, requests } = createPageContext();
+  const appt1 = { ...sampleAppointment, id: '00000000-0000-4000-8000-000000000001', status: 'pending' };
+  const appt2 = { ...sampleAppointment, id: '00000000-0000-4000-8000-000000000002', status: 'pending' };
+
+  // Session 1: initial render
+  context.renderAppointments([appt1]);
+  const oldConfirmBtn = elements.get('content').querySelectorAll('button[data-action="status"]').find(b => b.getAttribute('data-target-status') === 'confirmed');
+  assert.ok(oldConfirmBtn);
+
+  // User logs out
+  await context.ownerLogout();
+
+  // Session 2: re-login and re-render
+  context.renderAppointments([appt2]);
+  const newConfirmBtn = elements.get('content').querySelectorAll('button[data-action="status"]').find(b => b.getAttribute('data-target-status') === 'confirmed');
+  assert.ok(newConfirmBtn);
+
+  // Click old button from Session 1
+  oldConfirmBtn.click();
+  await new Promise(r => setTimeout(r, 10));
+  assert.strictEqual(requests.filter(r => r.url === '/api/admin/update-status-db').length, 0, 'Old session button must be inert');
+
+  // Click new button from Session 2
+  newConfirmBtn.click();
+  await new Promise(r => setTimeout(r, 10));
+  const newMutations = requests.filter(r => r.url === '/api/admin/update-status-db');
+  assert.strictEqual(newMutations.length, 1, 'New session button must execute once');
+  assert.strictEqual(JSON.parse(newMutations[0].options.body).appointmentId, '00000000-0000-4000-8000-000000000002');
+});
+
+test('99. Shop A old button cannot operate Shop B appointment across different shop sessions (Req 54)', async () => {
+  const { context, elements, requests } = createPageContext();
+  const shopAAppt = { ...sampleAppointment, id: '00000000-0000-4000-8000-000000000001', status: 'pending' };
+  const shopBAppt = { ...sampleAppointment, id: '00000000-0000-4000-8000-000000000002', status: 'pending' };
+
+  // Shop A
+  context.renderAppointments([shopAAppt]);
+  const shopAConfirmBtn = elements.get('content').querySelectorAll('button[data-action="status"]').find(b => b.getAttribute('data-target-status') === 'confirmed');
+  assert.ok(shopAConfirmBtn);
+
+  // Switch to Shop B
+  await context.ownerLogout();
+  context.renderAppointments([shopBAppt]);
+
+  // Click Shop A button
+  shopAConfirmBtn.click();
+  await new Promise(r => setTimeout(r, 10));
+
+  assert.strictEqual(requests.filter(r => r.url === '/api/admin/update-status-db').length, 0, 'Shop A button must not operate Shop B appointments');
+});
