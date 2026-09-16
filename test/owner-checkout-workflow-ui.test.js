@@ -1346,15 +1346,15 @@ test('96. current appointment missing from active appointment index strictly fai
   assert.ok(confirmBtn);
   assert.ok(checkoutBtn);
 
-  // Remove appointment from active appointments
-  context.currentAppointments = [];
+  // Clear private appointments by re-rendering empty list
+  context.renderAppointments([]);
 
-  // Click status button
+  // Click status button from previous render
   confirmBtn.click();
   await new Promise(r => setTimeout(r, 10));
   assert.strictEqual(requests.filter(r => r.url === '/api/admin/update-status-db').length, 0, 'Status button must send 0 requests when appointment missing');
 
-  // Click checkout button
+  // Click checkout button from previous render
   checkoutBtn.click();
   assert.strictEqual(requests.filter(r => r.url?.includes('/checkout')).length, 0, 'Checkout button must send 0 requests when appointment missing');
 
@@ -1429,4 +1429,135 @@ test('99. Shop A old button cannot operate Shop B appointment across different s
   await new Promise(r => setTimeout(r, 10));
 
   assert.strictEqual(requests.filter(r => r.url === '/api/admin/update-status-db').length, 0, 'Shop A button must not operate Shop B appointments');
+});
+
+test('100. tampering globalScope.currentAppointments cannot inject fake appointments or forge actions through language switch (Req 18 & 21)', async () => {
+  const { context, elements, requests } = createPageContext();
+  context.FEATURE_CHECKOUT_ENABLED = true;
+
+  // a. Normal render of 2 authoritative appointments
+  const appt1 = {
+    ...sampleAppointment,
+    id: '00000000-0000-4000-8000-000000000001',
+    customer_name: 'Alice',
+    status: 'pending',
+    can_start_checkout: false,
+    checkout: null
+  };
+  const appt2 = {
+    ...sampleAppointment,
+    id: '00000000-0000-4000-8000-000000000002',
+    customer_name: 'Bob',
+    status: 'confirmed',
+    can_start_checkout: false,
+    checkout: null
+  };
+  context.renderAppointments([appt1, appt2]);
+
+  // b. Tamper globalScope.currentAppointments by pushing forged appointment
+  context.currentAppointments.push({
+    ...sampleAppointment,
+    id: '00000000-0000-4000-8000-000000000999',
+    customer_name: 'AttackerFake',
+    status: 'pending',
+    can_start_checkout: true,
+    checkout: null
+  });
+
+  // c. Change real appointment can_start_checkout from false to true in global array
+  context.currentAppointments[0].can_start_checkout = true;
+
+  // d. Modify real appointment ID, checkout/payment_state, and status in global array
+  context.currentAppointments[1].id = '00000000-0000-4000-8000-000000000888';
+  context.currentAppointments[1].checkout = { payment_state: 'paid', reconciliation_valid: true };
+  context.currentAppointments[1].status = 'arrived';
+
+  // e. Trigger language switch and re-render
+  context.setAdminLocale('en');
+
+  // f. Confirm forged appointment cannot enter DOM, cannot enter private Map, cannot produce usable operations
+  const renderedHtml = elements.get('content').innerHTML;
+  assert.doesNotMatch(renderedHtml, /AttackerFake/, 'Forged appointment must not appear in rendered DOM');
+  assert.doesNotMatch(renderedHtml, /00000000-0000-4000-8000-000000000999/, 'Forged appointment ID must not appear in DOM');
+  assert.doesNotMatch(renderedHtml, /00000000-0000-4000-8000-000000000888/, 'Forged modified ID must not appear in DOM');
+
+  // Authoritative appts both had can_start_checkout: false, so 0 checkout buttons rendered
+  const checkoutButtons = elements.get('content').querySelectorAll('button[data-action="checkout"]');
+  assert.strictEqual(checkoutButtons.length, 0, 'No checkout button should be rendered from tampered global array');
+
+  // Appt 2 did NOT get Paid badge from global tampering
+  assert.doesNotMatch(renderedHtml, /status-paid/, 'Paid badge must not be rendered from tampered global array');
+
+  // Legitimate buttons for appt 1 and appt 2 still work as authorized
+  const statusButtons = elements.get('content').querySelectorAll('button[data-action="status"]');
+  const confirmBtn = statusButtons.find(b => b.textContent === 'Confirm' || b.getAttribute('data-target-status') === 'confirmed');
+  assert.ok(confirmBtn, 'Authoritative confirm button must be rendered in English');
+  confirmBtn.click();
+  await new Promise(r => setTimeout(r, 10));
+
+  const statusMutations = requests.filter(r => r.url === '/api/admin/update-status-db');
+  assert.strictEqual(statusMutations.length, 1, 'Only authoritative action executes');
+  assert.strictEqual(JSON.parse(statusMutations[0].options.body).appointmentId, '00000000-0000-4000-8000-000000000001');
+  assert.strictEqual(requests.filter(r => r.url?.includes('/checkout')).length, 0, '0 checkout requests');
+});
+
+test('101. nested tampering of globalScope.currentAppointments does not affect private snapshot or click authorization (Req 19-20)', async () => {
+  const { context, elements, requests } = createPageContext();
+  context.FEATURE_CHECKOUT_ENABLED = true;
+
+  const appt = {
+    ...sampleAppointment,
+    id: '00000000-0000-4000-8000-000000000001',
+    status: 'pending',
+    can_start_checkout: false,
+    checkout: null,
+    items: [{ service_name: 'Haircut', sequence_no: 1 }]
+  };
+  context.renderAppointments([appt]);
+
+  // Nested property tampering on global array
+  context.currentAppointments[0].can_start_checkout = true;
+  context.currentAppointments[0].checkout = { payment_state: 'paid', reconciliation_valid: true };
+  context.currentAppointments[0].items.push({ service_name: 'HackedItem', sequence_no: 2 });
+  context.currentAppointments[0].id = '00000000-0000-4000-8000-000000000666';
+
+  // Language switch to zh-CN
+  context.setAdminLocale('zh-CN');
+
+  const rendered = elements.get('content').innerHTML;
+  assert.doesNotMatch(rendered, /HackedItem/, 'Tampered items must not appear');
+  assert.doesNotMatch(rendered, /00000000-0000-4000-8000-000000000666/, 'Tampered ID must not appear');
+  assert.strictEqual(elements.get('content').querySelectorAll('button[data-action="checkout"]').length, 0, 'No checkout button generated');
+
+  // Checkout request count strictly 0
+  assert.strictEqual(requests.filter(r => r.url?.includes('/checkout')).length, 0);
+});
+
+test('102. authoritative appointments preserve correct behavior across locale switches, sessions, and shops (Req 22-25)', async () => {
+  const { context, elements, requests } = createPageContext();
+  const appt1 = {
+    ...sampleAppointment,
+    id: '00000000-0000-4000-8000-000000000001',
+    status: 'pending'
+  };
+
+  context.renderAppointments([appt1]);
+
+  // Switch to English
+  context.setAdminLocale('en');
+  const enButtons = elements.get('content').querySelectorAll('button[data-action="status"]');
+  const enConfirmBtn = enButtons.find(b => b.textContent === 'Confirm');
+  assert.ok(enConfirmBtn, 'Confirm button in English exists');
+
+  // Click confirm in English
+  enConfirmBtn.click();
+  await new Promise(r => setTimeout(r, 10));
+  assert.strictEqual(requests.filter(r => r.url === '/api/admin/update-status-db').length, 1);
+
+  // Logout clears private snapshot
+  await context.ownerLogout();
+
+  // Switching locale after logout does not resurrect logged out appointments
+  context.setAdminLocale('zh-CN');
+  assert.doesNotMatch(elements.get('content').innerHTML, /00000000-0000-4000-8000-000000000001/);
 });

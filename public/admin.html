@@ -836,14 +836,24 @@ if (typeof globalScope.FEATURE_CHECKOUT_ENABLED === 'undefined') {
 }
 
 let currentRenderGeneration = 0;
+let currentAppointmentsSnapshot = [];
 const currentAppointmentMap = new Map();
+
+function cloneAppointments(appts) {
+  if (!Array.isArray(appts)) return [];
+  try {
+    return JSON.parse(JSON.stringify(appts));
+  } catch (_e) {
+    return [];
+  }
+}
 
 const invalidateAppointmentActionContext = () => {
   currentRenderGeneration++;
   currentAppointmentMap.clear();
-  currentAppointments = [];
+  currentAppointmentsSnapshot = [];
   if (typeof globalScope !== 'undefined' && globalScope) {
-    globalScope.currentAppointments = currentAppointments;
+    globalScope.currentAppointments = [];
   }
 };
 
@@ -1020,12 +1030,8 @@ function setAdminLocale(locale) {
   const activeLocale = globalThis.ownerSelfService?._state?.locale || locale;
   if (zhBtn) zhBtn.disabled = activeLocale === 'zh-CN';
   if (enBtn) enBtn.disabled = activeLocale === 'en';
-  const appts = (Array.isArray(globalScope.currentAppointments) && globalScope.currentAppointments.length > 0)
-    ? globalScope.currentAppointments
-    : (Array.isArray(currentAppointments) ? currentAppointments : []);
-  if (typeof renderAppointments === 'function' && appts.length > 0) {
-    currentAppointments = appts;
-    renderAppointments(appts);
+  if (typeof renderAppointments === 'function' && currentAppointmentsSnapshot.length > 0) {
+    renderAppointments(cloneAppointments(currentAppointmentsSnapshot));
   }
 }
 globalScope.setAdminLocale = setAdminLocale;
@@ -1246,12 +1252,12 @@ async function loadAppointments() {
     const appointments =
       result.data || [];
 
-    currentAppointments = appointments;
-    globalThis.currentAppointments = currentAppointments;
+    const safeSnapshot = cloneAppointments(appointments);
+    currentAppointmentsSnapshot = safeSnapshot;
 
-    updateSummary(appointments);
+    updateSummary(safeSnapshot);
 
-    renderAppointments(appointments);
+    renderAppointments(safeSnapshot);
 
   } catch (error) {
 
@@ -1320,13 +1326,16 @@ function renderAppointments(appointments) {
   const thisGeneration = currentRenderGeneration;
   currentAppointmentMap.clear();
 
-  if (Array.isArray(appointments)) {
-    currentAppointments = appointments;
-    globalScope.currentAppointments = appointments;
-    for (const item of appointments) {
-      if (item && item.id) {
-        currentAppointmentMap.set(String(item.id).trim(), item);
-      }
+  const safeAppointments = cloneAppointments(appointments);
+  currentAppointmentsSnapshot = safeAppointments;
+
+  if (typeof globalScope !== 'undefined' && globalScope) {
+    globalScope.currentAppointments = cloneAppointments(safeAppointments);
+  }
+
+  for (const item of safeAppointments) {
+    if (item && item.id) {
+      currentAppointmentMap.set(String(item.id).trim(), item);
     }
   }
 
@@ -1334,8 +1343,8 @@ function renderAppointments(appointments) {
   let localKeySeq = 0;
 
   if (
-    !appointments ||
-    appointments.length === 0
+    !safeAppointments ||
+    safeAppointments.length === 0
   ) {
 
     content.className = 'empty';
@@ -1351,7 +1360,7 @@ function renderAppointments(appointments) {
   content.setAttribute?.('aria-busy', 'false');
 
   const rows =
-    appointments.map(rawItem => {
+    safeAppointments.map(rawItem => {
       const item = rawItem || {};
 
       const statusClass =
@@ -1487,25 +1496,16 @@ function renderAppointments(appointments) {
               return;
             }
 
-            const activeList = (typeof globalScope !== 'undefined' && Array.isArray(globalScope.currentAppointments))
-              ? globalScope.currentAppointments
-              : (Array.isArray(currentAppointments) ? currentAppointments : null);
-
-            if (!activeList) {
-              return;
-            }
-
-            const inArray = activeList.find(a => a && String(a.id || '').trim() === safeId);
-            if (!inArray || String(inArray.id || '').trim() !== safeId) {
-              currentAppointmentMap.delete(safeId);
-              return;
-            }
-
             if (!currentAppointmentMap.has(safeId)) {
               return;
             }
             const currentAppt = currentAppointmentMap.get(safeId);
             if (!currentAppt || String(currentAppt.id || '').trim() !== safeId) {
+              return;
+            }
+
+            const inSnapshot = currentAppointmentsSnapshot.find(a => a && String(a.id || '').trim() === safeId);
+            if (!inSnapshot || String(inSnapshot.id || '').trim() !== safeId) {
               return;
             }
 
@@ -1517,7 +1517,7 @@ function renderAppointments(appointments) {
                 return;
               }
 
-              if (recordCanStart !== true || currentAppt.can_start_checkout !== true) {
+              if (recordCanStart !== true || currentAppt.can_start_checkout !== true || inSnapshot.can_start_checkout !== true) {
                 return;
               }
 
