@@ -831,99 +831,8 @@ globalScope.escapeHtml = escapeHtml;
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ALLOWED_STATUS_MUTATIONS = new Set(['confirmed', 'arrived', 'in_service', 'completed', 'cancelled', 'no_show']);
 
-let _featureCheckoutEnabled = false;
-
-function openCheckoutWorkflow(appointmentId) {
-  if (!globalScope.FEATURE_CHECKOUT_ENABLED) {
-    if (typeof alert === 'function') {
-      alert(adminT('featureGatedNoticeDesc'));
-    }
-    return;
-  }
-  const safeId = String(appointmentId || '').trim();
-  if (!UUID_REGEX.test(safeId)) {
-    console.warn('Invalid appointment ID format rejected for checkout');
-    return;
-  }
-}
-
-Object.defineProperty(globalScope, 'FEATURE_CHECKOUT_ENABLED', {
-  get() {
-    return _featureCheckoutEnabled;
-  },
-  set(val) {
-    _featureCheckoutEnabled = val === true;
-    if (_featureCheckoutEnabled) {
-      globalScope.openCheckoutWorkflow = openCheckoutWorkflow;
-    } else {
-      delete globalScope.openCheckoutWorkflow;
-    }
-  },
-  configurable: true,
-  enumerable: true
-});
-globalScope.FEATURE_CHECKOUT_ENABLED = false;
-
-let actionKeySeq = 0;
-const appointmentActionRegistry = new Map();
-globalScope.appointmentActionRegistry = appointmentActionRegistry;
-
-function registerStatusAction(appointmentId, targetStatus) {
-  const key = String(++actionKeySeq);
-  appointmentActionRegistry.set(key, {
-    type: 'status',
-    appointmentId,
-    targetStatus
-  });
-  return key;
-}
-
-function registerCheckoutAction(appointmentId) {
-  const key = String(++actionKeySeq);
-  appointmentActionRegistry.set(key, {
-    type: 'checkout',
-    appointmentId
-  });
-  return key;
-}
-
-function executeAppointmentActionByKey(key) {
-  if (!key) return;
-  const action = appointmentActionRegistry.get(String(key));
-  if (!action) return;
-
-  if (action.type === 'status') {
-    if (ALLOWED_STATUS_MUTATIONS.has(action.targetStatus)) {
-      updateAppointmentStatus(action.appointmentId, action.targetStatus);
-    }
-  } else if (action.type === 'checkout') {
-    if (globalScope.FEATURE_CHECKOUT_ENABLED === true && typeof openCheckoutWorkflow === 'function') {
-      openCheckoutWorkflow(action.appointmentId);
-    }
-  }
-}
-globalScope.executeAppointmentActionByKey = executeAppointmentActionByKey;
-
-function onAppointmentActionClick(event) {
-  if (event && typeof event.preventDefault === 'function') {
-    event.preventDefault();
-  }
-  const btn = event.currentTarget || (event.target && event.target.closest ? event.target.closest('button[data-action-key]') : event.target);
-  const key = btn?.getAttribute ? btn.getAttribute('data-action-key') : (btn?.dataset?.actionKey || btn?.['data-action-key']);
-  executeAppointmentActionByKey(key);
-}
-
-function bindAppointmentActionListeners() {
-  if (typeof content?.querySelectorAll === 'function') {
-    const buttons = content.querySelectorAll('button[data-action-key]');
-    if (buttons && typeof buttons.forEach === 'function') {
-      buttons.forEach(btn => {
-        if (typeof btn?.addEventListener === 'function') {
-          btn.addEventListener('click', onAppointmentActionClick);
-        }
-      });
-    }
-  }
+if (typeof globalScope.FEATURE_CHECKOUT_ENABLED === 'undefined') {
+  globalScope.FEATURE_CHECKOUT_ENABLED = false;
 }
 
 const ALLOWED_PAYMENT_STATES = new Set([
@@ -1391,6 +1300,8 @@ function updateSummary(appointments) {
 }
 
 
+let currentRenderGeneration = 0;
+
 // 显示预约表格
 function renderAppointments(appointments) {
   if (Array.isArray(appointments)) {
@@ -1398,7 +1309,10 @@ function renderAppointments(appointments) {
     globalScope.currentAppointments = appointments;
   }
 
-  appointmentActionRegistry.clear();
+  currentRenderGeneration++;
+  const thisGeneration = currentRenderGeneration;
+  const localActionMap = new Map();
+  let localKeySeq = 0;
 
   if (
     !appointments ||
@@ -1430,25 +1344,37 @@ function renderAppointments(appointments) {
       const canCheckout = (globalScope.FEATURE_CHECKOUT_ENABLED === true) && (canStartCheckout(item) === true);
       let checkoutBtnHtml = '';
       if (canCheckout) {
-        const kCheckout = registerCheckoutAction(item.id);
+        const kCheckout = String(++localKeySeq);
+        localActionMap.set(kCheckout, {
+          type: 'checkout',
+          appointmentId: item.id,
+          can_start_checkout: item.can_start_checkout === true
+        });
         checkoutBtnHtml = `<button type="button" class="checkout-btn" data-action="checkout" data-action-key="${kCheckout}" title="${escapeHtml(adminT('goToCheckout'))}">${escapeHtml(adminT('goToCheckout'))}</button>`;
       }
 
       let statusBtnsHtml = '';
       if (item.status === 'pending') {
-        const kConfirm = registerStatusAction(item.id, 'confirmed');
-        const kCancel = registerStatusAction(item.id, 'cancelled');
+        const kConfirm = String(++localKeySeq);
+        localActionMap.set(kConfirm, { type: 'status', appointmentId: item.id, targetStatus: 'confirmed' });
+        const kCancel = String(++localKeySeq);
+        localActionMap.set(kCancel, { type: 'status', appointmentId: item.id, targetStatus: 'cancelled' });
         statusBtnsHtml = `<button type="button" data-action="status" data-action-key="${kConfirm}" data-target-status="confirmed">${escapeHtml(adminT('confirm'))}</button><button type="button" data-action="status" data-action-key="${kCancel}" data-target-status="cancelled">${escapeHtml(adminT('cancel'))}</button>`;
       } else if (item.status === 'confirmed') {
-        const kArrive = registerStatusAction(item.id, 'arrived');
-        const kNoShow = registerStatusAction(item.id, 'no_show');
-        const kCancel = registerStatusAction(item.id, 'cancelled');
+        const kArrive = String(++localKeySeq);
+        localActionMap.set(kArrive, { type: 'status', appointmentId: item.id, targetStatus: 'arrived' });
+        const kNoShow = String(++localKeySeq);
+        localActionMap.set(kNoShow, { type: 'status', appointmentId: item.id, targetStatus: 'no_show' });
+        const kCancel = String(++localKeySeq);
+        localActionMap.set(kCancel, { type: 'status', appointmentId: item.id, targetStatus: 'cancelled' });
         statusBtnsHtml = `<button type="button" data-action="status" data-action-key="${kArrive}" data-target-status="arrived">${escapeHtml(adminT('arrived'))}</button><button type="button" data-action="status" data-action-key="${kNoShow}" data-target-status="no_show">${escapeHtml(adminT('noShow'))}</button><button type="button" data-action="status" data-action-key="${kCancel}" data-target-status="cancelled">${escapeHtml(adminT('cancel'))}</button>`;
       } else if (item.status === 'arrived') {
-        const kInService = registerStatusAction(item.id, 'in_service');
+        const kInService = String(++localKeySeq);
+        localActionMap.set(kInService, { type: 'status', appointmentId: item.id, targetStatus: 'in_service' });
         statusBtnsHtml = `<button type="button" data-action="status" data-action-key="${kInService}" data-target-status="in_service">${escapeHtml(adminT('in_service'))}</button>`;
       } else if (item.status === 'in_service') {
-        const kComplete = registerStatusAction(item.id, 'completed');
+        const kComplete = String(++localKeySeq);
+        localActionMap.set(kComplete, { type: 'status', appointmentId: item.id, targetStatus: 'completed' });
         statusBtnsHtml = `<button type="button" data-action="status" data-action-key="${kComplete}" data-target-status="completed">${escapeHtml(adminT('complete'))}</button>`;
       }
 
@@ -1508,7 +1434,71 @@ function renderAppointments(appointments) {
     </table>
   `;
 
-  bindAppointmentActionListeners();
+  if (typeof content?.querySelectorAll === 'function') {
+    const buttons = content.querySelectorAll('button[data-action-key]');
+    if (buttons && typeof buttons.forEach === 'function') {
+      buttons.forEach(btn => {
+        const key = btn?.getAttribute ? btn.getAttribute('data-action-key') : (btn?.dataset?.actionKey || btn?.['data-action-key']);
+        const record = localActionMap.get(String(key));
+        if (!record) return;
+
+        if (typeof btn?.removeAttribute === 'function') {
+          btn.removeAttribute('data-action-key');
+        } else if (btn?.dataset) {
+          delete btn.dataset.actionKey;
+        }
+
+        const safeId = String(record.appointmentId || '').trim();
+        const recordType = record.type;
+        const targetStatus = record.targetStatus;
+        const recordCanStart = record.can_start_checkout === true;
+
+        if (typeof btn?.addEventListener === 'function') {
+          btn.addEventListener('click', function onActionClick(event) {
+            if (event && typeof event.preventDefault === 'function') {
+              event.preventDefault();
+            }
+
+            if (thisGeneration !== currentRenderGeneration) {
+              return;
+            }
+
+            if (!UUID_REGEX.test(safeId)) {
+              console.warn('Invalid appointment ID format rejected');
+              return;
+            }
+
+            if (recordType === 'checkout') {
+              if (globalScope.FEATURE_CHECKOUT_ENABLED !== true) {
+                if (typeof alert === 'function') {
+                  alert(adminT('featureGatedNoticeDesc'));
+                }
+                return;
+              }
+
+              const currentAppt = Array.isArray(currentAppointments)
+                ? currentAppointments.find(a => a && String(a.id || '').trim() === safeId)
+                : null;
+              const isCanStartValid = (recordCanStart === true) && (currentAppt ? currentAppt.can_start_checkout === true : true);
+              if (!isCanStartValid) {
+                return;
+              }
+
+              console.info('Checkout workflow initiated for appointment:', safeId);
+            } else if (recordType === 'status') {
+              if (!ALLOWED_STATUS_MUTATIONS.has(targetStatus)) {
+                console.warn('Invalid status mutation rejected');
+                return;
+              }
+              updateAppointmentStatus(safeId, targetStatus);
+            }
+          });
+        }
+      });
+    }
+  }
+
+  localActionMap.clear();
 }
 async function updateAppointmentStatus(id, status) {
   const safeId = String(id || '').trim();

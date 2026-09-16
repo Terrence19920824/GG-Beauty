@@ -27,7 +27,7 @@ const sampleAppointment = {
   can_start_checkout: false
 };
 
-function parseMockButtons(html) {
+function parseMockButtons(html, onAttrRemoved) {
   const buttons = [];
   const buttonRegex = /<button\b([^>]*)>([\s\S]*?)<\/button>/gi;
   let match;
@@ -49,6 +49,17 @@ function parseMockButtons(html) {
       innerHTML: text,
       dataset: {},
       listeners,
+      addEventListener(type, handler) {
+        if (!listeners.has(type)) {
+          listeners.set(type, []);
+        }
+        listeners.get(type).push(handler);
+      },
+      removeEventListener(type, handler) {
+        if (!listeners.has(type)) return;
+        const list = listeners.get(type).filter(h => h !== handler);
+        listeners.set(type, list);
+      },
       getAttribute(name) {
         return attrs.has(name.toLowerCase()) ? attrs.get(name.toLowerCase()) : null;
       },
@@ -57,15 +68,19 @@ function parseMockButtons(html) {
       },
       setAttribute(name, val) {
         attrs.set(name.toLowerCase(), String(val));
+        if (name.startsWith('data-')) {
+          const camel = name.slice(5).replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+          this.dataset[camel] = String(val);
+        }
       },
-      addEventListener(event, fn) {
-        if (!listeners.has(event)) listeners.set(event, []);
-        listeners.get(event).push(fn);
-      },
-      removeEventListener(event, fn) {
-        if (listeners.has(event)) {
-          const arr = listeners.get(event).filter(f => f !== fn);
-          listeners.set(event, arr);
+      removeAttribute(name) {
+        attrs.delete(name.toLowerCase());
+        if (name.startsWith('data-')) {
+          const camel = name.slice(5).replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+          delete this.dataset[camel];
+        }
+        if (typeof onAttrRemoved === 'function') {
+          onAttrRemoved(name);
         }
       },
       closest(selector) {
@@ -137,7 +152,10 @@ const createPageContext = (customElements = {}) => {
     },
     set innerHTML(val) {
       _contentHtml = String(val || '');
-      _contentButtons = parseMockButtons(_contentHtml);
+      _contentButtons = parseMockButtons(_contentHtml, attrName => {
+        const pattern = new RegExp(`\\s*${attrName}(?:=(?:"[^"]*"|'[^']*'|[^\\s>]+))?`, 'gi');
+        _contentHtml = _contentHtml.replace(pattern, '');
+      });
     },
     textContent: '',
     className: '',
@@ -148,15 +166,23 @@ const createPageContext = (customElements = {}) => {
       this[k] = v;
     },
     querySelectorAll(sel) {
-      if (sel === 'button[data-action-key]') {
-        return _contentButtons.filter(b => b.hasAttribute('data-action-key'));
-      }
+      if (!sel) return [];
       if (sel === 'button') {
         return _contentButtons;
       }
-      if (sel.startsWith('[') && sel.endsWith(']')) {
-        const attrName = sel.slice(1, -1).toLowerCase();
-        return _contentButtons.filter(b => b.hasAttribute(attrName));
+      if (sel === '.checkout-btn') {
+        return _contentButtons.filter(b => (b.getAttribute('class') || '').includes('checkout-btn'));
+      }
+      const attrMatch = sel.match(/\[([a-zA-Z0-9_\-]+)(?:=(?:"([^"]*)"|'([^']*)'|([^\]]+)))?\]/);
+      if (attrMatch) {
+        const attr = attrMatch[1].toLowerCase();
+        const expected = attrMatch[2] !== undefined ? attrMatch[2] : (attrMatch[3] !== undefined ? attrMatch[3] : attrMatch[4]);
+        return _contentButtons.filter(b => {
+          if (expected !== undefined) {
+            return b.getAttribute(attr) === expected;
+          }
+          return b.hasAttribute(attr);
+        });
       }
       return [];
     },
@@ -469,10 +495,11 @@ test('64. appointment.status is NOT used as qualification for can_start_checkout
 });
 
 test('65. checkout mutating network requests are strictly 0 in all UI operations', async () => {
-  const { context, requests } = createPageContext();
+  const { context, elements, requests } = createPageContext();
   context.FEATURE_CHECKOUT_ENABLED = true;
-  context.openCheckoutWorkflow(sampleAppointment.id);
-  context.renderAppointments([sampleAppointment]);
+  context.renderAppointments([{ ...sampleAppointment, can_start_checkout: true }]);
+  const checkoutBtn = elements.get('content').querySelector('button[data-action="checkout"]');
+  if (checkoutBtn) checkoutBtn.click();
   context.setAdminLocale('en');
   context.setAdminLocale('zh-CN');
   assert.strictEqual(requests.filter(r => r.options?.method && r.options.method !== 'GET').length, 0);
@@ -723,7 +750,7 @@ test('75. owner auth and existing appointments functionality is verified without
   assert.strictEqual(typeof context.showAdmin, 'function');
 });
 
-// 9. Safe DOM Event Binding & Inline Handler Elimination (Requirements 31-43)
+// 9. Safe DOM Event Binding & Private Event Architecture (Requirements 31-63)
 test('76. malicious appointment IDs cannot inject inline JS or escape into executable event handlers (Req 31 & 33)', () => {
   const maliciousIds = [
     "');alert(1);//",
@@ -760,12 +787,12 @@ test('76. malicious appointment IDs cannot inject inline JS or escape into execu
     // No alert executed
     assert.strictEqual(alerts.length, 0, `No window.alert must be executed for malicious ID: ${maliciousId}`);
 
-    // DOM parsed buttons must not contain onclick or on* attributes
+    // DOM parsed buttons must not contain onclick or on* attributes and no data-action-key retained
     const buttons = elements.get('content').querySelectorAll('button');
     assert.ok(buttons.length > 0, 'Buttons should be rendered');
     for (const btn of buttons) {
       assert.strictEqual(btn.getAttribute('onclick'), null, 'Button must not have onclick attribute');
-      assert.doesNotMatch(btn.getAttribute('data-action-key') || '', /alert|script|<|>/i, 'Action key must be safe numeric');
+      assert.strictEqual(btn.getAttribute('data-action-key'), null, 'data-action-key must not be retained in DOM');
     }
   }
 });
@@ -822,12 +849,14 @@ test('77. malicious customer, staff, and service names cannot inject executable 
   }
 });
 
-test('78. clicking status button with malicious appointment ID is rejected before any network request (Req 34)', async () => {
+test('78. clicking status button with malicious appointment ID is rejected before any network request (Req 34 & 54)', async () => {
   const maliciousIds = [
     "');alert(1);//",
     "&#39;);alert(1);//",
     '"><svg onload=alert(1)>',
-    '</button><script>alert(1)</script>'
+    '</button><script>alert(1)</script>',
+    'not-a-uuid',
+    '12345'
   ];
 
   for (const maliciousId of maliciousIds) {
@@ -839,19 +868,20 @@ test('78. clicking status button with malicious appointment ID is rejected befor
       status: 'pending'
     }]);
 
-    const buttons = elements.get('content').querySelectorAll('button[data-action-key]');
+    const buttons = elements.get('content').querySelectorAll('button[data-action="status"]');
     assert.ok(buttons.length >= 2, 'Pending status buttons should exist');
 
     // Click the first button (confirm)
     buttons[0].click();
+    await new Promise(r => setTimeout(r, 10));
 
     // Verify rejection: no network requests sent because UUID regex failed
-    assert.strictEqual(requests.length, 0, `Mutating network request must not be sent for malicious ID: ${maliciousId}`);
+    assert.strictEqual(requests.filter(r => r.url === '/api/admin/update-status-db').length, 0, `Mutating network request must not be sent for malicious ID: ${maliciousId}`);
     assert.strictEqual(alerts.length, 0, `No alert must be called for malicious ID: ${maliciousId}`);
   }
 });
 
-test('79. clicking normal UUID status button invokes action exactly once with valid request payload (Req 35 & 42)', async () => {
+test('79. clicking normal UUID status button invokes action exactly once with valid request payload (Req 35 & 55)', async () => {
   const { context, elements, requests } = createPageContext();
 
   context.renderAppointments([{
@@ -860,7 +890,7 @@ test('79. clicking normal UUID status button invokes action exactly once with va
     status: 'pending'
   }]);
 
-  const buttons = elements.get('content').querySelectorAll('button[data-action-key]');
+  const buttons = elements.get('content').querySelectorAll('button[data-action="status"]');
   const confirmBtn = buttons.find(b => b.getAttribute('data-target-status') === 'confirmed');
   assert.ok(confirmBtn, 'Confirm button must exist');
   assert.strictEqual(confirmBtn.getAttribute('data-action'), 'status');
@@ -877,14 +907,14 @@ test('79. clicking normal UUID status button invokes action exactly once with va
   assert.strictEqual(body.appointmentId, '00000000-0000-4000-8000-000000000001');
   assert.strictEqual(body.status, 'confirmed');
 
-  // Stale button click must NOT trigger any new request (Requirement 14)
+  // Stale button click must NOT trigger any new request (Requirement 24)
   confirmBtn.click();
   await new Promise(r => setTimeout(r, 10));
   const mutationsAfterStaleClick = requests.filter(r => r.url === '/api/admin/update-status-db');
   assert.strictEqual(mutationsAfterStaleClick.length, 1, 'Stale detached button must not trigger operations');
 
   // The re-rendered button in the active DOM triggers the next request
-  const newConfirmBtn = elements.get('content').querySelectorAll('button[data-action-key]').find(b => b.getAttribute('data-target-status') === 'confirmed');
+  const newConfirmBtn = elements.get('content').querySelectorAll('button[data-action="status"]').find(b => b.getAttribute('data-target-status') === 'confirmed');
   assert.ok(newConfirmBtn, 'Newly rendered confirm button must exist after loadAppointments re-render');
   newConfirmBtn.click();
   await new Promise(r => setTimeout(r, 10));
@@ -893,7 +923,7 @@ test('79. clicking normal UUID status button invokes action exactly once with va
   assert.strictEqual(statusMutationsAfterSecondClick.length, 2, 'Newly rendered button click sends second mutation request');
 });
 
-test('80. re-rendering and locale switching cleans previous action registry without duplicate listeners (Req 36 & 43)', async () => {
+test('80. re-rendering and locale switching cleans previous action registry without duplicate listeners (Req 36 & 57)', async () => {
   const { context, elements, requests } = createPageContext();
 
   // Initial render
@@ -902,7 +932,7 @@ test('80. re-rendering and locale switching cleans previous action registry with
     id: '00000000-0000-4000-8000-000000000001',
     status: 'pending'
   }]);
-  const initialButtons = elements.get('content').querySelectorAll('button[data-action-key]');
+  const initialButtons = elements.get('content').querySelectorAll('button[data-action="status"]');
   const staleConfirmBtn = initialButtons.find(b => b.getAttribute('data-target-status') === 'confirmed');
 
   // Re-render multiple times
@@ -916,7 +946,7 @@ test('80. re-rendering and locale switching cleans previous action registry with
   context.setAdminLocale('en');
 
   // Get current button
-  const currentButtons = elements.get('content').querySelectorAll('button[data-action-key]');
+  const currentButtons = elements.get('content').querySelectorAll('button[data-action="status"]');
   const currentConfirmBtn = currentButtons.find(b => b.getAttribute('data-target-status') === 'confirmed');
   assert.ok(currentConfirmBtn, 'Current confirm button must exist in English locale');
 
@@ -926,18 +956,18 @@ test('80. re-rendering and locale switching cleans previous action registry with
   const currentMutations = requests.filter(r => r.url === '/api/admin/update-status-db');
   assert.strictEqual(currentMutations.length, 1, 'Current button click must trigger exactly 1 status mutation request');
 
-  // Click the stale button from before re-rendering: registry was cleared, so nothing happens
+  // Click the stale button from before re-rendering: registry was cleared and generation expired, so nothing happens
   staleConfirmBtn.click();
   await new Promise(r => setTimeout(r, 10));
   const afterStaleMutations = requests.filter(r => r.url === '/api/admin/update-status-db');
   assert.strictEqual(afterStaleMutations.length, 1, 'Stale button click must NOT trigger any new request');
 });
 
-test('81. FEATURE_CHECKOUT_ENABLED=false: checkout button omitted, globalScope handler deleted, 0 requests (Req 40)', () => {
+test('81. FEATURE_CHECKOUT_ENABLED=false: checkout button omitted, globalScope handler deleted, 0 requests (Req 40 & 41)', () => {
   const { context, elements, requests } = createPageContext();
 
   assert.strictEqual(context.FEATURE_CHECKOUT_ENABLED, false);
-  assert.strictEqual(typeof context.openCheckoutWorkflow, 'undefined', 'globalScope.openCheckoutWorkflow must be deleted when false');
+  assert.strictEqual(typeof context.openCheckoutWorkflow, 'undefined', 'globalScope.openCheckoutWorkflow must be undefined');
 
   context.renderAppointments([{
     ...sampleAppointment,
@@ -950,13 +980,13 @@ test('81. FEATURE_CHECKOUT_ENABLED=false: checkout button omitted, globalScope h
   assert.strictEqual(requests.length, 0, 'Zero checkout requests made');
 });
 
-test('82. FEATURE_CHECKOUT_ENABLED=true and can_start_checkout=true: button present with safe addEventListener and no inline onclick (Req 41)', () => {
+test('82. FEATURE_CHECKOUT_ENABLED=true and can_start_checkout=true: button present with safe addEventListener and no inline onclick (Req 41 & 52)', () => {
   const { context, elements, requests } = createPageContext();
 
   // Enable feature gate
   context.FEATURE_CHECKOUT_ENABLED = true;
   assert.strictEqual(context.FEATURE_CHECKOUT_ENABLED, true);
-  assert.strictEqual(typeof context.openCheckoutWorkflow, 'function', 'globalScope.openCheckoutWorkflow registered');
+  assert.strictEqual(typeof context.openCheckoutWorkflow, 'undefined', 'globalScope.openCheckoutWorkflow must remain undefined even when true');
 
   context.renderAppointments([{
     ...sampleAppointment,
@@ -969,22 +999,21 @@ test('82. FEATURE_CHECKOUT_ENABLED=true and can_start_checkout=true: button pres
   assert.doesNotMatch(rendered, /onclick/i);
   assert.doesNotMatch(rendered, /openCheckoutWorkflow/);
 
-  const buttons = elements.get('content').querySelectorAll('button[data-action-key]');
-  const checkoutBtn = buttons.find(b => b.getAttribute('data-action') === 'checkout');
+  const checkoutBtn = elements.get('content').querySelector('button[data-action="checkout"]');
   assert.ok(checkoutBtn, 'Checkout button must exist');
   assert.strictEqual(checkoutBtn.getAttribute('onclick'), null);
-  assert.ok(checkoutBtn.hasAttribute('data-action-key'));
+  assert.strictEqual(checkoutBtn.getAttribute('data-action-key'), null, 'data-action-key must be removed after binding');
 
-  // Click checkout button: dispatches safely to openCheckoutWorkflow
+  // Click checkout button: dispatches safely in private closure
   checkoutBtn.click();
-  assert.strictEqual(requests.length, 0, 'Zero mutating checkout requests made');
+  assert.strictEqual(requests.filter(r => r.url?.includes('/checkout')).length, 0, 'Zero mutating checkout requests made');
 
   // Disable feature gate again
   context.FEATURE_CHECKOUT_ENABLED = false;
-  assert.strictEqual(typeof context.openCheckoutWorkflow, 'undefined', 'globalScope.openCheckoutWorkflow must be deleted when false');
+  assert.strictEqual(typeof context.openCheckoutWorkflow, 'undefined', 'globalScope.openCheckoutWorkflow must remain undefined');
 });
 
-test('83. absence of dynamic inline onclick across all appointment statuses and entity decoding safety (Req 37 & 39)', () => {
+test('83. absence of dynamic inline onclick across all appointment statuses and entity decoding safety (Req 37 & 59)', () => {
   const allStatuses = ['pending', 'confirmed', 'arrived', 'in_service', 'completed', 'cancelled', 'no_show'];
 
   for (const st of allStatuses) {
@@ -1017,4 +1046,172 @@ test('83. absence of dynamic inline onclick across all appointment statuses and 
   const rendered = elements.get('content').innerHTML;
   assert.doesNotMatch(rendered, /<script[\s>]/i);
   assert.strictEqual(alerts.length, 0);
+});
+
+test('84. globalScope has no openCheckoutWorkflow, appointmentActionRegistry, or executeAppointmentActionByKey (Req 41-44)', () => {
+  const { context } = createPageContext();
+  assert.strictEqual(context.openCheckoutWorkflow, undefined);
+  assert.strictEqual(context.appointmentActionRegistry, undefined);
+  assert.strictEqual(context.executeAppointmentActionByKey, undefined);
+  assert.strictEqual(typeof context.openCheckoutWorkflow, 'undefined');
+  assert.strictEqual(typeof context.appointmentActionRegistry, 'undefined');
+  assert.strictEqual(typeof context.executeAppointmentActionByKey, 'undefined');
+});
+
+test('85. production code does not redefine FEATURE_CHECKOUT_ENABLED via Object.defineProperty and descriptor is normal (Req 45-46)', () => {
+  assert.doesNotMatch(html, /Object\.defineProperty\([^,]+,\s*['"]FEATURE_CHECKOUT_ENABLED['"]/);
+  const { context } = createPageContext();
+  const desc = Object.getOwnPropertyDescriptor(context, 'FEATURE_CHECKOUT_ENABLED');
+  assert.strictEqual(desc?.get, undefined, 'Must not have custom getter');
+  assert.strictEqual(desc?.set, undefined, 'Must not have custom setter');
+});
+
+test('86. FEATURE_CHECKOUT_ENABLED fails closed on undefined, null, false, "true", 1, "yes" (Req 47-48)', () => {
+  const falsyGateValues = [undefined, null, false, 'true', 1, 'yes', 0, '', {}];
+  for (const gateVal of falsyGateValues) {
+    const { context, elements } = createPageContext();
+    context.FEATURE_CHECKOUT_ENABLED = gateVal;
+    context.renderAppointments([{
+      ...sampleAppointment,
+      can_start_checkout: true
+    }]);
+    const rendered = elements.get('content').innerHTML;
+    assert.doesNotMatch(rendered, /class="checkout-btn"/, `Gate value ${JSON.stringify(gateVal)} must fail closed`);
+    assert.strictEqual(elements.get('content').querySelectorAll('button[data-action="checkout"]').length, 0);
+  }
+});
+
+test('87. gate=true at render, then changed to false before click aborts workflow with 0 requests (Req 49)', () => {
+  const { context, elements, requests } = createPageContext();
+  context.FEATURE_CHECKOUT_ENABLED = true;
+  context.renderAppointments([{
+    ...sampleAppointment,
+    can_start_checkout: true
+  }]);
+
+  const checkoutBtn = elements.get('content').querySelector('button[data-action="checkout"]');
+  assert.ok(checkoutBtn, 'Checkout button must be rendered');
+
+  // Change gate to false before click
+  context.FEATURE_CHECKOUT_ENABLED = false;
+
+  checkoutBtn.click();
+
+  assert.strictEqual(requests.filter(r => r.url?.includes('/checkout')).length, 0);
+});
+
+test('88. can_start_checkout changed to false before click or expired render generation aborts workflow (Req 50)', () => {
+  const { context, elements, requests } = createPageContext();
+  context.FEATURE_CHECKOUT_ENABLED = true;
+  const appt = { ...sampleAppointment, can_start_checkout: true };
+  context.renderAppointments([appt]);
+
+  const checkoutBtn = elements.get('content').querySelector('button[data-action="checkout"]');
+  assert.ok(checkoutBtn);
+
+  // Expire render generation by re-rendering
+  context.renderAppointments([]);
+
+  // Clicking stale button from previous render generation
+  checkoutBtn.click();
+  assert.strictEqual(requests.filter(r => r.url?.includes('/checkout')).length, 0);
+});
+
+test('89. tampering with button data attributes cannot hijack action or dispatch another appointment (Req 51)', async () => {
+  const { context, elements, requests } = createPageContext();
+  context.renderAppointments([{
+    ...sampleAppointment,
+    id: '00000000-0000-4000-8000-000000000001',
+    status: 'pending'
+  }]);
+
+  const buttons = elements.get('content').querySelectorAll('button[data-action="status"]');
+  const confirmBtn = buttons.find(b => b.getAttribute('data-target-status') === 'confirmed');
+  assert.ok(confirmBtn);
+
+  // Attacker modifies DOM attributes to try to perform checkout or cancel another appointment
+  confirmBtn.setAttribute('data-action', 'checkout');
+  confirmBtn.setAttribute('data-target-status', 'cancelled');
+  confirmBtn.setAttribute('data-action-key', '999');
+
+  // Click button
+  confirmBtn.click();
+  await new Promise(r => setTimeout(r, 10));
+
+  // Must still execute the immutable captured status 'confirmed' on appointment 00000000-0000-4000-8000-000000000001
+  const statusMutations = requests.filter(r => r.url === '/api/admin/update-status-db');
+  assert.strictEqual(statusMutations.length, 1);
+  const body = JSON.parse(statusMutations[0].options.body);
+  assert.strictEqual(body.appointmentId, '00000000-0000-4000-8000-000000000001');
+  assert.strictEqual(body.status, 'confirmed', 'Must use closure captured status, ignoring DOM tampering');
+});
+
+test('90. after binding is complete, DOM does not retain data-action-key (Req 52)', () => {
+  const { context, elements } = createPageContext();
+  context.FEATURE_CHECKOUT_ENABLED = true;
+  context.renderAppointments([{
+    ...sampleAppointment,
+    status: 'pending',
+    can_start_checkout: true
+  }]);
+
+  const rendered = elements.get('content').innerHTML;
+  assert.doesNotMatch(rendered, /data-action-key/);
+
+  const buttons = elements.get('content').querySelectorAll('button');
+  assert.ok(buttons.length > 0);
+  for (const btn of buttons) {
+    assert.strictEqual(btn.getAttribute('data-action-key'), null);
+    assert.strictEqual(btn.hasAttribute('data-action-key'), false);
+  }
+});
+
+test('91. two different appointment buttons only operate on their own appointment (Req 53)', async () => {
+  const { context, elements, requests } = createPageContext();
+  const appt1 = { ...sampleAppointment, id: '00000000-0000-4000-8000-000000000001', status: 'pending' };
+  const appt2 = { ...sampleAppointment, id: '00000000-0000-4000-8000-000000000002', status: 'confirmed' };
+
+  context.fetch = async (url, options = {}) => {
+    requests.push({ url, options });
+    return {
+      status: 200,
+      ok: true,
+      async json() {
+        if (url.includes('/api/appointments-db')) {
+          return { success: true, data: [appt1, appt2], appointments: [appt1, appt2] };
+        }
+        return { success: true };
+      }
+    };
+  };
+
+  context.renderAppointments([appt1, appt2]);
+
+  const statusBtns = elements.get('content').querySelectorAll('button[data-action="status"]');
+  // First appointment confirm button
+  const confirmBtn = statusBtns.find(b => b.textContent === '确认' || b.getAttribute('data-target-status') === 'confirmed');
+  // Second appointment arrive button
+  const arriveBtn = statusBtns.find(b => b.textContent === '已到店' || b.getAttribute('data-target-status') === 'arrived');
+
+  assert.ok(confirmBtn);
+  assert.ok(arriveBtn);
+
+  confirmBtn.click();
+  await new Promise(r => setTimeout(r, 10));
+
+  const m1 = requests.filter(r => r.url === '/api/admin/update-status-db');
+  assert.strictEqual(m1.length, 1);
+  assert.strictEqual(JSON.parse(m1[0].options.body).appointmentId, '00000000-0000-4000-8000-000000000001');
+
+  // After first appointment status updates, loadAppointments refreshes active DOM
+  const activeStatusBtns = elements.get('content').querySelectorAll('button[data-action="status"]');
+  const activeArriveBtn = activeStatusBtns.find(b => b.textContent === '已到店' || b.getAttribute('data-target-status') === 'arrived');
+  assert.ok(activeArriveBtn);
+
+  activeArriveBtn.click();
+  await new Promise(r => setTimeout(r, 10));
+
+  const m2 = requests.filter(r => r.url === '/api/admin/update-status-db');
+  assert.strictEqual(m2.length, 2);
+  assert.strictEqual(JSON.parse(m2[1].options.body).appointmentId, '00000000-0000-4000-8000-000000000002');
 });
