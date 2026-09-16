@@ -197,6 +197,8 @@ const createPageContext = (customElements = {}) => {
   const alerts = [];
   let initialize;
 
+  let currentApiData = [sampleAppointment];
+
   const context = {
     console,
     Date,
@@ -220,7 +222,7 @@ const createPageContext = (customElements = {}) => {
         ok: true,
         async json() {
           if (url.includes('/api/appointments-db')) {
-            return { success: true, data: [sampleAppointment], appointments: [sampleAppointment] };
+            return { success: true, data: currentApiData, appointments: currentApiData };
           }
           return { success: true };
         }
@@ -245,7 +247,13 @@ const createPageContext = (customElements = {}) => {
     filename: 'public/admin.html'
   });
 
-  return { context, elements, alerts, requests };
+  const loadAppointments = async (appts) => {
+    currentApiData = appts;
+    await context.loadAppointments();
+    requests.length = 0;
+  };
+
+  return { context, elements, alerts, requests, loadAppointments, setApiData: (appts) => { currentApiData = appts; } };
 };
 
 // 1. Front Desk Stepper Foundation Tests
@@ -271,9 +279,9 @@ test('front desk workflow bar is isolated from appointment list content containe
 });
 
 // 2. Authoritative Payment Source & Status Tests (Requirements 53-59)
-test('53. checkout.payment_state="paid" and reconciliation_valid=true displays Paid badge', () => {
-  const { context, elements } = createPageContext();
-  context.renderAppointments([{
+test('53. checkout.payment_state="paid" and reconciliation_valid=true displays Paid badge', async () => {
+  const { context, elements, loadAppointments } = createPageContext();
+  await loadAppointments([{
     ...sampleAppointment,
     checkout: {
       payment_state: 'paid',
@@ -287,13 +295,13 @@ test('53. checkout.payment_state="paid" and reconciliation_valid=true displays P
   assert.match(rendered, />已结账<\/span>/);
 });
 
-test('54. reconciliation_valid non-strict-true values strictly reject Paid badge (fail closed)', () => {
+test('54. reconciliation_valid non-strict-true values strictly reject Paid badge (fail closed)', async () => {
   const invalidValues = [undefined, null, false, 0, 1, 'true', 'false', {}, '1', NaN];
   for (const val of invalidValues) {
-    const { context, elements } = createPageContext();
+    const { context, elements, loadAppointments } = createPageContext();
     const checkout = { payment_state: 'paid' };
     if (val !== undefined) checkout.reconciliation_valid = val;
-    context.renderAppointments([{
+    await loadAppointments([{
       ...sampleAppointment,
       checkout
     }]);
@@ -304,11 +312,11 @@ test('54. reconciliation_valid non-strict-true values strictly reject Paid badge
   }
 });
 
-test('55. disallowed and unknown payment_state values fail closed', () => {
+test('55. disallowed and unknown payment_state values fail closed', async () => {
   const rejectedStates = ['draft', 'voided', 'awaiting_checkout', 'unknown', 'PAID', 'Paid', 'completed', 'pending', '', 'other'];
   for (const st of rejectedStates) {
-    const { context, elements } = createPageContext();
-    context.renderAppointments([{
+    const { context, elements, loadAppointments } = createPageContext();
+    await loadAppointments([{
       ...sampleAppointment,
       checkout: {
         payment_state: st,
@@ -322,8 +330,8 @@ test('55. disallowed and unknown payment_state values fail closed', () => {
   }
 
   for (const st of [null, undefined]) {
-    const { context, elements } = createPageContext();
-    context.renderAppointments([{
+    const { context, elements, loadAppointments } = createPageContext();
+    await loadAppointments([{
       ...sampleAppointment,
       checkout: {
         payment_state: st,
@@ -336,9 +344,9 @@ test('55. disallowed and unknown payment_state values fail closed', () => {
   }
 });
 
-test('56. legacy flat payment_status="paid" does NOT display Paid badge', () => {
-  const { context, elements } = createPageContext();
-  context.renderAppointments([{
+test('56. legacy flat payment_status="paid" does NOT display Paid badge', async () => {
+  const { context, elements, loadAppointments } = createPageContext();
+  await loadAppointments([{
     ...sampleAppointment,
     checkout: null,
     payment_status: 'paid',
@@ -352,9 +360,9 @@ test('56. legacy flat payment_status="paid" does NOT display Paid badge', () => 
   assert.strictEqual(context.resolveCheckoutFinancialState({ checkout: null, payment_status: 'paid' }), null);
 });
 
-test('57. appointment.status="completed" and checkout=null does NOT display Paid (Completed != Paid)', () => {
-  const { context, elements } = createPageContext();
-  context.renderAppointments([{
+test('57. appointment.status="completed" and checkout=null does NOT display Paid (Completed != Paid)', async () => {
+  const { context, elements, loadAppointments } = createPageContext();
+  await loadAppointments([{
     ...sampleAppointment,
     status: 'completed',
     checkout: null
@@ -367,11 +375,11 @@ test('57. appointment.status="completed" and checkout=null does NOT display Paid
   assert.strictEqual(context.resolveCheckoutFinancialState({ status: 'completed', checkout: null }), null);
 });
 
-test('58. appointment.status not completed still displays Paid badge when authoritative checkout is valid', () => {
+test('58. appointment.status not completed still displays Paid badge when authoritative checkout is valid', async () => {
   const statuses = ['pending', 'confirmed', 'arrived', 'in_service', 'cancelled', 'no_show'];
   for (const st of statuses) {
-    const { context, elements } = createPageContext();
-    context.renderAppointments([{
+    const { context, elements, loadAppointments } = createPageContext();
+    await loadAppointments([{
       ...sampleAppointment,
       status: st,
       checkout: {
@@ -385,12 +393,12 @@ test('58. appointment.status not completed still displays Paid badge when author
   }
 });
 
-test('59. pending, cancelled, and no_show appointments do not hide valid authoritative refund or void badges', () => {
+test('59. pending, cancelled, and no_show appointments do not hide valid authoritative refund or void badges', async () => {
   for (const apptStatus of ['pending', 'cancelled', 'no_show']) {
     // refunded
     {
-      const { context, elements } = createPageContext();
-      context.renderAppointments([{
+      const { context, elements, loadAppointments } = createPageContext();
+      await loadAppointments([{
         ...sampleAppointment,
         status: apptStatus,
         checkout: { payment_state: 'refunded', reconciliation_valid: true }
@@ -401,8 +409,8 @@ test('59. pending, cancelled, and no_show appointments do not hide valid authori
     }
     // partially_refunded
     {
-      const { context, elements } = createPageContext();
-      context.renderAppointments([{
+      const { context, elements, loadAppointments } = createPageContext();
+      await loadAppointments([{
         ...sampleAppointment,
         status: apptStatus,
         checkout: { payment_state: 'partially_refunded', reconciliation_valid: true }
@@ -413,8 +421,8 @@ test('59. pending, cancelled, and no_show appointments do not hide valid authori
     }
     // void
     {
-      const { context, elements } = createPageContext();
-      context.renderAppointments([{
+      const { context, elements, loadAppointments } = createPageContext();
+      await loadAppointments([{
         ...sampleAppointment,
         status: apptStatus,
         checkout: { payment_state: 'void', reconciliation_valid: true }
@@ -436,10 +444,10 @@ test('60. can_start_checkout helper strictly requires boolean true', () => {
   assert.strictEqual(context.canStartCheckout({ can_start_checkout: true }), true);
 });
 
-test('61. FEATURE_CHECKOUT_ENABLED=false completely omits checkout button', () => {
-  const { context, elements } = createPageContext();
+test('61. FEATURE_CHECKOUT_ENABLED=false completely omits checkout button', async () => {
+  const { context, elements, loadAppointments } = createPageContext();
   assert.strictEqual(context.FEATURE_CHECKOUT_ENABLED, false);
-  context.renderAppointments([{
+  await loadAppointments([{
     ...sampleAppointment,
     status: 'in_service',
     can_start_checkout: true
@@ -450,10 +458,10 @@ test('61. FEATURE_CHECKOUT_ENABLED=false completely omits checkout button', () =
   assert.doesNotMatch(rendered, /data-feature-gated/);
 });
 
-test('62. gate=true but can_start_checkout=false omits checkout button', () => {
-  const { context, elements } = createPageContext();
+test('62. gate=true but can_start_checkout=false omits checkout button', async () => {
+  const { context, elements, loadAppointments } = createPageContext();
   context.FEATURE_CHECKOUT_ENABLED = true;
-  context.renderAppointments([{
+  await loadAppointments([{
     ...sampleAppointment,
     status: 'in_service',
     can_start_checkout: false
@@ -463,10 +471,10 @@ test('62. gate=true but can_start_checkout=false omits checkout button', () => {
   assert.doesNotMatch(rendered, /openCheckoutWorkflow/);
 });
 
-test('63. gate=true and can_start_checkout=true renders checkout button with safe event binding', () => {
-  const { context, elements } = createPageContext();
+test('63. gate=true and can_start_checkout=true renders checkout button with safe event binding', async () => {
+  const { context, elements, loadAppointments } = createPageContext();
   context.FEATURE_CHECKOUT_ENABLED = true;
-  context.renderAppointments([{
+  await loadAppointments([{
     ...sampleAppointment,
     status: 'in_service',
     can_start_checkout: true
@@ -479,12 +487,12 @@ test('63. gate=true and can_start_checkout=true renders checkout button with saf
   assert.match(rendered, />去结账<\/button>/);
 });
 
-test('64. appointment.status is NOT used as qualification for can_start_checkout', () => {
-  const { context, elements } = createPageContext();
+test('64. appointment.status is NOT used as qualification for can_start_checkout', async () => {
+  const { context, elements, loadAppointments } = createPageContext();
   context.FEATURE_CHECKOUT_ENABLED = true;
   const allStatuses = ['pending', 'confirmed', 'arrived', 'in_service', 'completed'];
   for (const st of allStatuses) {
-    context.renderAppointments([{
+    await loadAppointments([{
       ...sampleAppointment,
       status: st,
       can_start_checkout: true
@@ -495,9 +503,9 @@ test('64. appointment.status is NOT used as qualification for can_start_checkout
 });
 
 test('65. checkout mutating network requests are strictly 0 in all UI operations', async () => {
-  const { context, elements, requests } = createPageContext();
+  const { context, elements, requests, loadAppointments } = createPageContext();
   context.FEATURE_CHECKOUT_ENABLED = true;
-  context.renderAppointments([{ ...sampleAppointment, can_start_checkout: true }]);
+  await loadAppointments([{ ...sampleAppointment, can_start_checkout: true }]);
   const checkoutBtn = elements.get('content').querySelector('button[data-action="checkout"]');
   if (checkoutBtn) checkoutBtn.click();
   context.setAdminLocale('en');
@@ -507,9 +515,9 @@ test('65. checkout mutating network requests are strictly 0 in all UI operations
 });
 
 // 4. items[] and Legacy Fallback (Requirements 66-69)
-test('66. items=[] displays empty service and staff notices, never falling back to legacy fields', () => {
-  const { context, elements } = createPageContext();
-  context.renderAppointments([{
+test('66. items=[] displays empty service and staff notices, never falling back to legacy fields', async () => {
+  const { context, elements, loadAppointments } = createPageContext();
+  await loadAppointments([{
     ...sampleAppointment,
     items: [],
     service_name: 'Legacy Hair Cut',
@@ -522,9 +530,9 @@ test('66. items=[] displays empty service and staff notices, never falling back 
   assert.match(rendered, /暂无员工/);
 });
 
-test('67. items missing, null, or non-array falls back to legacy service_name and staff_name', () => {
+test('67. items missing, null, or non-array falls back to legacy service_name and staff_name', async () => {
   for (const val of [undefined, null, 'not-an-array', 123]) {
-    const { context, elements } = createPageContext();
+    const { context, elements, loadAppointments } = createPageContext();
     const appt = {
       ...sampleAppointment,
       service_name: 'Legacy Facial',
@@ -532,7 +540,7 @@ test('67. items missing, null, or non-array falls back to legacy service_name an
     };
     if (val !== undefined) appt.items = val;
     else delete appt.items;
-    context.renderAppointments([appt]);
+    await loadAppointments([appt]);
     const rendered = elements.get('content').innerHTML;
     assert.match(rendered, /Legacy Facial/);
     assert.match(rendered, /Legacy Alice/);
@@ -540,8 +548,8 @@ test('67. items missing, null, or non-array falls back to legacy service_name an
   }
 });
 
-test('68. identical sequence_no items are stably sorted by item ID', () => {
-  const { context, elements } = createPageContext();
+test('68. identical sequence_no items are stably sorted by item ID', async () => {
+  const { context, elements, loadAppointments } = createPageContext();
   const appt = {
     ...sampleAppointment,
     items: [
@@ -550,7 +558,7 @@ test('68. identical sequence_no items are stably sorted by item ID', () => {
       { item_id: 'm-item', sequence_no: 1, service_name_snapshot: 'M Service' }
     ]
   };
-  context.renderAppointments([appt]);
+  await loadAppointments([appt]);
   const rendered = elements.get('content').innerHTML;
   const posA = rendered.indexOf('A Service');
   const posM = rendered.indexOf('M Service');
@@ -562,8 +570,8 @@ test('68. identical sequence_no items are stably sorted by item ID', () => {
   assert.strictEqual(appt.items[2].item_id, 'm-item');
 });
 
-test('69. multi-items display sequences and primary/assistant staff roles properly', () => {
-  const { context, elements } = createPageContext();
+test('69. multi-items display sequences and primary/assistant staff roles properly', async () => {
+  const { context, elements, loadAppointments } = createPageContext();
   const appt = {
     ...sampleAppointment,
     items: [
@@ -585,7 +593,7 @@ test('69. multi-items display sequences and primary/assistant staff roles proper
     ]
   };
   // Chinese
-  context.renderAppointments([appt]);
+  await loadAppointments([appt]);
   let rendered = elements.get('content').innerHTML;
   assert.match(rendered, /Hair Cut/);
   assert.match(rendered, /Hair Coloring/);
@@ -600,7 +608,7 @@ test('69. multi-items display sequences and primary/assistant staff roles proper
 });
 
 // 5. DOM & XSS Security (Requirement 70)
-test('70. malicious HTML, script, and attribute payloads cannot form executable DOM elements or attributes', () => {
+test('70. malicious HTML, script, and attribute payloads cannot form executable DOM elements or attributes', async () => {
   const maliciousPayloads = [
     '<img src=x onerror=alert(1)>',
     '</span><script>alert(1)</script>',
@@ -610,9 +618,9 @@ test('70. malicious HTML, script, and attribute payloads cannot form executable 
   ];
 
   for (const payload of maliciousPayloads) {
-    const { context, elements } = createPageContext();
+    const { context, elements, loadAppointments } = createPageContext();
     context.FEATURE_CHECKOUT_ENABLED = true;
-    context.renderAppointments([{
+    await loadAppointments([{
       id: payload,
       start_at: '2030-01-01T02:00:00Z',
       customer_name: payload,
@@ -673,16 +681,16 @@ test('71. 44px touch target rules for buttons and touch targets in base CSS and 
 test('72. aria-busy is correctly set on loading container and updated on state changes', async () => {
   assert.match(html, /<div\s+id="content"\s+class="loading"\s+aria-busy="true"/);
 
-  const { context, elements } = createPageContext();
+  const { context, elements, loadAppointments } = createPageContext();
   const contentEl = elements.get('content');
   const setAttributeCalls = [];
   contentEl.setAttribute = (k, v) => setAttributeCalls.push({ k, v });
 
-  context.renderAppointments([{ ...sampleAppointment }]);
+  await loadAppointments([{ ...sampleAppointment }]);
   assert.ok(setAttributeCalls.some(c => c.k === 'aria-busy' && c.v === 'false'), 'renderAppointments must set aria-busy="false"');
 
   setAttributeCalls.length = 0;
-  context.renderAppointments([]);
+  await loadAppointments([]);
   assert.ok(setAttributeCalls.some(c => c.k === 'aria-busy' && c.v === 'false'), 'Empty appointments must set aria-busy="false"');
 
   setAttributeCalls.length = 0;
@@ -697,13 +705,13 @@ test('73. prefers-reduced-motion media query is present and overrides animations
 });
 
 // 7. Single-Language & Translations (Requirement 74)
-test('74. single-language mode: pure Chinese in zh-CN and pure English in en with no bilingual slashes', () => {
-  const { context, elements } = createPageContext();
+test('74. single-language mode: pure Chinese in zh-CN and pure English in en with no bilingual slashes', async () => {
+  const { context, elements, loadAppointments } = createPageContext();
   context.FEATURE_CHECKOUT_ENABLED = true;
 
   // zh-CN
   context.setAdminLocale('zh-CN');
-  context.renderAppointments([{
+  await loadAppointments([{
     ...sampleAppointment,
     can_start_checkout: true,
     checkout: { payment_state: 'paid', reconciliation_valid: true }
@@ -721,7 +729,7 @@ test('74. single-language mode: pure Chinese in zh-CN and pure English in en wit
 
   // en
   context.setAdminLocale('en');
-  context.renderAppointments([{
+  await loadAppointments([{
     ...sampleAppointment,
     can_start_checkout: true,
     checkout: { payment_state: 'paid', reconciliation_valid: true }
@@ -751,7 +759,7 @@ test('75. owner auth and existing appointments functionality is verified without
 });
 
 // 9. Safe DOM Event Binding & Private Event Architecture (Requirements 31-63)
-test('76. malicious appointment IDs cannot inject inline JS or escape into executable event handlers (Req 31 & 33)', () => {
+test('76. malicious appointment IDs cannot inject inline JS or escape into executable event handlers (Req 31 & 33)', async () => {
   const maliciousIds = [
     "');alert(1);//",
     "&#39;);alert(1);//",
@@ -761,10 +769,10 @@ test('76. malicious appointment IDs cannot inject inline JS or escape into execu
   ];
 
   for (const maliciousId of maliciousIds) {
-    const { context, elements, alerts } = createPageContext();
+    const { context, elements, alerts, loadAppointments } = createPageContext();
     context.FEATURE_CHECKOUT_ENABLED = true;
 
-    context.renderAppointments([{
+    await loadAppointments([{
       ...sampleAppointment,
       id: maliciousId,
       status: 'pending',
@@ -797,7 +805,7 @@ test('76. malicious appointment IDs cannot inject inline JS or escape into execu
   }
 });
 
-test('77. malicious customer, staff, and service names cannot inject executable tags or event attributes (Req 32 & 33)', () => {
+test('77. malicious customer, staff, and service names cannot inject executable tags or event attributes (Req 32 & 33)', async () => {
   const maliciousPayloads = [
     '<img src=x onerror=alert(1)>',
     '</span><script>alert(1)</script>',
@@ -805,10 +813,10 @@ test('77. malicious customer, staff, and service names cannot inject executable 
   ];
 
   for (const payload of maliciousPayloads) {
-    const { context, elements, alerts } = createPageContext();
+    const { context, elements, alerts, loadAppointments } = createPageContext();
     context.FEATURE_CHECKOUT_ENABLED = true;
 
-    context.renderAppointments([{
+    await loadAppointments([{
       ...sampleAppointment,
       customer_name: payload,
       staff_name: payload,
@@ -860,9 +868,9 @@ test('78. clicking status button with malicious appointment ID is rejected befor
   ];
 
   for (const maliciousId of maliciousIds) {
-    const { context, elements, alerts, requests } = createPageContext();
+    const { context, elements, alerts, requests, loadAppointments } = createPageContext();
 
-    context.renderAppointments([{
+    await loadAppointments([{
       ...sampleAppointment,
       id: maliciousId,
       status: 'pending'
@@ -882,9 +890,9 @@ test('78. clicking status button with malicious appointment ID is rejected befor
 });
 
 test('79. clicking normal UUID status button invokes action exactly once with valid request payload (Req 35 & 55)', async () => {
-  const { context, elements, requests } = createPageContext();
+  const { context, elements, requests, loadAppointments } = createPageContext();
 
-  context.renderAppointments([{
+  await loadAppointments([{
     ...sampleAppointment,
     id: '00000000-0000-4000-8000-000000000001',
     status: 'pending'
@@ -924,10 +932,10 @@ test('79. clicking normal UUID status button invokes action exactly once with va
 });
 
 test('80. re-rendering and locale switching cleans previous action registry without duplicate listeners (Req 36 & 57)', async () => {
-  const { context, elements, requests } = createPageContext();
+  const { context, elements, requests, loadAppointments } = createPageContext();
 
   // Initial render
-  context.renderAppointments([{
+  await loadAppointments([{
     ...sampleAppointment,
     id: '00000000-0000-4000-8000-000000000001',
     status: 'pending'
@@ -936,7 +944,7 @@ test('80. re-rendering and locale switching cleans previous action registry with
   const staleConfirmBtn = initialButtons.find(b => b.getAttribute('data-target-status') === 'confirmed');
 
   // Re-render multiple times
-  context.renderAppointments([{
+  await loadAppointments([{
     ...sampleAppointment,
     id: '00000000-0000-4000-8000-000000000001',
     status: 'pending'
@@ -963,13 +971,13 @@ test('80. re-rendering and locale switching cleans previous action registry with
   assert.strictEqual(afterStaleMutations.length, 1, 'Stale button click must NOT trigger any new request');
 });
 
-test('81. FEATURE_CHECKOUT_ENABLED=false: checkout button omitted, globalScope handler deleted, 0 requests (Req 40 & 41)', () => {
-  const { context, elements, requests } = createPageContext();
+test('81. FEATURE_CHECKOUT_ENABLED=false: checkout button omitted, globalScope handler deleted, 0 requests (Req 40 & 41)', async () => {
+  const { context, elements, requests, loadAppointments } = createPageContext();
 
   assert.strictEqual(context.FEATURE_CHECKOUT_ENABLED, false);
   assert.strictEqual(typeof context.openCheckoutWorkflow, 'undefined', 'globalScope.openCheckoutWorkflow must be undefined');
 
-  context.renderAppointments([{
+  await loadAppointments([{
     ...sampleAppointment,
     can_start_checkout: true
   }]);
@@ -980,15 +988,15 @@ test('81. FEATURE_CHECKOUT_ENABLED=false: checkout button omitted, globalScope h
   assert.strictEqual(requests.length, 0, 'Zero checkout requests made');
 });
 
-test('82. FEATURE_CHECKOUT_ENABLED=true and can_start_checkout=true: button present with safe addEventListener and no inline onclick (Req 41 & 52)', () => {
-  const { context, elements, requests } = createPageContext();
+test('82. FEATURE_CHECKOUT_ENABLED=true and can_start_checkout=true: button present with safe addEventListener and no inline onclick (Req 41 & 52)', async () => {
+  const { context, elements, requests, loadAppointments } = createPageContext();
 
   // Enable feature gate
   context.FEATURE_CHECKOUT_ENABLED = true;
   assert.strictEqual(context.FEATURE_CHECKOUT_ENABLED, true);
   assert.strictEqual(typeof context.openCheckoutWorkflow, 'undefined', 'globalScope.openCheckoutWorkflow must remain undefined even when true');
 
-  context.renderAppointments([{
+  await loadAppointments([{
     ...sampleAppointment,
     can_start_checkout: true
   }]);
@@ -1013,14 +1021,14 @@ test('82. FEATURE_CHECKOUT_ENABLED=true and can_start_checkout=true: button pres
   assert.strictEqual(typeof context.openCheckoutWorkflow, 'undefined', 'globalScope.openCheckoutWorkflow must remain undefined');
 });
 
-test('83. absence of dynamic inline onclick across all appointment statuses and entity decoding safety (Req 37 & 59)', () => {
+test('83. absence of dynamic inline onclick across all appointment statuses and entity decoding safety (Req 37 & 59)', async () => {
   const allStatuses = ['pending', 'confirmed', 'arrived', 'in_service', 'completed', 'cancelled', 'no_show'];
 
   for (const st of allStatuses) {
-    const { context, elements } = createPageContext();
+    const { context, elements, loadAppointments } = createPageContext();
     context.FEATURE_CHECKOUT_ENABLED = true;
 
-    context.renderAppointments([{
+    await loadAppointments([{
       ...sampleAppointment,
       status: st,
       can_start_checkout: true
@@ -1037,8 +1045,8 @@ test('83. absence of dynamic inline onclick across all appointment statuses and 
   }
 
   // Entity decoding test: &quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;
-  const { context, elements, alerts } = createPageContext();
-  context.renderAppointments([{
+  const { context, elements, alerts, loadAppointments } = createPageContext();
+  await loadAppointments([{
     ...sampleAppointment,
     id: '&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;',
     customer_name: '&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;'
@@ -1066,12 +1074,12 @@ test('85. production code does not redefine FEATURE_CHECKOUT_ENABLED via Object.
   assert.strictEqual(desc?.set, undefined, 'Must not have custom setter');
 });
 
-test('86. FEATURE_CHECKOUT_ENABLED fails closed on undefined, null, false, "true", 1, "yes" (Req 47-48)', () => {
+test('86. FEATURE_CHECKOUT_ENABLED fails closed on undefined, null, false, "true", 1, "yes" (Req 47-48)', async () => {
   const falsyGateValues = [undefined, null, false, 'true', 1, 'yes', 0, '', {}];
   for (const gateVal of falsyGateValues) {
-    const { context, elements } = createPageContext();
+    const { context, elements, loadAppointments } = createPageContext();
     context.FEATURE_CHECKOUT_ENABLED = gateVal;
-    context.renderAppointments([{
+    await loadAppointments([{
       ...sampleAppointment,
       can_start_checkout: true
     }]);
@@ -1081,10 +1089,10 @@ test('86. FEATURE_CHECKOUT_ENABLED fails closed on undefined, null, false, "true
   }
 });
 
-test('87. gate=true at render, then changed to false before click aborts workflow with 0 requests (Req 49)', () => {
-  const { context, elements, requests } = createPageContext();
+test('87. gate=true at render, then changed to false before click aborts workflow with 0 requests (Req 49)', async () => {
+  const { context, elements, requests, loadAppointments } = createPageContext();
   context.FEATURE_CHECKOUT_ENABLED = true;
-  context.renderAppointments([{
+  await loadAppointments([{
     ...sampleAppointment,
     can_start_checkout: true
   }]);
@@ -1100,17 +1108,17 @@ test('87. gate=true at render, then changed to false before click aborts workflo
   assert.strictEqual(requests.filter(r => r.url?.includes('/checkout')).length, 0);
 });
 
-test('88. can_start_checkout changed to false before click or expired render generation aborts workflow (Req 50)', () => {
-  const { context, elements, requests } = createPageContext();
+test('88. can_start_checkout changed to false before click or expired render generation aborts workflow (Req 50)', async () => {
+  const { context, elements, requests, loadAppointments } = createPageContext();
   context.FEATURE_CHECKOUT_ENABLED = true;
   const appt = { ...sampleAppointment, can_start_checkout: true };
-  context.renderAppointments([appt]);
+  await loadAppointments([appt]);
 
   const checkoutBtn = elements.get('content').querySelector('button[data-action="checkout"]');
   assert.ok(checkoutBtn);
 
   // Expire render generation by re-rendering
-  context.renderAppointments([]);
+  await loadAppointments([]);
 
   // Clicking stale button from previous render generation
   checkoutBtn.click();
@@ -1118,8 +1126,8 @@ test('88. can_start_checkout changed to false before click or expired render gen
 });
 
 test('89. tampering with button data attributes cannot hijack action or dispatch another appointment (Req 51)', async () => {
-  const { context, elements, requests } = createPageContext();
-  context.renderAppointments([{
+  const { context, elements, requests, loadAppointments } = createPageContext();
+  await loadAppointments([{
     ...sampleAppointment,
     id: '00000000-0000-4000-8000-000000000001',
     status: 'pending'
@@ -1146,10 +1154,10 @@ test('89. tampering with button data attributes cannot hijack action or dispatch
   assert.strictEqual(body.status, 'confirmed', 'Must use closure captured status, ignoring DOM tampering');
 });
 
-test('90. after binding is complete, DOM does not retain data-action-key (Req 52)', () => {
-  const { context, elements } = createPageContext();
+test('90. after binding is complete, DOM does not retain data-action-key (Req 52)', async () => {
+  const { context, elements, loadAppointments } = createPageContext();
   context.FEATURE_CHECKOUT_ENABLED = true;
-  context.renderAppointments([{
+  await loadAppointments([{
     ...sampleAppointment,
     status: 'pending',
     can_start_checkout: true
@@ -1167,7 +1175,7 @@ test('90. after binding is complete, DOM does not retain data-action-key (Req 52
 });
 
 test('91. two different appointment buttons only operate on their own appointment (Req 53)', async () => {
-  const { context, elements, requests } = createPageContext();
+  const { context, elements, requests, loadAppointments } = createPageContext();
   const appt1 = { ...sampleAppointment, id: '00000000-0000-4000-8000-000000000001', status: 'pending' };
   const appt2 = { ...sampleAppointment, id: '00000000-0000-4000-8000-000000000002', status: 'confirmed' };
 
@@ -1185,7 +1193,7 @@ test('91. two different appointment buttons only operate on their own appointmen
     };
   };
 
-  context.renderAppointments([appt1, appt2]);
+  await loadAppointments([appt1, appt2]);
 
   const statusBtns = elements.get('content').querySelectorAll('button[data-action="status"]');
   // First appointment confirm button
@@ -1217,8 +1225,8 @@ test('91. two different appointment buttons only operate on their own appointmen
 });
 
 test('92. showLogin() invalidates action context so old status button click triggers 0 fetch and 0 mutation (Req 40-42)', async () => {
-  const { context, elements, requests } = createPageContext();
-  context.renderAppointments([{
+  const { context, elements, requests, loadAppointments } = createPageContext();
+  await loadAppointments([{
     ...sampleAppointment,
     status: 'pending'
   }]);
@@ -1239,10 +1247,10 @@ test('92. showLogin() invalidates action context so old status button click trig
   assert.strictEqual(requests.length, 0, 'Zero requests must be sent');
 });
 
-test('93. showLogin() invalidates action context so old checkout button click triggers 0 workflow, 0 navigation, 0 requests (Req 43-45)', () => {
-  const { context, elements, requests } = createPageContext();
+test('93. showLogin() invalidates action context so old checkout button click triggers 0 workflow, 0 navigation, 0 requests (Req 43-45)', async () => {
+  const { context, elements, requests, loadAppointments } = createPageContext();
   context.FEATURE_CHECKOUT_ENABLED = true;
-  context.renderAppointments([{
+  await loadAppointments([{
     ...sampleAppointment,
     can_start_checkout: true
   }]);
@@ -1261,9 +1269,9 @@ test('93. showLogin() invalidates action context so old checkout button click tr
 });
 
 test('94. ownerLogout() invalidates action context immediately at invocation before network completes or on network failure (Req 46)', async () => {
-  const { context, elements, requests } = createPageContext();
+  const { context, elements, requests, loadAppointments } = createPageContext();
   context.FEATURE_CHECKOUT_ENABLED = true;
-  context.renderAppointments([{
+  await loadAppointments([{
     ...sampleAppointment,
     status: 'pending',
     can_start_checkout: true
@@ -1303,8 +1311,8 @@ test('94. ownerLogout() invalidates action context immediately at invocation bef
 });
 
 test('95. API 401/403 session expiration invalidates context so old buttons trigger 0 operations (Req 47)', async () => {
-  const { context, elements, requests } = createPageContext();
-  context.renderAppointments([{
+  const { context, elements, requests, loadAppointments } = createPageContext();
+  await loadAppointments([{
     ...sampleAppointment,
     status: 'pending'
   }]);
@@ -1332,9 +1340,9 @@ test('95. API 401/403 session expiration invalidates context so old buttons trig
 });
 
 test('96. current appointment missing from active appointment index strictly fails closed with 0 operations (Req 48-49)', async () => {
-  const { context, elements, requests } = createPageContext();
+  const { context, elements, requests, loadAppointments } = createPageContext();
   context.FEATURE_CHECKOUT_ENABLED = true;
-  context.renderAppointments([{
+  await loadAppointments([{
     ...sampleAppointment,
     id: '00000000-0000-4000-8000-000000000001',
     status: 'pending',
@@ -1347,7 +1355,7 @@ test('96. current appointment missing from active appointment index strictly fai
   assert.ok(checkoutBtn);
 
   // Clear private appointments by re-rendering empty list
-  context.renderAppointments([]);
+  await loadAppointments([]);
 
   // Click status button from previous render
   confirmBtn.click();
@@ -1363,11 +1371,11 @@ test('96. current appointment missing from active appointment index strictly fai
   assert.doesNotMatch(html, /can_start_checkout\s*===?\s*true\s*:\s*true/, 'No : true fallback allowed for can_start_checkout');
 });
 
-test('97. can_start_checkout changed to false on current appointment before click strictly fails closed (Req 50)', () => {
-  const { context, elements, requests } = createPageContext();
+test('97. can_start_checkout changed to false on current appointment before click strictly fails closed (Req 50)', async () => {
+  const { context, elements, requests, loadAppointments } = createPageContext();
   context.FEATURE_CHECKOUT_ENABLED = true;
   const appt = { ...sampleAppointment, can_start_checkout: true };
-  context.renderAppointments([appt]);
+  await loadAppointments([appt]);
 
   const checkoutBtn = elements.get('content').querySelector('button[data-action="checkout"]');
   assert.ok(checkoutBtn);
@@ -1380,12 +1388,12 @@ test('97. can_start_checkout changed to false on current appointment before clic
 });
 
 test('98. re-login and re-render activates new buttons while old buttons from previous session remain completely inert (Req 53)', async () => {
-  const { context, elements, requests } = createPageContext();
+  const { context, elements, requests, loadAppointments } = createPageContext();
   const appt1 = { ...sampleAppointment, id: '00000000-0000-4000-8000-000000000001', status: 'pending' };
   const appt2 = { ...sampleAppointment, id: '00000000-0000-4000-8000-000000000002', status: 'pending' };
 
   // Session 1: initial render
-  context.renderAppointments([appt1]);
+  await loadAppointments([appt1]);
   const oldConfirmBtn = elements.get('content').querySelectorAll('button[data-action="status"]').find(b => b.getAttribute('data-target-status') === 'confirmed');
   assert.ok(oldConfirmBtn);
 
@@ -1393,7 +1401,7 @@ test('98. re-login and re-render activates new buttons while old buttons from pr
   await context.ownerLogout();
 
   // Session 2: re-login and re-render
-  context.renderAppointments([appt2]);
+  await loadAppointments([appt2]);
   const newConfirmBtn = elements.get('content').querySelectorAll('button[data-action="status"]').find(b => b.getAttribute('data-target-status') === 'confirmed');
   assert.ok(newConfirmBtn);
 
@@ -1411,18 +1419,18 @@ test('98. re-login and re-render activates new buttons while old buttons from pr
 });
 
 test('99. Shop A old button cannot operate Shop B appointment across different shop sessions (Req 54)', async () => {
-  const { context, elements, requests } = createPageContext();
+  const { context, elements, requests, loadAppointments } = createPageContext();
   const shopAAppt = { ...sampleAppointment, id: '00000000-0000-4000-8000-000000000001', status: 'pending' };
   const shopBAppt = { ...sampleAppointment, id: '00000000-0000-4000-8000-000000000002', status: 'pending' };
 
   // Shop A
-  context.renderAppointments([shopAAppt]);
+  await loadAppointments([shopAAppt]);
   const shopAConfirmBtn = elements.get('content').querySelectorAll('button[data-action="status"]').find(b => b.getAttribute('data-target-status') === 'confirmed');
   assert.ok(shopAConfirmBtn);
 
   // Switch to Shop B
   await context.ownerLogout();
-  context.renderAppointments([shopBAppt]);
+  await loadAppointments([shopBAppt]);
 
   // Click Shop A button
   shopAConfirmBtn.click();
@@ -1432,7 +1440,7 @@ test('99. Shop A old button cannot operate Shop B appointment across different s
 });
 
 test('100. tampering globalScope.currentAppointments cannot inject fake appointments or forge actions through language switch (Req 18 & 21)', async () => {
-  const { context, elements, requests } = createPageContext();
+  const { context, elements, requests, loadAppointments } = createPageContext();
   context.FEATURE_CHECKOUT_ENABLED = true;
 
   // a. Normal render of 2 authoritative appointments
@@ -1452,7 +1460,7 @@ test('100. tampering globalScope.currentAppointments cannot inject fake appointm
     can_start_checkout: false,
     checkout: null
   };
-  context.renderAppointments([appt1, appt2]);
+  await loadAppointments([appt1, appt2]);
 
   // b. Tamper globalScope.currentAppointments by pushing forged appointment
   context.currentAppointments.push({
@@ -1502,7 +1510,7 @@ test('100. tampering globalScope.currentAppointments cannot inject fake appointm
 });
 
 test('101. nested tampering of globalScope.currentAppointments does not affect private snapshot or click authorization (Req 19-20)', async () => {
-  const { context, elements, requests } = createPageContext();
+  const { context, elements, requests, loadAppointments } = createPageContext();
   context.FEATURE_CHECKOUT_ENABLED = true;
 
   const appt = {
@@ -1513,7 +1521,7 @@ test('101. nested tampering of globalScope.currentAppointments does not affect p
     checkout: null,
     items: [{ service_name: 'Haircut', sequence_no: 1 }]
   };
-  context.renderAppointments([appt]);
+  await loadAppointments([appt]);
 
   // Nested property tampering on global array
   context.currentAppointments[0].can_start_checkout = true;
@@ -1534,14 +1542,14 @@ test('101. nested tampering of globalScope.currentAppointments does not affect p
 });
 
 test('102. authoritative appointments preserve correct behavior across locale switches, sessions, and shops (Req 22-25)', async () => {
-  const { context, elements, requests } = createPageContext();
+  const { context, elements, requests, loadAppointments } = createPageContext();
   const appt1 = {
     ...sampleAppointment,
     id: '00000000-0000-4000-8000-000000000001',
     status: 'pending'
   };
 
-  context.renderAppointments([appt1]);
+  await loadAppointments([appt1]);
 
   // Switch to English
   context.setAdminLocale('en');
@@ -1560,4 +1568,243 @@ test('102. authoritative appointments preserve correct behavior across locale sw
   // Switching locale after logout does not resurrect logged out appointments
   context.setAdminLocale('zh-CN');
   assert.doesNotMatch(elements.get('content').innerHTML, /00000000-0000-4000-8000-000000000001/);
+});
+
+test('103. window.renderAppointments and sensitive ingestion/action structures are strictly undefined (Req 10 & 32)', () => {
+  const { context } = createPageContext();
+  assert.strictEqual(typeof context.renderAppointments, 'undefined', 'window.renderAppointments must be undefined');
+  assert.strictEqual(typeof context.renderAppointmentsView, 'undefined', 'private renderer must not be exposed');
+  assert.strictEqual(typeof context.acceptAuthoritativeAppointments, 'undefined', 'authoritative ingestion must not be exposed');
+  assert.strictEqual(typeof context.cloneAppointments, 'undefined', 'cloneAppointments helper must not be exposed');
+  assert.strictEqual(typeof context.currentAppointmentsSnapshot, 'undefined', 'snapshot must not be exposed');
+  assert.strictEqual(typeof context.currentAppointmentMap, 'undefined', 'action map must not be exposed');
+  assert.strictEqual(typeof context.invalidateAppointmentActionContext, 'undefined', 'invalidation function must not be exposed');
+});
+
+test('104. combination attack with fake appointment, global tampering, simulated renderer, and locale switch fails closed (Req 33-37)', async () => {
+  const { context, elements, requests, loadAppointments } = createPageContext();
+  context.FEATURE_CHECKOUT_ENABLED = true;
+
+  const authAppt = {
+    ...sampleAppointment,
+    id: '11111111-1111-4111-8111-111111111111',
+    customer_name: 'AuthCustomer',
+    status: 'pending',
+    can_start_checkout: false,
+    checkout: null
+  };
+  await loadAppointments([authAppt]);
+
+  const fakeAppt = {
+    id: '99999999-9999-4999-8999-999999999999',
+    start_at: '2030-01-01T02:00:00Z',
+    customer_name: 'MaliciousFakeCustomer',
+    customer_phone: '99999999',
+    status: 'completed',
+    can_start_checkout: true,
+    checkout: {
+      payment_state: 'paid',
+      reconciliation_valid: true
+    },
+    items: [{
+      item_id: '88888888-8888-4888-8888-888888888888',
+      service_name: 'HackedVIPService',
+      staff_assignments: [{ staff_name: 'HackedStaff', role: 'primary' }]
+    }]
+  };
+
+  // 1. Tamper globalScope.currentAppointments
+  context.currentAppointments.push(fakeAppt);
+
+  // 2. Simulate attacker injecting window.renderAppointments or attempting to call it
+  if (typeof context.renderAppointments === 'function') {
+    context.renderAppointments([fakeAppt]);
+  } else {
+    context.renderAppointments = function(_fake) {};
+    context.renderAppointments([fakeAppt]);
+  }
+
+  // 3. Switch locale to en and zh-CN
+  context.setAdminLocale('en');
+  context.setAdminLocale('zh-CN');
+
+  // Verify forged appointment is NOT in DOM
+  const html = elements.get('content').innerHTML;
+  assert.doesNotMatch(html, /MaliciousFakeCustomer/);
+  assert.doesNotMatch(html, /99999999-9999-4999-8999-999999999999/);
+  assert.doesNotMatch(html, /HackedVIPService/);
+  assert.doesNotMatch(html, /status-paid/);
+
+  // Authoritative appointment has can_start_checkout: false -> 0 checkout buttons
+  const checkoutButtons = elements.get('content').querySelectorAll('button[data-action="checkout"]');
+  assert.strictEqual(checkoutButtons.length, 0);
+
+  // 4. Try tampering DOM data attributes
+  const statusButtons = elements.get('content').querySelectorAll('button[data-action="status"]');
+  const confirmBtn = statusButtons.find(b => b.getAttribute('data-target-status') === 'confirmed');
+  assert.ok(confirmBtn);
+
+  // Attempt DOM attribute tampering on confirmBtn
+  confirmBtn.setAttribute('data-target-status', 'completed');
+  confirmBtn.click();
+  await new Promise(r => setTimeout(r, 10));
+
+  // Authoritative action executed strictly with closure's bound state
+  const mutations = requests.filter(r => r.url === '/api/admin/update-status-db');
+  assert.strictEqual(mutations.length, 1);
+  assert.strictEqual(JSON.parse(mutations[0].options.body).appointmentId, '11111111-1111-4111-8111-111111111111');
+  assert.strictEqual(JSON.parse(mutations[0].options.body).status, 'confirmed');
+  assert.strictEqual(requests.filter(r => r.url?.includes('/checkout')).length, 0);
+});
+
+test('105. locale switch does not update snapshot and only redraws existing authoritative data (Req 38)', async () => {
+  const { context, elements, requests, loadAppointments } = createPageContext();
+  const appt = {
+    ...sampleAppointment,
+    id: '22222222-2222-4222-8222-222222222222',
+    customer_name: 'LocaleCustomer',
+    status: 'pending'
+  };
+  await loadAppointments([appt]);
+
+  // Tamper global array before locale switch
+  context.currentAppointments = [{ ...sampleAppointment, id: '33333333-3333-4333-8333-333333333333', customer_name: 'Tampered' }];
+
+  // Switch locale to English
+  context.setAdminLocale('en');
+
+  // DOM shows LocaleCustomer, not Tampered
+  const htmlEn = elements.get('content').innerHTML;
+  assert.match(htmlEn, /LocaleCustomer/);
+  assert.doesNotMatch(htmlEn, /Tampered/);
+  assert.match(htmlEn, /Confirm/);
+
+  // Switch back to zh-CN
+  context.setAdminLocale('zh-CN');
+  const htmlZh = elements.get('content').innerHTML;
+  assert.match(htmlZh, /LocaleCustomer/);
+  assert.doesNotMatch(htmlZh, /Tampered/);
+  assert.match(htmlZh, /确认/);
+});
+
+test('106. second legitimate API response replaces the first snapshot and invalidates old buttons (Req 39)', async () => {
+  const { context, elements, requests, loadAppointments } = createPageContext();
+
+  const appt1 = {
+    ...sampleAppointment,
+    id: '11111111-1111-4111-8111-111111111111',
+    status: 'pending'
+  };
+  await loadAppointments([appt1]);
+
+  const oldConfirmBtn = elements.get('content').querySelectorAll('button[data-action="status"]').find(b => b.getAttribute('data-target-status') === 'confirmed');
+  assert.ok(oldConfirmBtn);
+
+  // Second legitimate API load with new appointment
+  const appt2 = {
+    ...sampleAppointment,
+    id: '22222222-2222-4222-8222-222222222222',
+    status: 'pending'
+  };
+  await loadAppointments([appt2]);
+
+  // Old button from generation 1 is now stale
+  oldConfirmBtn.click();
+  await new Promise(r => setTimeout(r, 10));
+  assert.strictEqual(requests.filter(r => r.url === '/api/admin/update-status-db').length, 0, 'Stale button from replaced snapshot must not execute');
+
+  // New button executes
+  const newConfirmBtn = elements.get('content').querySelectorAll('button[data-action="status"]').find(b => b.getAttribute('data-target-status') === 'confirmed');
+  assert.ok(newConfirmBtn);
+  newConfirmBtn.click();
+  await new Promise(r => setTimeout(r, 10));
+  assert.strictEqual(requests.filter(r => r.url === '/api/admin/update-status-db').length, 1);
+  assert.strictEqual(JSON.parse(requests[0].options.body).appointmentId, '22222222-2222-4222-8222-222222222222');
+});
+
+test('107. API error fails closed, clearing previous authorization and retaining 0 functional buttons (Req 40)', async () => {
+  const { context, elements, requests, loadAppointments } = createPageContext({
+    content: {}
+  });
+
+  // 1. Initial successful load
+  const appt = {
+    ...sampleAppointment,
+    id: '11111111-1111-4111-8111-111111111111',
+    status: 'pending'
+  };
+  await loadAppointments([appt]);
+
+  const oldBtn = elements.get('content').querySelectorAll('button[data-action="status"]').find(b => b.getAttribute('data-target-status') === 'confirmed');
+  assert.ok(oldBtn);
+
+  // 2. Next API call fails (mock 500 error)
+  context.fetch = async () => ({
+    status: 500,
+    ok: false,
+    async json() { return { success: false, message: 'Internal Server Error' }; }
+  });
+
+  await context.loadAppointments();
+
+  assert.strictEqual(elements.get('content').className, 'error');
+  assert.strictEqual(String(elements.get('totalCount').textContent), '0');
+
+  // Old button click must be completely inert
+  oldBtn.click();
+  await new Promise(r => setTimeout(r, 10));
+  assert.strictEqual(requests.filter(r => r.url === '/api/admin/update-status-db').length, 0);
+});
+
+test('108. empty array API response clears old snapshot, map, and operation buttons (Req 41)', async () => {
+  const { context, elements, requests, loadAppointments } = createPageContext();
+
+  const appt = {
+    ...sampleAppointment,
+    id: '11111111-1111-4111-8111-111111111111',
+    status: 'pending'
+  };
+  await loadAppointments([appt]);
+
+  const oldBtn = elements.get('content').querySelectorAll('button[data-action="status"]').find(b => b.getAttribute('data-target-status') === 'confirmed');
+  assert.ok(oldBtn);
+
+  // API returns empty array []
+  await loadAppointments([]);
+
+  assert.strictEqual(elements.get('content').className, 'empty');
+  assert.match(elements.get('content').textContent, /目前没有预约/);
+  assert.strictEqual(String(elements.get('totalCount').textContent), '0');
+  assert.strictEqual(elements.get('content').querySelectorAll('button').length, 0);
+
+  // Old button click is inert
+  oldBtn.click();
+  await new Promise(r => setTimeout(r, 10));
+  assert.strictEqual(requests.filter(r => r.url === '/api/admin/update-status-db').length, 0);
+});
+
+test('109. showLogin, logout, 401, 403 prevent public renderer or tampering from resurrecting old appointments (Req 42)', async () => {
+  const { context, elements, requests, loadAppointments } = createPageContext();
+
+  const appt = {
+    ...sampleAppointment,
+    id: '11111111-1111-4111-8111-111111111111',
+    status: 'pending'
+  };
+  await loadAppointments([appt]);
+
+  // Session ends via logout
+  await context.ownerLogout();
+
+  // Attacker tries to tamper and trigger re-render via locale or dummy
+  context.currentAppointments = [appt];
+  if (typeof context.renderAppointments === 'function') {
+    context.renderAppointments([appt]);
+  }
+  context.setAdminLocale('en');
+
+  // Content remains logged out, appointments are NOT resurrected
+  assert.doesNotMatch(elements.get('content').innerHTML, /11111111-1111-4111-8111-111111111111/);
+  assert.strictEqual(elements.get('totalCount').textContent, '0');
+  assert.strictEqual(requests.filter(r => r.url === '/api/admin/update-status-db').length, 0);
 });
