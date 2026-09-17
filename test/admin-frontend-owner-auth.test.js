@@ -108,12 +108,14 @@ test('page initialization shows login UI when owner/me returns 401', async () =>
 test('authenticated owner/me shows admin UI and loads appointments', async () => {
   const page = createPage([
     response(200, { success: true, data: {} }),
-    response(200, { success: true, data: [appointment] })
+    response(200, { success: true, data: [appointment] }),
+    response(200, { success: true, data: [] })
   ]);
   await page.initialize();
   assert.deepEqual(page.requests.map(item => item.url), [
     '/api/owner/me',
-    '/api/appointments-db'
+    '/api/appointments-db',
+    '/api/owner/staff'
   ]);
   assert.equal(page.elements.get('loginOverlay').style.display, 'none');
   assert.equal(page.elements.get('adminContent').hidden, false);
@@ -122,7 +124,8 @@ test('authenticated owner/me shows admin UI and loads appointments', async () =>
 test('owner login sends required fields then loads appointments', async () => {
   const page = createPage([
     response(200, { success: true }),
-    response(200, { success: true, data: [appointment] })
+    response(200, { success: true, data: [appointment] }),
+    response(200, { success: true, data: [] })
   ]);
   page.elements.get('ownerLoginIdentifier').value = 'OwnerOne';
   page.elements.get('adminPassword').value = 'entered-password';
@@ -130,7 +133,8 @@ test('owner login sends required fields then loads appointments', async () => {
   await page.context.adminLogin();
   assert.deepEqual(page.requests.map(item => item.url), [
     '/api/owner/login',
-    '/api/appointments-db'
+    '/api/appointments-db',
+    '/api/owner/staff'
   ]);
   assert.deepEqual(JSON.parse(page.requests[0].options.body), {
     loginIdentifier: 'OwnerOne',

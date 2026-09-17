@@ -753,6 +753,24 @@
 
   <div class="card">
 
+    <div class="appointments-toolbar" id="appointmentsToolbar">
+      <div class="calendar-date-nav" id="calendarDateNav">
+        <button type="button" class="calendar-nav-btn" id="calendarPrevDayBtn" aria-label="上一天">‹</button>
+        <span class="calendar-current-date" id="calendarCurrentDateLabel"></span>
+        <button type="button" class="calendar-nav-btn" id="calendarNextDayBtn" aria-label="下一天">›</button>
+        <button type="button" class="calendar-today-btn" id="calendarTodayBtn" data-i18n="today">今天</button>
+        <input type="date" class="calendar-date-input" id="calendarDatePicker" aria-label="选择日期" />
+      </div>
+      <div class="view-switch-group" role="group" aria-label="视图切换">
+        <button type="button" class="view-switch-btn active" id="owner-view-list" data-view="list" aria-pressed="true">
+          <span data-i18n="list">列表</span>
+        </button>
+        <button type="button" class="view-switch-btn" id="owner-view-calendar" data-view="calendar" aria-pressed="false">
+          <span data-i18n="calendar">日历</span>
+        </button>
+      </div>
+    </div>
+
     <div id="content" class="loading" aria-busy="true" aria-live="polite">
       <span data-i18n="loadingAppointments">正在读取预约...</span>
     </div>
@@ -863,9 +881,52 @@ if (typeof globalScope.FEATURE_CHECKOUT_ENABLED === 'undefined') {
   globalScope.FEATURE_CHECKOUT_ENABLED = false;
 }
 
+function safeGetElement(id) {
+  try {
+    return typeof document !== 'undefined' && typeof document.getElementById === 'function'
+      ? document.getElementById(id)
+      : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function getSingaporeToday() {
+  return new Intl.DateTimeFormat(
+    'en-CA',
+    {
+      timeZone: 'Asia/Singapore',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    }
+  ).format(new Date());
+}
+
 let currentRenderGeneration = 0;
 let currentAppointmentsSnapshot = [];
+let currentStaffSnapshot = [];
 const currentAppointmentMap = new Map();
+
+function getViewStorage() {
+  try {
+    return typeof globalScope !== 'undefined' && globalScope['local' + 'Storage']
+      ? globalScope['local' + 'Storage']
+      : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+let currentViewMode = 'list';
+try {
+  const store = getViewStorage();
+  const savedMode = store && typeof store.getItem === 'function' ? store.getItem('gg_beauty_owner_view') : null;
+  if (savedMode === 'calendar' || savedMode === 'list') {
+    currentViewMode = savedMode;
+  }
+} catch (_) {}
+let currentCalendarDate = getSingaporeToday();
 
 const cloneAppointments = (appts) => {
   if (!Array.isArray(appts)) return [];
@@ -876,14 +937,388 @@ const cloneAppointments = (appts) => {
   }
 };
 
+const cloneStaff = (staffList) => {
+  if (!Array.isArray(staffList)) return [];
+  try {
+    return JSON.parse(JSON.stringify(staffList));
+  } catch (_e) {
+    return [];
+  }
+};
+
 const invalidateAppointmentActionContext = () => {
   currentRenderGeneration++;
   currentAppointmentMap.clear();
   currentAppointmentsSnapshot = [];
+  currentStaffSnapshot = [];
   if (typeof globalScope !== 'undefined' && globalScope) {
     globalScope.currentAppointments = [];
   }
 };
+
+function addDaysToDate(dateStr, days) {
+  try {
+    const [y, m, d] = dateStr.split('-').map(Number);
+    const dt = new Date(Date.UTC(y, m - 1, d + days, 4, 0, 0));
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Singapore',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    }).format(dt);
+  } catch (_) {
+    return dateStr;
+  }
+}
+
+function getSingaporeDateString(isoString) {
+  if (!isoString) return '';
+  try {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Singapore',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    }).format(new Date(isoString));
+  } catch (_) {
+    return '';
+  }
+}
+
+function getSingaporeMinutes(isoString) {
+  if (!isoString) return null;
+  try {
+    const date = new Date(isoString);
+    const parts = new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Asia/Singapore',
+      hour: 'numeric',
+      minute: 'numeric',
+      hour12: false
+    }).formatToParts(date);
+    let hour = 0;
+    let minute = 0;
+    for (const p of parts) {
+      if (p.type === 'hour') hour = parseInt(p.value, 10);
+      if (p.type === 'minute') minute = parseInt(p.value, 10);
+    }
+    return hour * 60 + minute;
+  } catch (_) {
+    return null;
+  }
+}
+
+function formatSingaporeHourMinute(isoString) {
+  if (!isoString) return '-';
+  try {
+    return new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Asia/Singapore',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false
+    }).format(new Date(isoString));
+  } catch (_) {
+    return '-';
+  }
+}
+
+function formatCalendarHeaderDate(dateStr, locale) {
+  if (!dateStr) return '';
+  try {
+    const [y, m, d] = dateStr.split('-').map(Number);
+    const dt = new Date(Date.UTC(y, m - 1, d, 4, 0, 0));
+    return new Intl.DateTimeFormat(locale || 'en', {
+      timeZone: 'Asia/Singapore',
+      year: 'numeric',
+      month: locale === 'zh-CN' ? 'long' : 'short',
+      day: 'numeric',
+      weekday: 'short'
+    }).format(dt);
+  } catch (_) {
+    return dateStr;
+  }
+}
+
+function resolveAppointmentPrimaryStaff(appointment, staffSnapshot) {
+  if (!appointment || typeof appointment !== 'object') {
+    return { staffId: null, staffName: '', isUnassigned: true, assistants: [] };
+  }
+
+  const assistants = [];
+  let primaryStaffId = null;
+  let primaryStaffName = '';
+
+  if (Array.isArray(appointment.items) && appointment.items.length > 0) {
+    const sortedItems = [...appointment.items].sort((a, b) => {
+      const seqA = Number(a?.sequence_no) || 0;
+      const seqB = Number(b?.sequence_no) || 0;
+      if (seqA !== seqB) return seqA - seqB;
+      return String(a?.item_id || a?.id || '').localeCompare(String(b?.item_id || b?.id || ''));
+    });
+
+    for (const item of sortedItems) {
+      if (Array.isArray(item?.staff_assignments)) {
+        for (const assign of item.staff_assignments) {
+          if (!assign) continue;
+          if (assign.role === 'primary' && !primaryStaffId && (assign.staff_id || assign.staff_name)) {
+            primaryStaffId = assign.staff_id ? String(assign.staff_id).trim() : null;
+            primaryStaffName = assign.staff_name ? String(assign.staff_name).trim() : '';
+          } else if (assign.role === 'assistant' && (assign.staff_name || assign.staff_id)) {
+            const aName = assign.staff_name ? String(assign.staff_name).trim() : '';
+            if (aName && !assistants.includes(aName)) {
+              assistants.push(aName);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  if (!primaryStaffId && !primaryStaffName && Array.isArray(appointment.staff_assignments)) {
+    for (const assign of appointment.staff_assignments) {
+      if (!assign) continue;
+      if (assign.role === 'primary' && !primaryStaffId && (assign.staff_id || assign.staff_name)) {
+        primaryStaffId = assign.staff_id ? String(assign.staff_id).trim() : null;
+        primaryStaffName = assign.staff_name ? String(assign.staff_name).trim() : '';
+      } else if (assign.role === 'assistant' && (assign.staff_name || assign.staff_id)) {
+        const aName = assign.staff_name ? String(assign.staff_name).trim() : '';
+        if (aName && !assistants.includes(aName)) {
+          assistants.push(aName);
+        }
+      }
+    }
+  }
+
+  if (!primaryStaffId && appointment.staff_id) {
+    primaryStaffId = String(appointment.staff_id).trim();
+  }
+  if (!primaryStaffName && appointment.staff_name) {
+    primaryStaffName = String(appointment.staff_name).trim();
+  }
+
+  let matchedStaff = null;
+  if (Array.isArray(staffSnapshot) && staffSnapshot.length > 0) {
+    if (primaryStaffId) {
+      matchedStaff = staffSnapshot.find(s => s && String(s.id).trim() === primaryStaffId);
+    }
+    if (!matchedStaff && primaryStaffName) {
+      matchedStaff = staffSnapshot.find(s => s && String(s.name).trim() === primaryStaffName);
+    }
+  }
+
+  if (matchedStaff) {
+    return {
+      staffId: String(matchedStaff.id).trim(),
+      staffName: String(matchedStaff.name || '').trim(),
+      isUnassigned: false,
+      assistants
+    };
+  }
+
+  return {
+    staffId: null,
+    staffName: primaryStaffName || '',
+    isUnassigned: true,
+    assistants
+  };
+}
+
+function layoutColumnAppointments(appointments) {
+  if (!Array.isArray(appointments) || appointments.length === 0) return [];
+
+  const parsed = appointments.map(item => {
+    const startMin = getSingaporeMinutes(item.start_at);
+    const rawEndMin = getSingaporeMinutes(item.end_at);
+    const duration = Number(item.duration_minutes) || (rawEndMin && startMin != null ? rawEndMin - startMin : 60);
+    const effectiveStart = startMin != null ? startMin : 540;
+    const effectiveEnd = rawEndMin != null && rawEndMin > effectiveStart ? rawEndMin : effectiveStart + Math.max(15, duration);
+    return {
+      item,
+      startMin: effectiveStart,
+      endMin: effectiveEnd,
+      lane: 0,
+      totalLanes: 1,
+      hasOverlap: false
+    };
+  });
+
+  parsed.sort((a, b) => {
+    if (a.startMin !== b.startMin) return a.startMin - b.startMin;
+    if (a.endMin !== b.endMin) return a.endMin - b.endMin;
+    return String(a.item.id || '').localeCompare(String(b.item.id || ''));
+  });
+
+  const clusters = [];
+  let currentCluster = [];
+  let clusterEnd = -1;
+
+  for (const appt of parsed) {
+    if (currentCluster.length === 0) {
+      currentCluster.push(appt);
+      clusterEnd = appt.endMin;
+    } else if (appt.startMin < clusterEnd) {
+      currentCluster.push(appt);
+      if (appt.endMin > clusterEnd) clusterEnd = appt.endMin;
+    } else {
+      clusters.push(currentCluster);
+      currentCluster = [appt];
+      clusterEnd = appt.endMin;
+    }
+  }
+  if (currentCluster.length > 0) {
+    clusters.push(currentCluster);
+  }
+
+  for (const cluster of clusters) {
+    const lanes = [];
+    for (const appt of cluster) {
+      let placedLane = -1;
+      for (let i = 0; i < lanes.length; i++) {
+        if (appt.startMin >= lanes[i]) {
+          placedLane = i;
+          lanes[i] = appt.endMin;
+          break;
+        }
+      }
+      if (placedLane === -1) {
+        placedLane = lanes.length;
+        lanes.push(appt.endMin);
+      }
+      appt.lane = placedLane;
+    }
+
+    const totalLanes = lanes.length;
+    const hasOverlap = totalLanes > 1;
+    for (const appt of cluster) {
+      appt.totalLanes = totalLanes;
+      appt.hasOverlap = hasOverlap;
+    }
+  }
+
+  return parsed;
+}
+
+function updateCalendarToolbarUI() {
+  const activeLocale = globalThis.ownerSelfService?._state?.locale || globalThis.ggI18n?.DEFAULT_LOCALE || 'zh-CN';
+  const listBtn = safeGetElement('owner-view-list');
+  const calBtn = safeGetElement('owner-view-calendar');
+  const dateNav = safeGetElement('calendarDateNav');
+  const dateLabel = safeGetElement('calendarCurrentDateLabel');
+  const datePicker = safeGetElement('calendarDatePicker');
+  const prevBtn = safeGetElement('calendarPrevDayBtn');
+  const nextBtn = safeGetElement('calendarNextDayBtn');
+  const todayBtn = safeGetElement('calendarTodayBtn');
+
+  if (listBtn) {
+    if (listBtn.classList && typeof listBtn.classList.toggle === 'function') {
+      listBtn.classList.toggle('active', currentViewMode === 'list');
+    }
+    listBtn.setAttribute('aria-pressed', currentViewMode === 'list' ? 'true' : 'false');
+    const span = listBtn.querySelector ? listBtn.querySelector('span') : null;
+    if (span) span.textContent = adminT('list');
+  }
+
+  if (calBtn) {
+    if (calBtn.classList && typeof calBtn.classList.toggle === 'function') {
+      calBtn.classList.toggle('active', currentViewMode === 'calendar');
+    }
+    calBtn.setAttribute('aria-pressed', currentViewMode === 'calendar' ? 'true' : 'false');
+    const span = calBtn.querySelector ? calBtn.querySelector('span') : null;
+    if (span) span.textContent = adminT('calendar');
+  }
+
+  if (dateNav) {
+    if (dateNav.classList && typeof dateNav.classList.toggle === 'function') {
+      dateNav.classList.toggle('visible', currentViewMode === 'calendar');
+    }
+  }
+
+  if (dateLabel) {
+    dateLabel.textContent = formatCalendarHeaderDate(currentCalendarDate, activeLocale);
+  }
+
+  if (datePicker) {
+    datePicker.value = currentCalendarDate;
+    datePicker.setAttribute('aria-label', adminT('date'));
+  }
+
+  if (prevBtn) {
+    prevBtn.setAttribute('aria-label', adminT('previousDay'));
+  }
+
+  if (nextBtn) {
+    nextBtn.setAttribute('aria-label', adminT('nextDay'));
+  }
+
+  if (todayBtn) {
+    todayBtn.textContent = adminT('today');
+  }
+}
+
+function setupCalendarToolbar() {
+  const listBtn = safeGetElement('owner-view-list');
+  const calBtn = safeGetElement('owner-view-calendar');
+  const prevBtn = safeGetElement('calendarPrevDayBtn');
+  const nextBtn = safeGetElement('calendarNextDayBtn');
+  const todayBtn = safeGetElement('calendarTodayBtn');
+  const datePicker = safeGetElement('calendarDatePicker');
+
+  if (listBtn && !listBtn._hasCalendarListener) {
+    listBtn._hasCalendarListener = true;
+    listBtn.addEventListener('click', () => {
+      if (currentViewMode !== 'list') {
+        currentViewMode = 'list';
+        try { getViewStorage()?.setItem('gg_beauty_owner_view', 'list'); } catch (_) {}
+        renderAppointmentsView();
+      }
+    });
+  }
+
+  if (calBtn && !calBtn._hasCalendarListener) {
+    calBtn._hasCalendarListener = true;
+    calBtn.addEventListener('click', () => {
+      if (currentViewMode !== 'calendar') {
+        currentViewMode = 'calendar';
+        try { getViewStorage()?.setItem('gg_beauty_owner_view', 'calendar'); } catch (_) {}
+        renderAppointmentsView();
+      }
+    });
+  }
+
+  if (prevBtn && !prevBtn._hasCalendarListener) {
+    prevBtn._hasCalendarListener = true;
+    prevBtn.addEventListener('click', () => {
+      currentCalendarDate = addDaysToDate(currentCalendarDate, -1);
+      renderAppointmentsView();
+    });
+  }
+
+  if (nextBtn && !nextBtn._hasCalendarListener) {
+    nextBtn._hasCalendarListener = true;
+    nextBtn.addEventListener('click', () => {
+      currentCalendarDate = addDaysToDate(currentCalendarDate, 1);
+      renderAppointmentsView();
+    });
+  }
+
+  if (todayBtn && !todayBtn._hasCalendarListener) {
+    todayBtn._hasCalendarListener = true;
+    todayBtn.addEventListener('click', () => {
+      currentCalendarDate = getSingaporeToday();
+      renderAppointmentsView();
+    });
+  }
+
+  if (datePicker && !datePicker._hasCalendarListener) {
+    datePicker._hasCalendarListener = true;
+    datePicker.addEventListener('change', (e) => {
+      const val = e?.target ? e.target.value : (datePicker.value || '');
+      if (val) {
+        currentCalendarDate = val;
+        renderAppointmentsView();
+      }
+    });
+  }
+}
 
 const ALLOWED_PAYMENT_STATES = new Set([
   'unpaid',
@@ -1037,131 +1472,321 @@ const renderAppointmentsView = () => {
     }
   }
 
+  updateCalendarToolbarUI();
+
   const localActionMap = new Map();
   let localKeySeq = 0;
 
-  if (
-    !currentAppointmentsSnapshot ||
-    currentAppointmentsSnapshot.length === 0
-  ) {
-    content.className = 'empty';
-    content.setAttribute?.('aria-busy', 'false');
-    content.innerHTML = '';
-    content.textContent = adminT('noAppointments');
-    return;
-  }
+  if (currentViewMode === 'calendar') {
+    const dayAppointments = (currentAppointmentsSnapshot || []).filter(item => {
+      if (!item || !item.start_at) return false;
+      return getSingaporeDateString(item.start_at) === currentCalendarDate;
+    });
 
-  content.className = '';
-  content.setAttribute?.('aria-busy', 'false');
+    const staffCols = [...currentStaffSnapshot].sort((a, b) =>
+      String(a?.name || '').localeCompare(String(b?.name || ''))
+    );
 
-  const rows =
-    currentAppointmentsSnapshot.map(rawItem => {
-      const item = rawItem || {};
+    const staffMap = new Map();
+    for (const s of staffCols) {
+      staffMap.set(String(s.id).trim(), []);
+    }
 
-      const rawStatus = typeof item.status === 'string' ? item.status.trim().toLowerCase() : '';
-      const canonicalStatus = globalThis.ggI18n && typeof globalThis.ggI18n.normalizeAppointmentStatus === 'function'
-        ? globalThis.ggI18n.normalizeAppointmentStatus(rawStatus)
-        : (['pending', 'confirmed', 'arrived', 'in_service', 'completed', 'no_show', 'cancelled'].includes(rawStatus) ? rawStatus : 'unknown');
+    const unassignedAppointments = [];
 
-      const statusClass =
-        escapeHtml(canonicalStatus);
-
-      const checkoutFinancialState =
-        resolveCheckoutFinancialState(item);
-
-      const canCheckout = (globalScope.FEATURE_CHECKOUT_ENABLED === true) && (canStartCheckout(item) === true);
-      let checkoutBtnHtml = '';
-      if (canCheckout) {
-        const kCheckout = String(++localKeySeq);
-        localActionMap.set(kCheckout, {
-          type: 'checkout',
-          appointmentId: item.id,
-          can_start_checkout: item.can_start_checkout === true
-        });
-        checkoutBtnHtml = `<button type="button" class="checkout-btn" data-action="checkout" data-action-key="${kCheckout}" title="${escapeHtml(adminT('goToCheckout'))}">${escapeHtml(adminT('goToCheckout'))}</button>`;
+    for (const appt of dayAppointments) {
+      const { staffId, isUnassigned, assistants } = resolveAppointmentPrimaryStaff(appt, currentStaffSnapshot);
+      appt._resolvedAssistants = assistants;
+      if (!isUnassigned && staffId && staffMap.has(staffId)) {
+        staffMap.get(staffId).push(appt);
+      } else {
+        unassignedAppointments.push(appt);
       }
+    }
 
-      let statusBtnsHtml = '';
-      if (canonicalStatus === 'pending') {
-        const kConfirm = String(++localKeySeq);
-        localActionMap.set(kConfirm, { type: 'status', appointmentId: item.id, targetStatus: 'confirmed' });
-        const kCancel = String(++localKeySeq);
-        localActionMap.set(kCancel, { type: 'status', appointmentId: item.id, targetStatus: 'cancelled' });
-        statusBtnsHtml = `<button type="button" data-action="status" data-action-key="${kConfirm}" data-target-status="confirmed">${escapeHtml(adminT('confirm'))}</button><button type="button" data-action="status" data-action-key="${kCancel}" data-target-status="cancelled">${escapeHtml(adminT('cancel'))}</button>`;
-      } else if (canonicalStatus === 'confirmed') {
-        const kArrive = String(++localKeySeq);
-        localActionMap.set(kArrive, { type: 'status', appointmentId: item.id, targetStatus: 'arrived' });
-        const kNoShow = String(++localKeySeq);
-        localActionMap.set(kNoShow, { type: 'status', appointmentId: item.id, targetStatus: 'no_show' });
-        const kCancel = String(++localKeySeq);
-        localActionMap.set(kCancel, { type: 'status', appointmentId: item.id, targetStatus: 'cancelled' });
-        statusBtnsHtml = `<button type="button" data-action="status" data-action-key="${kArrive}" data-target-status="arrived">${escapeHtml(adminT('arrived'))}</button><button type="button" data-action="status" data-action-key="${kNoShow}" data-target-status="no_show">${escapeHtml(adminT('noShow'))}</button><button type="button" data-action="status" data-action-key="${kCancel}" data-target-status="cancelled">${escapeHtml(adminT('cancel'))}</button>`;
-      } else if (canonicalStatus === 'arrived') {
-        const kInService = String(++localKeySeq);
-        localActionMap.set(kInService, { type: 'status', appointmentId: item.id, targetStatus: 'in_service' });
-        statusBtnsHtml = `<button type="button" data-action="status" data-action-key="${kInService}" data-target-status="in_service">${escapeHtml(adminT('in_service'))}</button>`;
-      } else if (canonicalStatus === 'in_service') {
-        const kComplete = String(++localKeySeq);
-        localActionMap.set(kComplete, { type: 'status', appointmentId: item.id, targetStatus: 'completed' });
-        statusBtnsHtml = `<button type="button" data-action="status" data-action-key="${kComplete}" data-target-status="completed">${escapeHtml(adminT('complete'))}</button>`;
-      }
+    const columnsToRender = [...staffCols];
+    if (unassignedAppointments.length > 0 || columnsToRender.length === 0) {
+      const unassignedCol = {
+        id: '__unassigned__',
+        name: adminT('unassignedStaff'),
+        isUnassignedCol: true
+      };
+      columnsToRender.push(unassignedCol);
+      staffMap.set('__unassigned__', unassignedAppointments);
+    }
+
+    const headerColsHtml = columnsToRender.map(staff => {
+      const count = (staffMap.get(staff.id) || []).length;
+      const initials = !staff.isUnassignedCol && globalThis.ggI18n && typeof globalThis.ggI18n.getStaffInitials === 'function'
+        ? globalThis.ggI18n.getStaffInitials(staff.name)
+        : '';
+      const avatarHtml = initials
+        ? `<span class="staff-avatar-initials">${escapeHtml(initials)}</span>`
+        : `<svg class="staff-avatar-fallback-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>`;
 
       return `
-        <tr>
-          <td>
-            ${formatSingaporeTime(
-              item.start_at
-            )}
-          </td>
-          <td class="notranslate" translate="no">
-            ${escapeHtml(item.customer_name || '-')}
-          </td>
-          <td>
-            ${escapeHtml(item.customer_phone || '-')}
-          </td>
-          <td>
-            ${formatServiceCell(item)}
-          </td>
-          <td>
-            ${formatStaffCell(item)}
-          </td>
-          <td>
-            <span class="status ${statusClass}" role="status" aria-label="${escapeHtml(getStatusText(item.status))}">
-              <span class="calendar-status-icon" aria-hidden="true"></span>
-              <span class="status-text">${getStatusText(item.status)}</span>
-            </span>
-            ${getCheckoutBadgeHtml(checkoutFinancialState)}
-          </td>
-          <td>
-  ${statusBtnsHtml}
-  ${checkoutBtnHtml}
-</td>
-</tr>
-`;
-
+        <div class="owner-calendar-staff-header" data-staff-id="${escapeHtml(staff.id)}">
+          <div class="staff-avatar-circle" aria-hidden="true">
+            ${avatarHtml}
+          </div>
+          <div class="owner-calendar-staff-name notranslate" translate="no">${escapeHtml(staff.name || adminT('unassigned'))}</div>
+          <div class="owner-calendar-staff-count">${count} ${escapeHtml(adminT('appointmentsCount'))}</div>
+        </div>
+      `;
     }).join('');
 
-  content.innerHTML = `
-    <table>
+    let timeAxisHtml = '';
+    for (let h = 0; h <= 12; h++) {
+      const hourNum = 9 + h;
+      const timeStr = `${String(hourNum).padStart(2, '0')}:00`;
+      timeAxisHtml += `<div class="owner-calendar-time-tick" style="top: ${h * 75}px;">${escapeHtml(timeStr)}</div>`;
+    }
 
-      <thead>
-        <tr>
-          <th>${escapeHtml(adminT('appointmentTime'))}</th>
-          <th>${escapeHtml(adminT('customerName'))}</th>
-          <th>${escapeHtml(adminT('phone'))}</th>
-          <th>${escapeHtml(adminT('service'))}</th>
-          <th>${escapeHtml(adminT('staff'))}</th>
-          <th>${escapeHtml(adminT('status'))}</th>
-          <th>${escapeHtml(adminT('actions'))}</th>
-        </tr>
-      </thead>
+    const bodyColsHtml = columnsToRender.map(staff => {
+      const colAppointments = staffMap.get(staff.id) || [];
+      const laidOut = layoutColumnAppointments(colAppointments);
 
-      <tbody>
-        ${rows}
-      </tbody>
+      const cardsHtml = laidOut.map(layout => {
+        const item = layout.item;
 
-    </table>
+        const rawStatus = typeof item.status === 'string' ? item.status.trim().toLowerCase() : '';
+        const canonicalStatus = globalThis.ggI18n && typeof globalThis.ggI18n.normalizeAppointmentStatus === 'function'
+          ? globalThis.ggI18n.normalizeAppointmentStatus(rawStatus)
+          : (['pending', 'confirmed', 'arrived', 'in_service', 'completed', 'no_show', 'cancelled'].includes(rawStatus) ? rawStatus : 'unknown');
+
+        const statusClass = escapeHtml(canonicalStatus);
+        const checkoutFinancialState = resolveCheckoutFinancialState(item);
+
+        const canCheckout = (globalScope.FEATURE_CHECKOUT_ENABLED === true) && (canStartCheckout(item) === true);
+        let checkoutBtnHtml = '';
+        if (canCheckout) {
+          const kCheckout = String(++localKeySeq);
+          localActionMap.set(kCheckout, {
+            type: 'checkout',
+            appointmentId: item.id,
+            can_start_checkout: item.can_start_checkout === true
+          });
+          checkoutBtnHtml = `<button type="button" class="checkout-btn" data-action="checkout" data-action-key="${kCheckout}" title="${escapeHtml(adminT('goToCheckout'))}">${escapeHtml(adminT('goToCheckout'))}</button>`;
+        }
+
+        let statusBtnsHtml = '';
+        if (canonicalStatus === 'pending') {
+          const kConfirm = String(++localKeySeq);
+          localActionMap.set(kConfirm, { type: 'status', appointmentId: item.id, targetStatus: 'confirmed' });
+          const kCancel = String(++localKeySeq);
+          localActionMap.set(kCancel, { type: 'status', appointmentId: item.id, targetStatus: 'cancelled' });
+          statusBtnsHtml = `<button type="button" data-action="status" data-action-key="${kConfirm}" data-target-status="confirmed">${escapeHtml(adminT('confirm'))}</button><button type="button" data-action="status" data-action-key="${kCancel}" data-target-status="cancelled">${escapeHtml(adminT('cancel'))}</button>`;
+        } else if (canonicalStatus === 'confirmed') {
+          const kArrive = String(++localKeySeq);
+          localActionMap.set(kArrive, { type: 'status', appointmentId: item.id, targetStatus: 'arrived' });
+          const kNoShow = String(++localKeySeq);
+          localActionMap.set(kNoShow, { type: 'status', appointmentId: item.id, targetStatus: 'no_show' });
+          const kCancel = String(++localKeySeq);
+          localActionMap.set(kCancel, { type: 'status', appointmentId: item.id, targetStatus: 'cancelled' });
+          statusBtnsHtml = `<button type="button" data-action="status" data-action-key="${kArrive}" data-target-status="arrived">${escapeHtml(adminT('arrived'))}</button><button type="button" data-action="status" data-action-key="${kNoShow}" data-target-status="no_show">${escapeHtml(adminT('noShow'))}</button><button type="button" data-action="status" data-action-key="${kCancel}" data-target-status="cancelled">${escapeHtml(adminT('cancel'))}</button>`;
+        } else if (canonicalStatus === 'arrived') {
+          const kInService = String(++localKeySeq);
+          localActionMap.set(kInService, { type: 'status', appointmentId: item.id, targetStatus: 'in_service' });
+          statusBtnsHtml = `<button type="button" data-action="status" data-action-key="${kInService}" data-target-status="in_service">${escapeHtml(adminT('in_service'))}</button>`;
+        } else if (canonicalStatus === 'in_service') {
+          const kComplete = String(++localKeySeq);
+          localActionMap.set(kComplete, { type: 'status', appointmentId: item.id, targetStatus: 'completed' });
+          statusBtnsHtml = `<button type="button" data-action="status" data-action-key="${kComplete}" data-target-status="completed">${escapeHtml(adminT('complete'))}</button>`;
+        }
+
+        const topPx = Math.max(0, (Math.min(1260, layout.startMin) - 540) * 1.25);
+        const bottomPx = Math.min(900, (Math.min(1260, layout.endMin) - 540) * 1.25);
+        const heightPx = Math.max(44, bottomPx - topPx);
+        const widthPercent = (100 / layout.totalLanes).toFixed(2);
+        const leftPercent = ((layout.lane * 100) / layout.totalLanes).toFixed(2);
+        const style = `top:${topPx.toFixed(1)}px;height:${heightPx.toFixed(1)}px;left:calc(${leftPercent}% + 3px);width:calc(${widthPercent}% - 6px);`;
+
+        let serviceSummary = '-';
+        if (Array.isArray(item.items) && item.items.length > 0) {
+          serviceSummary = item.items.map(s => s?.service_name_snapshot || s?.service_name).filter(Boolean).join(', ') || '-';
+        } else if (item.service_name) {
+          serviceSummary = item.service_name;
+        }
+
+        const assistants = item._resolvedAssistants || [];
+        const assistantHtml = assistants.length > 0
+          ? `<div class="calendar-card-assistant notranslate" translate="no">${escapeHtml(adminT('assistantStaff'))}: ${escapeHtml(assistants.join(', '))}</div>`
+          : '';
+
+        const overlapBadgeHtml = layout.hasOverlap
+          ? `<span class="calendar-card-conflict">${escapeHtml(adminT('appointmentOverlap'))}</span>`
+          : '';
+
+        const timeDisplay = `${formatSingaporeHourMinute(item.start_at)} - ${formatSingaporeHourMinute(item.end_at)}`;
+
+        return `
+          <div class="owner-calendar-appointment status-${statusClass}${layout.hasOverlap ? ' has-overlap' : ''}" style="${style}" tabindex="0" role="article" aria-label="${escapeHtml(item.customer_name || '')} ${escapeHtml(timeDisplay)} ${escapeHtml(getStatusText(item.status))}">
+            <div class="calendar-card-header">
+              <span class="calendar-card-time">${escapeHtml(timeDisplay)}</span>
+              <span class="calendar-status-pill status-${statusClass}" role="status" aria-label="${escapeHtml(getStatusText(item.status))}">
+                <span class="calendar-status-icon" aria-hidden="true"></span>
+                <span class="status-text">${getStatusText(item.status)}</span>
+              </span>
+            </div>
+            <div class="calendar-card-customer notranslate" translate="no">${escapeHtml(item.customer_name || '-')}</div>
+            <div class="calendar-card-service notranslate" translate="no">${escapeHtml(serviceSummary)}</div>
+            ${assistantHtml}
+            ${overlapBadgeHtml}
+            ${getCheckoutBadgeHtml(checkoutFinancialState)}
+            ${(statusBtnsHtml || checkoutBtnHtml) ? `<div class="calendar-card-actions">${statusBtnsHtml}${checkoutBtnHtml}</div>` : ''}
+          </div>
+        `;
+      }).join('');
+
+      return `
+        <div class="owner-calendar-staff-column" data-staff-id="${escapeHtml(staff.id)}">
+          ${cardsHtml}
+        </div>
+      `;
+    }).join('');
+
+    content.className = '';
+    content.setAttribute?.('aria-busy', 'false');
+    content.innerHTML = `
+      <div class="owner-calendar-wrapper" role="region" aria-label="${escapeHtml(adminT('calendar'))}">
+        <div class="owner-calendar-grid">
+          <div class="owner-calendar-header-row">
+            <div class="owner-calendar-corner" aria-hidden="true">TIME</div>
+            ${headerColsHtml}
+          </div>
+          <div class="owner-calendar-body">
+            <div class="owner-calendar-time-axis" aria-hidden="true">
+              ${timeAxisHtml}
+            </div>
+            ${bodyColsHtml}
+          </div>
+        </div>
+      </div>
+    `;
+  } else {
+    if (
+      !currentAppointmentsSnapshot ||
+      currentAppointmentsSnapshot.length === 0
+    ) {
+      content.className = 'empty';
+      content.setAttribute?.('aria-busy', 'false');
+      content.innerHTML = '';
+      content.textContent = adminT('noAppointments');
+      return;
+    }
+
+    content.className = '';
+    content.setAttribute?.('aria-busy', 'false');
+
+    const rows =
+      currentAppointmentsSnapshot.map(rawItem => {
+        const item = rawItem || {};
+
+        const rawStatus = typeof item.status === 'string' ? item.status.trim().toLowerCase() : '';
+        const canonicalStatus = globalThis.ggI18n && typeof globalThis.ggI18n.normalizeAppointmentStatus === 'function'
+          ? globalThis.ggI18n.normalizeAppointmentStatus(rawStatus)
+          : (['pending', 'confirmed', 'arrived', 'in_service', 'completed', 'no_show', 'cancelled'].includes(rawStatus) ? rawStatus : 'unknown');
+
+        const statusClass =
+          escapeHtml(canonicalStatus);
+
+        const checkoutFinancialState =
+          resolveCheckoutFinancialState(item);
+
+        const canCheckout = (globalScope.FEATURE_CHECKOUT_ENABLED === true) && (canStartCheckout(item) === true);
+        let checkoutBtnHtml = '';
+        if (canCheckout) {
+          const kCheckout = String(++localKeySeq);
+          localActionMap.set(kCheckout, {
+            type: 'checkout',
+            appointmentId: item.id,
+            can_start_checkout: item.can_start_checkout === true
+          });
+          checkoutBtnHtml = `<button type="button" class="checkout-btn" data-action="checkout" data-action-key="${kCheckout}" title="${escapeHtml(adminT('goToCheckout'))}">${escapeHtml(adminT('goToCheckout'))}</button>`;
+        }
+
+        let statusBtnsHtml = '';
+        if (canonicalStatus === 'pending') {
+          const kConfirm = String(++localKeySeq);
+          localActionMap.set(kConfirm, { type: 'status', appointmentId: item.id, targetStatus: 'confirmed' });
+          const kCancel = String(++localKeySeq);
+          localActionMap.set(kCancel, { type: 'status', appointmentId: item.id, targetStatus: 'cancelled' });
+          statusBtnsHtml = `<button type="button" data-action="status" data-action-key="${kConfirm}" data-target-status="confirmed">${escapeHtml(adminT('confirm'))}</button><button type="button" data-action="status" data-action-key="${kCancel}" data-target-status="cancelled">${escapeHtml(adminT('cancel'))}</button>`;
+        } else if (canonicalStatus === 'confirmed') {
+          const kArrive = String(++localKeySeq);
+          localActionMap.set(kArrive, { type: 'status', appointmentId: item.id, targetStatus: 'arrived' });
+          const kNoShow = String(++localKeySeq);
+          localActionMap.set(kNoShow, { type: 'status', appointmentId: item.id, targetStatus: 'no_show' });
+          const kCancel = String(++localKeySeq);
+          localActionMap.set(kCancel, { type: 'status', appointmentId: item.id, targetStatus: 'cancelled' });
+          statusBtnsHtml = `<button type="button" data-action="status" data-action-key="${kArrive}" data-target-status="arrived">${escapeHtml(adminT('arrived'))}</button><button type="button" data-action="status" data-action-key="${kNoShow}" data-target-status="no_show">${escapeHtml(adminT('noShow'))}</button><button type="button" data-action="status" data-action-key="${kCancel}" data-target-status="cancelled">${escapeHtml(adminT('cancel'))}</button>`;
+        } else if (canonicalStatus === 'arrived') {
+          const kInService = String(++localKeySeq);
+          localActionMap.set(kInService, { type: 'status', appointmentId: item.id, targetStatus: 'in_service' });
+          statusBtnsHtml = `<button type="button" data-action="status" data-action-key="${kInService}" data-target-status="in_service">${escapeHtml(adminT('in_service'))}</button>`;
+        } else if (canonicalStatus === 'in_service') {
+          const kComplete = String(++localKeySeq);
+          localActionMap.set(kComplete, { type: 'status', appointmentId: item.id, targetStatus: 'completed' });
+          statusBtnsHtml = `<button type="button" data-action="status" data-action-key="${kComplete}" data-target-status="completed">${escapeHtml(adminT('complete'))}</button>`;
+        }
+
+        return `
+          <tr>
+            <td>
+              ${formatSingaporeTime(
+                item.start_at
+              )}
+            </td>
+            <td class="notranslate" translate="no">
+              ${escapeHtml(item.customer_name || '-')}
+            </td>
+            <td>
+              ${escapeHtml(item.customer_phone || '-')}
+            </td>
+            <td>
+              ${formatServiceCell(item)}
+            </td>
+            <td>
+              ${formatStaffCell(item)}
+            </td>
+            <td>
+              <span class="status ${statusClass}" role="status" aria-label="${escapeHtml(getStatusText(item.status))}">
+                <span class="calendar-status-icon" aria-hidden="true"></span>
+                <span class="status-text">${getStatusText(item.status)}</span>
+              </span>
+              ${getCheckoutBadgeHtml(checkoutFinancialState)}
+            </td>
+            <td>
+    ${statusBtnsHtml}
+    ${checkoutBtnHtml}
+  </td>
+  </tr>
   `;
+
+      }).join('');
+
+    content.innerHTML = `
+      <table>
+
+        <thead>
+          <tr>
+            <th>${escapeHtml(adminT('appointmentTime'))}</th>
+            <th>${escapeHtml(adminT('customerName'))}</th>
+            <th>${escapeHtml(adminT('phone'))}</th>
+            <th>${escapeHtml(adminT('service'))}</th>
+            <th>${escapeHtml(adminT('staff'))}</th>
+            <th>${escapeHtml(adminT('status'))}</th>
+            <th>${escapeHtml(adminT('actions'))}</th>
+          </tr>
+        </thead>
+
+        <tbody>
+          ${rows}
+        </tbody>
+
+      </table>
+    `;
+  }
 
   if (typeof content?.querySelectorAll === 'function') {
     const buttons = content.querySelectorAll('button[data-action-key]');
@@ -1309,7 +1934,10 @@ function setAdminLocale(locale) {
   const activeLocale = globalThis.ownerSelfService?._state?.locale || locale;
   if (zhBtn) zhBtn.disabled = activeLocale === 'zh-CN';
   if (enBtn) enBtn.disabled = activeLocale === 'en';
-  if (typeof renderAppointmentsView === 'function' && currentAppointmentsSnapshot.length > 0) {
+  if (typeof updateCalendarToolbarUI === 'function') {
+    updateCalendarToolbarUI();
+  }
+  if (typeof renderAppointmentsView === 'function' && (currentAppointmentsSnapshot.length > 0 || currentViewMode === 'calendar')) {
     renderAppointmentsView();
   }
 }
@@ -1346,6 +1974,9 @@ function showLogin(message = '') {
 function showAdmin() {
   loginOverlay.style.display = 'none';
   adminContent.hidden = false;
+  if (typeof setupCalendarToolbar === 'function') {
+    setupCalendarToolbar();
+  }
 }
 
 async function initializeAdmin() {
@@ -1512,24 +2143,38 @@ async function loadAppointments() {
 
   try {
 
-    const response =
-      await fetch('/api/appointments-db', {
-        credentials: 'same-origin'
-      });
+    const [appointmentsResponse, staffResponse] =
+      await Promise.all([
+        fetch('/api/appointments-db', {
+          credentials: 'same-origin'
+        }),
+        fetch('/api/owner/staff', {
+          credentials: 'same-origin'
+        }).catch(() => null)
+      ]);
 
     const result =
-      await response.json();
+      await appointmentsResponse.json();
 
-    if (response.status === 401 || response.status === 403) {
+    if (appointmentsResponse.status === 401 || appointmentsResponse.status === 403) {
       showLogin(adminT('sessionExpired'));
 
       return;
     }
 
-    if (!response.ok || !result.success) {
+    if (!appointmentsResponse.ok || !result.success) {
       throw new Error(
         adminResultMessage(result, 'error')
       );
+    }
+
+    if (staffResponse && staffResponse.ok) {
+      try {
+        const staffResult = await staffResponse.json();
+        if (staffResult && staffResult.success && Array.isArray(staffResult.data)) {
+          currentStaffSnapshot = cloneStaff(staffResult.data);
+        }
+      } catch (_) {}
     }
 
     const appointments =
@@ -1650,7 +2295,12 @@ async function updateAppointmentStatus(id, status) {
 
 document.addEventListener(
   'DOMContentLoaded',
-  initializeAdmin
+  () => {
+    if (typeof setupCalendarToolbar === 'function') {
+      setupCalendarToolbar();
+    }
+    return initializeAdmin();
+  }
 );
 
 </script>

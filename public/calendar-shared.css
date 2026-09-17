@@ -544,3 +544,438 @@ a:focus-visible {
   width: 7px;
   height: 7px;
 }
+
+/* ==========================================================================
+   C3: Owner / Front Desk iPad Multi-Staff Calendar Grid
+   ========================================================================== */
+
+/* Appointments View Toolbar (List / Calendar switch & Date navigation) */
+.appointments-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.calendar-date-nav {
+  display: none;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.calendar-date-nav.visible {
+  display: inline-flex;
+}
+
+.calendar-nav-btn {
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  border: 1px solid var(--line, #e2e8f0);
+  background: var(--surface, #ffffff);
+  color: var(--text, #1e293b);
+  font-size: 1.15rem;
+  cursor: pointer;
+  box-sizing: border-box;
+}
+
+.calendar-current-date {
+  font-weight: 700;
+  font-size: 15px;
+  color: var(--text, #1e293b);
+  padding: 0 4px;
+  min-width: 100px;
+  text-align: center;
+}
+
+.calendar-today-btn {
+  min-width: 44px;
+  height: 44px;
+  min-height: 44px;
+  padding: 0 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  border: 1px solid var(--line, #e2e8f0);
+  background: var(--surface, #ffffff);
+  color: var(--text, #1e293b);
+  font-weight: 600;
+  font-size: 14px;
+  cursor: pointer;
+  box-sizing: border-box;
+}
+
+.calendar-date-input {
+  height: 44px;
+  min-height: 44px;
+  padding: 0 10px;
+  border-radius: 8px;
+  border: 1px solid var(--line, #e2e8f0);
+  background: var(--surface, #ffffff);
+  color: var(--text, #1e293b);
+  font-size: 13px;
+  box-sizing: border-box;
+}
+
+.view-switch-group {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--line, #e2e8f0);
+  border-radius: 10px;
+  background: var(--surface, #ffffff);
+  padding: 2px 4px;
+  gap: 2px;
+}
+
+.view-switch-sep {
+  color: var(--line, #cbd5e1);
+  padding: 0 2px;
+  user-select: none;
+}
+
+.view-switch-btn {
+  min-width: 60px;
+  height: 44px;
+  min-height: 44px;
+  padding: 0 12px;
+  border: none;
+  background: transparent;
+  font-weight: 600;
+  font-size: 14px;
+  border-radius: 8px;
+  cursor: pointer;
+  color: var(--muted, #68737d);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s ease, color 0.15s ease;
+  box-sizing: border-box;
+}
+
+.view-switch-btn.active {
+  background: var(--text, #111827);
+  color: #ffffff;
+}
+
+/* Owner Multi-Staff Grid Container (iPad & Desktop optimized) */
+.owner-calendar-wrapper {
+  position: relative;
+  border: 1px solid var(--line, #e2e8f0);
+  border-radius: 12px;
+  background: var(--surface, #ffffff);
+  overflow: auto;
+  max-height: 780px;
+  -webkit-overflow-scrolling: touch;
+}
+
+.owner-calendar-grid {
+  display: flex;
+  flex-direction: column;
+  min-width: 100%;
+  width: max-content;
+  position: relative;
+}
+
+/* Grid Sticky Header Row */
+.owner-calendar-header-row {
+  display: flex;
+  position: sticky;
+  top: 0;
+  z-index: 12;
+  background: rgba(255, 255, 255, 0.98);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--line, #e2e8f0);
+}
+
+.owner-calendar-corner {
+  width: 64px;
+  min-width: 64px;
+  position: sticky;
+  left: 0;
+  top: 0;
+  z-index: 14;
+  background: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--muted, #68737d);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  border-right: 1px solid var(--line, #e2e8f0);
+  box-sizing: border-box;
+}
+
+.owner-calendar-staff-header {
+  width: 220px;
+  min-width: 180px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 8px;
+  gap: 4px;
+  border-right: 1px solid var(--line, #e2e8f0);
+  box-sizing: border-box;
+  text-align: center;
+}
+
+.owner-calendar-staff-header:last-child {
+  border-right: none;
+}
+
+.owner-calendar-staff-header .staff-avatar-circle {
+  width: 48px;
+  height: 48px;
+  min-width: 48px;
+  min-height: 48px;
+  font-size: 16px;
+}
+
+.owner-calendar-staff-name {
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: var(--text, #172027);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.owner-calendar-staff-count {
+  font-size: 0.74rem;
+  color: var(--muted, #68737d);
+  background: rgba(0, 0, 0, 0.04);
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+
+/* Grid Body */
+.owner-calendar-body {
+  display: flex;
+  position: relative;
+  min-height: 900px;
+  height: 900px;
+}
+
+.owner-calendar-time-axis {
+  width: 64px;
+  min-width: 64px;
+  position: sticky;
+  left: 0;
+  z-index: 10;
+  background: #ffffff;
+  border-right: 1px solid var(--line, #e2e8f0);
+  box-sizing: border-box;
+}
+
+.owner-calendar-time-tick {
+  position: absolute;
+  left: 0;
+  width: 100%;
+  text-align: right;
+  padding-right: 8px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--muted, #68737d);
+  transform: translateY(-50%);
+  user-select: none;
+  box-sizing: border-box;
+}
+
+.owner-calendar-staff-column {
+  width: 220px;
+  min-width: 180px;
+  flex: 1;
+  position: relative;
+  border-right: 1px solid var(--line, #e2e8f0);
+  box-sizing: border-box;
+  background-image: repeating-linear-gradient(
+    to bottom,
+    transparent 0,
+    transparent 74px,
+    var(--line, #f1f5f9) 75px
+  );
+}
+
+.owner-calendar-staff-column:last-child {
+  border-right: none;
+}
+
+/* Owner Appointment Card on Timeline */
+.owner-calendar-appointment {
+  position: absolute;
+  overflow: hidden;
+  box-sizing: border-box;
+  border-radius: 8px;
+  border: 1px solid var(--line, #e2e8f0);
+  border-left: 4px solid var(--status-color, #64748b);
+  background: var(--surface, #ffffff);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06);
+  padding: 6px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  z-index: 4;
+  text-align: left;
+  transition: box-shadow 0.15s ease;
+  min-height: 44px;
+}
+
+.owner-calendar-appointment:hover,
+.owner-calendar-appointment:focus-visible {
+  z-index: 8;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12);
+}
+
+.owner-calendar-appointment.has-overlap {
+  border-right: 2px dashed rgba(220, 38, 38, 0.4);
+}
+
+/* Status variants */
+.owner-calendar-appointment.status-pending {
+  --status-color: #c69a3a;
+  background: #fffdf5;
+}
+
+.owner-calendar-appointment.status-confirmed {
+  --status-color: var(--status-confirmed, #2563eb);
+  background: #f0f7ff;
+}
+
+.owner-calendar-appointment.status-arrived {
+  --status-color: #059669;
+  background: #ecfdf5;
+}
+
+.owner-calendar-appointment.status-in_service {
+  --status-color: #0d9488;
+  background: #f0fdfa;
+}
+
+.owner-calendar-appointment.status-completed {
+  --status-color: #475569;
+  background: #f8fafc;
+}
+
+.owner-calendar-appointment.status-no_show {
+  --status-color: #dc2626;
+  background: #fef2f2;
+}
+
+.owner-calendar-appointment.status-cancelled {
+  --status-color: #94a3b8;
+  background: #f8fafc;
+  opacity: 0.78;
+}
+
+.owner-calendar-appointment.status-unknown {
+  --status-color: #64748b;
+  background: #f1f5f9;
+}
+
+/* Inside Appointment Card */
+.calendar-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  font-size: 0.72rem;
+  font-weight: 750;
+  color: var(--text, #1e293b);
+}
+
+.calendar-card-time {
+  white-space: nowrap;
+}
+
+.calendar-card-header .calendar-status-pill {
+  padding: 1px 6px;
+  font-size: 10px;
+  gap: 3px;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+
+.calendar-card-header .calendar-status-icon {
+  width: 6px;
+  height: 6px;
+}
+
+.calendar-card-customer {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--text, #0f172a);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.calendar-card-service {
+  font-size: 0.74rem;
+  color: #475569;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.calendar-card-assistant {
+  font-size: 0.7rem;
+  color: var(--muted, #68737d);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.calendar-card-conflict {
+  font-size: 0.68rem;
+  color: #b91c1c;
+  font-weight: 600;
+}
+
+.calendar-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: auto;
+  padding-top: 4px;
+  flex-wrap: wrap;
+}
+
+.calendar-card-actions button {
+  min-height: 44px;
+  min-width: 44px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 6px;
+  border: 1px solid var(--line, #cbd5e1);
+  background: var(--surface, #ffffff);
+  color: var(--text, #1e293b);
+  cursor: pointer;
+  box-sizing: border-box;
+}
+
+.calendar-card-actions button.checkout-btn {
+  background: #111827;
+  color: #ffffff;
+  border-color: #111827;
+}
+
+.calendar-empty-notice {
+  padding: 32px;
+  text-align: center;
+  color: var(--muted, #68737d);
+  font-size: 14px;
+}
