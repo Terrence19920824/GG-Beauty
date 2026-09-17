@@ -76,6 +76,9 @@ const withTestServer = async (configurePools, operation) => {
   try {
     return await operation({ baseUrl, state });
   } finally {
+    if (typeof server.closeAllConnections === 'function') {
+      server.closeAllConnections();
+    }
     await new Promise((resolve, reject) => {
       server.close((err) => (err ? reject(err) : resolve()));
     });
@@ -160,6 +163,8 @@ test('3. Owner calendar context: authorized roles (owner, manager, admin) return
           headers: { cookie: 'gg_beauty_owner_session=test-token' }
         });
         assert.strictEqual(res.status, 200);
+        assert.strictEqual(res.headers.get('cache-control'), 'no-store, private, max-age=0');
+        assert.strictEqual(res.headers.get('pragma'), 'no-cache');
         const json = await res.json();
         assert.strictEqual(json.success, true);
         assert.ok(json.data);
@@ -288,6 +293,8 @@ test('7. Owner calendar context: response structure is strictly { server_now, ti
         headers: { cookie: 'gg_beauty_owner_session=test-token' }
       });
       assert.strictEqual(res.status, 200);
+      assert.strictEqual(res.headers.get('cache-control'), 'no-store, private, max-age=0');
+      assert.strictEqual(res.headers.get('pragma'), 'no-cache');
       const json = await res.json();
       assert.strictEqual(json.success, true);
       const keys = Object.keys(json.data).sort();
@@ -406,6 +413,8 @@ test('11. Staff appointments: server_now is additive and does not break original
         headers: { cookie: 'gg_beauty_staff_session=test-token' }
       });
       assert.strictEqual(res.status, 200);
+      assert.strictEqual(res.headers.get('cache-control'), 'no-store, private, max-age=0');
+      assert.strictEqual(res.headers.get('pragma'), 'no-cache');
       const json = await res.json();
       assert.strictEqual(json.success, true);
       assert.ok(json.data.server_now, 'server_now must be present');
@@ -601,11 +610,52 @@ test('14. Production globalScope and window internal exposure audit: all request
     'staffLiveTimerId',
     'authoritativeServerNowMs',
     'timeAnchor',
-    'lateIndicatorDispatcher'
+    'lateIndicatorDispatcher',
+    'calendarContextGeneration',
+    'calendarContextAbortController',
+    'currentRequestedLocationId',
+    'fetchCalendarContext',
+    'staffRequestGeneration',
+    'staffAbortController'
   ];
 
   for (const name of forbiddenNames) {
-    assert.strictEqual(context[name], undefined, `Global/window variable '${name}' must be undefined`);
+    assert.strictEqual(context[name], undefined, `Global/window variable '${name}' must be undefined in admin.html`);
+  }
+
+  const makeMockStaffElement = () => ({
+    classList: { add() {}, remove() {}, toggle() {}, contains: () => false },
+    className: { baseVal: '' },
+    setAttribute() {}, getAttribute: () => null, replaceChildren() {}, appendChild() {},
+    querySelector: () => null, querySelectorAll: () => [], addEventListener() {}, hidden: false, style: {}
+  });
+
+  const staffContext = {
+    console, Date, Intl, JSON,
+    navigator: { languages: ['zh-CN'] },
+    localStorage: { getItem: () => 'zh-CN', setItem: () => {} },
+    performance: { now: () => 1000 },
+    setInterval: () => 1, clearInterval: () => {},
+    document: {
+      documentElement: { lang: '' },
+      getElementById: () => makeMockStaffElement(),
+      querySelectorAll: () => [],
+      querySelector: () => makeMockStaffElement(),
+      createElement: () => makeMockStaffElement(),
+      createElementNS: () => makeMockStaffElement(),
+      addEventListener: () => {},
+      visibilityState: 'visible'
+    },
+    window: { addEventListener: () => {}, location: { href: '' } },
+    globalThis: {},
+    fetch: async () => ({ ok: true, json: async () => ({}) }),
+    ggI18n: i18n
+  };
+
+  vm.runInNewContext(staffScriptMatch[1], staffContext, { filename: 'public/staff-appointments.html' });
+
+  for (const name of forbiddenNames) {
+    assert.strictEqual(staffContext[name], undefined, `Global/window variable '${name}' must be undefined in staff-appointments.html`);
   }
 });
 
@@ -949,4 +999,543 @@ test('24. Pure single-language mode: zh-CN contains zero English tokens and en c
     assert.doesNotMatch(en, /[\u4e00-\u9fa5]/, `en key ${key} must not contain Chinese characters`);
     assert.doesNotMatch(en, /\//, `en key ${key} must not contain bilingual slashes`);
   }
+});
+
+// ============================================================================
+// VI. ASYNC RACE PROTECTION & CACHE-CONTROL AUDIT TESTS
+// ============================================================================
+
+function createAdminTestContext({ elements, fetch = async () => ({ ok: true, status: 200, json: async () => ({}) }), setInterval = () => 1, clearInterval = () => {}, listeners = new Map(), perfNow = () => 1000 }) {
+  const context = {
+    console, Date, Intl, JSON,
+    performance: { now: perfNow },
+    setInterval,
+    clearInterval,
+    document: {
+      getElementById: (id) => elements.get(id) || null,
+      querySelectorAll: () => [],
+      addEventListener: (evt, fn) => {
+        if (!listeners.has(evt)) listeners.set(evt, []);
+        listeners.get(evt).push(fn);
+      },
+      visibilityState: 'visible'
+    },
+    window: {
+      addEventListener: (evt, fn) => {
+        if (!listeners.has(evt)) listeners.set(evt, []);
+        listeners.get(evt).push(fn);
+      }
+    },
+    fetch,
+    alert: () => {},
+    confirm: () => true,
+    FEATURE_CHECKOUT_ENABLED: false,
+    ggI18n: i18n,
+    ownerSelfService: {
+      _state: { locale: 'zh-CN' },
+      setLocale(loc) { this._state.locale = loc; },
+      setProfile() {},
+      reset() {}
+    }
+  };
+  context.globalThis = context;
+  return context;
+}
+
+test('25. Client fetch requests explicitly specify cache: "no-store" in admin and staff pages', async () => {
+  const fetchCalls = [];
+  const elements = createAdminTestDOM();
+
+  const context = createAdminTestContext({
+    elements,
+    fetch: async (url, opts) => {
+      fetchCalls.push({ url, opts });
+      if (url.includes('/api/owner/calendar-context')) {
+        return {
+          ok: true, status: 200,
+          json: async () => ({
+            success: true,
+            data: { server_now: new Date().toISOString(), timezone: 'Asia/Singapore', location_id: ID.locationA1 }
+          })
+        };
+      }
+      return { ok: true, status: 200, json: async () => ({ success: true, data: [] }) };
+    }
+  });
+
+  vm.runInNewContext(adminScriptMatch[1], context, { filename: 'public/admin.html' });
+
+  // Simulate admin me and loadAppointments
+  await context.initializeAdmin();
+
+  const calendarContextFetch = fetchCalls.find(c => c.url.includes('/api/owner/calendar-context'));
+  assert.ok(calendarContextFetch, 'calendar-context fetch must be invoked');
+  assert.strictEqual(calendarContextFetch.opts.cache, 'no-store', 'calendar-context must specify cache: "no-store"');
+
+  const appointmentsFetch = fetchCalls.find(c => c.url.includes('/api/appointments-db'));
+  assert.ok(appointmentsFetch, 'appointments-db fetch must be invoked');
+  assert.strictEqual(appointmentsFetch.opts.cache, 'no-store', 'appointments-db must specify cache: "no-store"');
+
+  // Also verify staff fetchJson uses cache: 'no-store'
+  const staffFetchCalls = [];
+  const makeMockStaffElement = () => ({
+    classList: { add() {}, remove() {}, toggle() {}, contains: () => false },
+    className: { baseVal: '' },
+    setAttribute() {}, getAttribute: () => null, replaceChildren() {}, appendChild() {},
+    querySelector: () => null, querySelectorAll: () => [], addEventListener() {}, hidden: false, style: {}
+  });
+
+  const staffContext = {
+    console, Date, Intl, JSON,
+    navigator: { languages: ['zh-CN'] },
+    localStorage: { getItem: () => 'zh-CN', setItem: () => {} },
+    performance: { now: () => 500 },
+    setInterval: () => 1, clearInterval: () => {},
+    document: {
+      documentElement: { lang: '' },
+      getElementById: () => makeMockStaffElement(),
+      querySelectorAll: () => [],
+      querySelector: () => makeMockStaffElement(),
+      createElement: () => makeMockStaffElement(),
+      createElementNS: () => makeMockStaffElement(),
+      addEventListener: () => {},
+      visibilityState: 'visible'
+    },
+    window: { addEventListener: () => {}, location: { href: '' } },
+    globalThis: {},
+    fetch: async (url, opts) => {
+      staffFetchCalls.push({ url, opts });
+      return {
+        ok: true, status: 200,
+        json: async () => ({
+          success: true,
+          data: {
+            staff: { name: 'Staff A' },
+            location: { name: 'Location A' },
+            selected_date: '2030-01-01',
+            date: '2030-01-01',
+            timezone: 'Asia/Singapore',
+            server_now: new Date().toISOString(),
+            appointments: []
+          }
+        })
+      };
+    },
+    ggI18n: i18n
+  };
+
+  vm.runInNewContext(staffScriptMatch[1], staffContext, { filename: 'public/staff-appointments.html' });
+  await new Promise(resolve => setTimeout(resolve, 50));
+  const staffApptFetch = staffFetchCalls.find(c => c.url.includes('/api/staff/appointments'));
+  assert.ok(staffApptFetch, 'staff appointments fetch must be invoked');
+  assert.strictEqual(staffApptFetch.opts.cache, 'no-store', 'staff appointments fetch must specify cache: "no-store"');
+});
+
+test('26. Stale response after ownerLogout: delayed calendar-context 200 response does NOT set timeAnchor or start timers', async () => {
+  const elements = createAdminTestDOM();
+  const activeIntervals = new Set();
+  let nextIntervalId = 500;
+
+  let resolveDelayedContext = null;
+  const delayedContextPromise = new Promise(resolve => {
+    resolveDelayedContext = resolve;
+  });
+
+  const context = createAdminTestContext({
+    elements,
+    setInterval: () => {
+      const id = ++nextIntervalId;
+      activeIntervals.add(id);
+      return { _id: id, unref: () => {} };
+    },
+    clearInterval: (handle) => {
+      activeIntervals.delete(handle?._id || handle);
+    },
+    fetch: async (url) => {
+      if (url.includes('/api/owner/calendar-context')) {
+        return await delayedContextPromise;
+      }
+      if (url.includes('/api/owner/logout')) {
+        return { ok: true, status: 200, json: async () => ({ success: true }) };
+      }
+      return { ok: true, status: 200, json: async () => ({ success: true, data: [] }) };
+    }
+  });
+
+  vm.runInNewContext(adminScriptMatch[1], context, { filename: 'public/admin.html' });
+
+  // 1. Trigger loadAppointments (dispatches calendar-context fetch)
+  const loadPromise = context.loadAppointments();
+
+  // 2. User logs out while fetch is still in flight
+  await context.ownerLogout();
+
+  // 3. Delayed calendar-context returns 200 after logout
+  resolveDelayedContext({
+    ok: true, status: 200,
+    json: async () => ({
+      success: true,
+      data: { server_now: new Date().toISOString(), timezone: 'Asia/Singapore', location_id: ID.locationA1 }
+    })
+  });
+
+  await loadPromise;
+
+  // 4. Assert timers remain 0, loginOverlay remains visible, content shows loginRequired
+  assert.strictEqual(activeIntervals.size, 0, 'No timer must be running after logout despite delayed 200 response');
+  assert.strictEqual(elements.get('adminContent').hidden, true, 'adminContent must remain hidden');
+  assert.strictEqual(elements.get('loginOverlay').style.display, 'flex', 'loginOverlay must remain visible');
+  assert.strictEqual(elements.get('content').textContent, '请先登录后查看预约', 'Protected content must not be restored');
+});
+
+test('27. Stale response after showLogin: delayed calendar-context 200 response does NOT set timeAnchor or start timers', async () => {
+  const elements = createAdminTestDOM();
+  const activeIntervals = new Set();
+  let nextIntervalId = 600;
+
+  let resolveDelayedContext = null;
+  const delayedContextPromise = new Promise(resolve => {
+    resolveDelayedContext = resolve;
+  });
+
+  const context = createAdminTestContext({
+    elements,
+    setInterval: () => {
+      const id = ++nextIntervalId;
+      activeIntervals.add(id);
+      return { _id: id, unref: () => {} };
+    },
+    clearInterval: (handle) => {
+      activeIntervals.delete(handle?._id || handle);
+    },
+    fetch: async (url) => {
+      if (url.includes('/api/owner/calendar-context')) {
+        return await delayedContextPromise;
+      }
+      return { ok: true, status: 200, json: async () => ({ success: true, data: [] }) };
+    }
+  });
+
+  vm.runInNewContext(adminScriptMatch[1], context, { filename: 'public/admin.html' });
+
+  const loadPromise = context.loadAppointments();
+
+  // Invalidate session via showLogin while fetch is in-flight
+  context.showLogin('Session reset');
+
+  // Delayed response returns 200
+  resolveDelayedContext({
+    ok: true, status: 200,
+    json: async () => ({
+      success: true,
+      data: { server_now: new Date().toISOString(), timezone: 'Asia/Singapore', location_id: ID.locationA1 }
+    })
+  });
+
+  await loadPromise;
+
+  assert.strictEqual(activeIntervals.size, 0, 'No timers must be running after showLogin');
+  assert.strictEqual(elements.get('adminContent').hidden, true);
+});
+
+test('28. 401/403 in appointments-db discards in-flight calendar-context response and terminates timers', async () => {
+  const elements = createAdminTestDOM();
+  const activeIntervals = new Set();
+  let nextIntervalId = 700;
+
+  let resolveDelayedContext = null;
+  const delayedContextPromise = new Promise(resolve => {
+    resolveDelayedContext = resolve;
+  });
+
+  const context = createAdminTestContext({
+    elements,
+    setInterval: () => {
+      const id = ++nextIntervalId;
+      activeIntervals.add(id);
+      return { _id: id, unref: () => {} };
+    },
+    clearInterval: (handle) => {
+      activeIntervals.delete(handle?._id || handle);
+    },
+    fetch: async (url) => {
+      if (url.includes('/api/appointments-db')) {
+        return { ok: false, status: 401, json: async () => ({ success: false, message: 'unauthorized' }) };
+      }
+      if (url.includes('/api/owner/calendar-context')) {
+        return await delayedContextPromise;
+      }
+      return { ok: true, status: 200, json: async () => ({ success: true, data: [] }) };
+    }
+  });
+
+  vm.runInNewContext(adminScriptMatch[1], context, { filename: 'public/admin.html' });
+
+  const loadPromise = context.loadAppointments();
+
+  // Delayed calendar-context resolves AFTER 401 was processed
+  await new Promise(r => setTimeout(r, 10));
+  resolveDelayedContext({
+    ok: true, status: 200,
+    json: async () => ({
+      success: true,
+      data: { server_now: new Date().toISOString(), timezone: 'Asia/Singapore', location_id: ID.locationA1 }
+    })
+  });
+
+  await loadPromise;
+
+  assert.strictEqual(activeIntervals.size, 0, 'No timers must run when 401 occurred');
+  assert.strictEqual(elements.get('adminContent').hidden, true);
+  assert.strictEqual(elements.get('loginOverlay').style.display, 'flex');
+});
+
+test('29. Location A/B race: Location A delayed response cannot overwrite Location B timezone', async () => {
+  const elements = createAdminTestDOM();
+  const activeIntervals = new Set();
+  let nextIntervalId = 800;
+
+  let resolveLocationA = null;
+  const locationAPromise = new Promise(resolve => {
+    resolveLocationA = resolve;
+  });
+
+  const context = createAdminTestContext({
+    elements,
+    setInterval: () => {
+      const id = ++nextIntervalId;
+      activeIntervals.add(id);
+      return { _id: id, unref: () => {} };
+    },
+    clearInterval: (handle) => {
+      activeIntervals.delete(handle?._id || handle);
+    },
+    fetch: async (url) => {
+      if (url.includes(`locationId=${ID.locationA1}`)) {
+        return await locationAPromise;
+      }
+      if (url.includes(`locationId=${ID.locationB}`)) {
+        // Location B responds immediately
+        return {
+          ok: true, status: 200,
+          json: async () => ({
+            success: true,
+            data: { server_now: '2030-01-01T15:30:00.000Z', timezone: 'Asia/Tokyo', location_id: ID.locationB }
+          })
+        };
+      }
+      return { ok: true, status: 200, json: async () => ({ success: true, data: [] }) };
+    }
+  });
+
+  vm.runInNewContext(adminScriptMatch[1], context, { filename: 'public/admin.html' });
+
+  // Simulate authenticated owner
+  elements.get('adminContent').hidden = false;
+  elements.get('loginOverlay').style.display = 'none';
+
+  // 1. Request for Location A starts
+  const reqAPromise = context.loadAppointments(ID.locationA1);
+
+  // 2. Request for Location B starts immediately after
+  const reqBPromise = context.loadAppointments(ID.locationB);
+
+  // 3. Location B finishes first (Tokyo at 15:30Z is 2030-01-02)
+  await reqBPromise;
+  assert.strictEqual(context.getAuthoritativeToday(), '2030-01-02', 'Location B authoritative date must be set');
+
+  // 4. Location A returns late (Singapore at 15:30Z is 2030-01-01)
+  resolveLocationA({
+    ok: true, status: 200,
+    json: async () => ({
+      success: true,
+      data: { server_now: '2030-01-01T15:30:00.000Z', timezone: 'Asia/Singapore', location_id: ID.locationA1 }
+    })
+  });
+
+  await reqAPromise;
+
+  // 5. Assert Location A response is discarded: authoritative date remains 2030-01-02 (Tokyo)
+  assert.strictEqual(context.getAuthoritativeToday(), '2030-01-02', 'Delayed Location A response must not overwrite Location B');
+});
+
+test('30. Document hidden stops timers; visible re-syncs before restoring', async () => {
+  const elements = createAdminTestDOM();
+  const docListeners = new Map();
+  const activeIntervals = new Set();
+  let nextIntervalId = 900;
+  const contextFetches = [];
+
+  const context = {
+    console, Date, Intl, JSON,
+    performance: { now: () => 1000 },
+    setInterval: () => {
+      const id = ++nextIntervalId;
+      activeIntervals.add(id);
+      return { _id: id, unref: () => {} };
+    },
+    clearInterval: (handle) => {
+      activeIntervals.delete(handle?._id || handle);
+    },
+    document: {
+      getElementById: (id) => elements.get(id) || null,
+      querySelectorAll: () => [],
+      addEventListener: (evt, fn) => {
+        if (!docListeners.has(evt)) docListeners.set(evt, []);
+        docListeners.get(evt).push(fn);
+      },
+      visibilityState: 'visible'
+    },
+    window: { addEventListener: () => {} },
+    globalThis: {},
+    fetch: async (url, opts) => {
+      contextFetches.push({ url, opts });
+      if (url.includes('/api/owner/calendar-context')) {
+        return {
+          ok: true, status: 200,
+          json: async () => ({
+            success: true,
+            data: { server_now: new Date().toISOString(), timezone: 'Asia/Singapore', location_id: ID.locationA1 }
+          })
+        };
+      }
+      return { ok: true, status: 200, json: async () => ({ success: true, data: [] }) };
+    },
+    FEATURE_CHECKOUT_ENABLED: false,
+    ggI18n: i18n
+  };
+
+  vm.runInNewContext(adminScriptMatch[1], context, { filename: 'public/admin.html' });
+
+  // Hide tab
+  context.document.visibilityState = 'hidden';
+  for (const fn of docListeners.get('visibilitychange') || []) {
+    await fn();
+  }
+  assert.strictEqual(activeIntervals.size, 0, 'Hidden tab must clear all timers');
+
+  // Return to visible
+  elements.get('adminContent').hidden = false;
+  elements.get('loginOverlay').style.display = 'none';
+  context.document.visibilityState = 'visible';
+
+  contextFetches.length = 0;
+  for (const fn of docListeners.get('visibilitychange') || []) {
+    await fn();
+  }
+
+  assert.ok(contextFetches.some(c => c.url.includes('/api/owner/calendar-context')), 'Must fetch fresh calendar-context on visible');
+  const resyncFetch = contextFetches.find(c => c.url.includes('/api/owner/calendar-context'));
+  assert.strictEqual(resyncFetch.opts.cache, 'no-store', 'Resync fetch must specify cache: "no-store"');
+});
+
+test('31. Fail-closed on missing timeAnchor: authoritativeToday returns null, late returns false', () => {
+  const elements = createAdminTestDOM();
+  const context = createAdminTestContext({ elements });
+
+  vm.runInNewContext(adminScriptMatch[1], context, { filename: 'public/admin.html' });
+
+  assert.strictEqual(context.getAuthoritativeToday(), null, 'authoritativeToday must be null without timeAnchor');
+  assert.strictEqual(context.getSingaporeToday(), null, 'getSingaporeToday must be null without timeAnchor');
+
+  const appt = { id: '1', status: 'pending', start_at: '2030-01-01T10:00:00Z' };
+  assert.strictEqual(context.isAppointmentLate(appt, Date.now(), '2030-01-01'), false, 'isAppointmentLate must return false without timeAnchor');
+});
+
+test('32. Staff stale response after pagehide: delayed appointments response is discarded', async () => {
+  const activeIntervals = new Set();
+  let nextIntervalId = 1000;
+  const winListeners = new Map();
+
+  let resolveStaffAppointments = null;
+  const staffApptPromise = new Promise(resolve => {
+    resolveStaffAppointments = resolve;
+  });
+
+  const makeMockStaffElement = () => ({
+    classList: { add() {}, remove() {}, toggle() {}, contains: () => false },
+    className: { baseVal: '' },
+    setAttribute() {}, getAttribute: () => null, replaceChildren() {}, appendChild() {},
+    querySelector: () => null, querySelectorAll: () => [], addEventListener() {}, hidden: false, style: {}
+  });
+
+  const staffContext = {
+    console, Date, Intl, JSON,
+    navigator: { languages: ['zh-CN'] },
+    localStorage: { getItem: () => 'zh-CN', setItem: () => {} },
+    performance: { now: () => 500 },
+    setInterval: () => {
+      const id = ++nextIntervalId;
+      activeIntervals.add(id);
+      return { _id: id, unref: () => {} };
+    },
+    clearInterval: (handle) => {
+      activeIntervals.delete(handle?._id || handle);
+    },
+    document: {
+      documentElement: { lang: '' },
+      getElementById: () => makeMockStaffElement(),
+      querySelectorAll: () => [],
+      querySelector: () => makeMockStaffElement(),
+      createElement: () => makeMockStaffElement(),
+      createElementNS: () => makeMockStaffElement(),
+      addEventListener: () => {},
+      visibilityState: 'visible'
+    },
+    window: {
+      addEventListener: (evt, fn) => {
+        if (!winListeners.has(evt)) winListeners.set(evt, []);
+        winListeners.get(evt).push(fn);
+      },
+      location: { href: '' }
+    },
+    globalThis: {},
+    fetch: async (url) => {
+      if (url.includes('/api/staff/appointments')) {
+        return await staffApptPromise;
+      }
+      return {
+        ok: true, status: 200,
+        json: async () => ({
+          success: true,
+          data: { staff: { name: 'Staff A' } }
+        })
+      };
+    },
+    ggI18n: i18n
+  };
+
+  vm.runInNewContext(staffScriptMatch[1], staffContext, { filename: 'public/staff-appointments.html' });
+
+  // 1. In-flight fetch was dispatched by initial loadPage()
+  // 2. Simulate pagehide before delayed appointments return
+  for (const fn of winListeners.get('pagehide') || []) {
+    fn();
+  }
+
+  // 3. Delayed appointments response returns 200
+  resolveStaffAppointments({
+    ok: true, status: 200,
+    json: async () => ({
+      success: true,
+      data: {
+        date: '2030-01-01',
+        timezone: 'Asia/Singapore',
+        server_now: new Date().toISOString(),
+        appointments: [{
+          id: 'appt-1',
+          status: 'pending',
+          start_at: '2030-01-01T10:00:00Z',
+          end_at: '2030-01-01T11:00:00Z',
+          customer_name: 'Test Customer',
+          service_name: 'Haircut'
+        }]
+      }
+    })
+  });
+
+  await new Promise(resolve => setTimeout(resolve, 50));
+
+  // 4. Assert timers remain stopped (not started by delayed response)
+  assert.strictEqual(activeIntervals.size, 0, 'No staff live timer should run after pagehide despite delayed response');
 });

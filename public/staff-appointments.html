@@ -1723,6 +1723,8 @@
     };
 
     let staffLiveTimerId = null;
+    let staffRequestGeneration = 0;
+    let staffAbortController = null;
 
     const updateStaffLiveElements = () => {
       const nowMs = getAuthoritativeNowMs();
@@ -1785,8 +1787,22 @@
     };
 
     if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
-      window.addEventListener('beforeunload', stopStaffLiveTimer);
-      window.addEventListener('pagehide', stopStaffLiveTimer);
+      window.addEventListener('beforeunload', () => {
+        staffRequestGeneration++;
+        if (staffAbortController) {
+          try { staffAbortController.abort(); } catch (_) {}
+          staffAbortController = null;
+        }
+        stopStaffLiveTimer();
+      });
+      window.addEventListener('pagehide', () => {
+        staffRequestGeneration++;
+        if (staffAbortController) {
+          try { staffAbortController.abort(); } catch (_) {}
+          staffAbortController = null;
+        }
+        stopStaffLiveTimer();
+      });
     }
 
     const createTextElement = (tagName, className, text) => {
@@ -2510,9 +2526,11 @@
     const fetchJson = async url => {
       const response = await fetch(url, {
         credentials: 'same-origin',
+        cache: 'no-store',
         headers: {
           Accept: 'application/json'
-        }
+        },
+        signal: staffAbortController ? staffAbortController.signal : undefined
       });
 
       if (response.status === 401) {
@@ -2535,6 +2553,14 @@
     };
 
     const loadAppointments = async date => {
+      if (staffAbortController) {
+        try { staffAbortController.abort(); } catch (_) {}
+        staffAbortController = null;
+      }
+      const controller = (typeof AbortController === 'function') ? new AbortController() : null;
+      staffAbortController = controller;
+      const thisGen = ++staffRequestGeneration;
+
       state.loading = true;
       state.view = 'content';
       render();
@@ -2545,6 +2571,9 @@
           : '/api/staff/appointments';
 
         const data = await fetchJson(url);
+        if (thisGen !== staffRequestGeneration || state.view === 'session' || state.view === 'error') {
+          return;
+        }
         if (data && data.server_now && data.timezone) {
           updateTimeAnchor(data.server_now, data.timezone);
         } else {
@@ -2559,18 +2588,37 @@
           ? data.appointments
           : [];
       } catch (error) {
+        if (error && (error.name === 'AbortError' || error.code === 20)) {
+          return;
+        }
+        if (thisGen !== staffRequestGeneration) {
+          return;
+        }
         invalidateTimeAnchor();
         state.appointments = [];
         state.view = error.isSessionError
           ? 'session'
           : 'error';
       } finally {
-        state.loading = false;
-        render();
+        if (thisGen === staffRequestGeneration) {
+          state.loading = false;
+          render();
+        }
+        if (staffAbortController === controller) {
+          staffAbortController = null;
+        }
       }
     };
 
     const loadPage = async () => {
+      if (staffAbortController) {
+        try { staffAbortController.abort(); } catch (_) {}
+        staffAbortController = null;
+      }
+      const controller = (typeof AbortController === 'function') ? new AbortController() : null;
+      staffAbortController = controller;
+      const thisGen = ++staffRequestGeneration;
+
       state.loading = true;
       state.view = 'content';
       render();
@@ -2580,6 +2628,10 @@
           fetchJson('/api/staff/me'),
           fetchJson('/api/staff/appointments')
         ]);
+
+        if (thisGen !== staffRequestGeneration || state.view === 'session' || state.view === 'error') {
+          return;
+        }
 
         if (appointmentData && appointmentData.server_now && appointmentData.timezone) {
           updateTimeAnchor(appointmentData.server_now, appointmentData.timezone);
@@ -2598,14 +2650,25 @@
           ? appointmentData.appointments
           : [];
       } catch (error) {
+        if (error && (error.name === 'AbortError' || error.code === 20)) {
+          return;
+        }
+        if (thisGen !== staffRequestGeneration) {
+          return;
+        }
         invalidateTimeAnchor();
         state.appointments = [];
         state.view = error.isSessionError
           ? 'session'
           : 'error';
       } finally {
-        state.loading = false;
-        render();
+        if (thisGen === staffRequestGeneration) {
+          state.loading = false;
+          render();
+        }
+        if (staffAbortController === controller) {
+          staffAbortController = null;
+        }
       }
     };
 
@@ -2752,9 +2815,14 @@
 
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'hidden') {
+        staffRequestGeneration++;
+        if (staffAbortController) {
+          try { staffAbortController.abort(); } catch (_) {}
+          staffAbortController = null;
+        }
         stopStaffLiveTimer();
       } else if (document.visibilityState === 'visible') {
-        if (state.selectedDate) {
+        if (state.selectedDate && state.view !== 'session') {
           loadAppointments(state.selectedDate);
         }
       }

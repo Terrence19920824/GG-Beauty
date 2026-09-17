@@ -899,6 +899,12 @@ let timeAnchor = {
 };
 let liveLineTimerId = null;
 let timeResyncTimerId = null;
+let calendarContextGeneration = 0;
+let calendarContextAbortController = null;
+let currentRequestedLocationId = '';
+let inFlightCalendarContextPromise = null;
+let inFlightCalendarContextLocationId = null;
+let adminLoadGeneration = 0;
 
 const stopLiveLineTimer = () => {
   if (liveLineTimerId && typeof clearInterval === 'function') {
@@ -944,6 +950,79 @@ const updateTimeAnchor = (serverNowIso, timezone) => {
 
 const invalidateTimeAnchor = () => {
   timeAnchor = { serverNowMs: null, performanceNow: null, timezone: null, isValid: false };
+};
+
+const fetchCalendarContext = async (targetLocationId = '') => {
+  const reqLocId = targetLocationId ? String(targetLocationId).trim() : '';
+
+  if (inFlightCalendarContextPromise && inFlightCalendarContextLocationId === reqLocId) {
+    return inFlightCalendarContextPromise;
+  }
+
+  if (calendarContextAbortController) {
+    try {
+      calendarContextAbortController.abort();
+    } catch (_) {}
+    calendarContextAbortController = null;
+  }
+  const controller = (typeof AbortController === 'function') ? new AbortController() : null;
+  calendarContextAbortController = controller;
+  const thisGen = ++calendarContextGeneration;
+  currentRequestedLocationId = reqLocId;
+
+  const url = reqLocId
+    ? `/api/owner/calendar-context?locationId=${encodeURIComponent(reqLocId)}`
+    : '/api/owner/calendar-context';
+
+  const reqPromise = (async () => {
+    try {
+      const res = await fetch(url, {
+        credentials: 'same-origin',
+        cache: 'no-store',
+        signal: controller ? controller.signal : undefined
+      });
+
+      if (thisGen !== calendarContextGeneration || currentRequestedLocationId !== reqLocId) {
+        return null;
+      }
+
+      if (res.status === 401 || res.status === 403) {
+        stopLiveLineTimer();
+        stopTimeResync();
+        invalidateTimeAnchor();
+        showLogin(adminT('sessionExpired'));
+        return null;
+      }
+
+      if (res.ok) {
+        const json = await res.json();
+        if (thisGen !== calendarContextGeneration || currentRequestedLocationId !== reqLocId) {
+          return null;
+        }
+        if (json && json.success && json.data) {
+          return json.data;
+        }
+      }
+      return null;
+    } catch (err) {
+      if (err && (err.name === 'AbortError' || err.code === 20)) {
+        return null;
+      }
+      return null;
+    } finally {
+      if (calendarContextAbortController === controller) {
+        calendarContextAbortController = null;
+      }
+      if (inFlightCalendarContextPromise === reqPromise) {
+        inFlightCalendarContextPromise = null;
+        inFlightCalendarContextLocationId = null;
+      }
+    }
+  })();
+
+  inFlightCalendarContextPromise = reqPromise;
+  inFlightCalendarContextLocationId = reqLocId;
+  return reqPromise;
 };
 
 const getAuthoritativeNowMs = () => {
@@ -1003,27 +1082,16 @@ const formatAuthoritativeTime = (nowMs, timezone) => {
   }
 };
 
-const getAuthoritativeToday = () => {
+function getAuthoritativeToday() {
   const nowMs = getAuthoritativeNowMs();
-  if (nowMs && timeAnchor.isValid) {
+  if (nowMs && timeAnchor && timeAnchor.isValid && timeAnchor.timezone) {
     return getAuthoritativeLocalDate(nowMs, timeAnchor.timezone);
   }
   return null;
-};
+}
 
 function getSingaporeToday() {
-  const auth = getAuthoritativeToday();
-  if (auth) return auth;
-  try {
-    return new Intl.DateTimeFormat('en-CA', {
-      timeZone: 'Asia/Singapore',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit'
-    }).format(new Date());
-  } catch (_) {
-    return new Date().toISOString().slice(0, 10);
-  }
+  return getAuthoritativeToday();
 }
 
 
@@ -1050,7 +1118,7 @@ try {
     currentViewMode = savedMode;
   }
 } catch (_) {}
-let currentCalendarDate = getSingaporeToday();
+let currentCalendarDate = '';
 
 const cloneAppointments = (appts) => {
   if (!Array.isArray(appts)) return [];
@@ -1072,6 +1140,14 @@ const cloneStaff = (staffList) => {
 
 const invalidateAppointmentActionContext = () => {
   currentRenderGeneration++;
+  calendarContextGeneration++;
+  adminLoadGeneration++;
+  if (calendarContextAbortController) {
+    try { calendarContextAbortController.abort(); } catch (_) {}
+    calendarContextAbortController = null;
+  }
+  inFlightCalendarContextPromise = null;
+  inFlightCalendarContextLocationId = null;
   currentAppointmentMap.clear();
   currentAppointmentsSnapshot = [];
   currentStaffSnapshot = [];
@@ -1170,9 +1246,10 @@ function formatCalendarHeaderDate(dateStr, locale) {
   }
 }
 
-const isAppointmentLate = (appointment, nowMs, localTodayStr) => {
+function isAppointmentLate(appointment, nowMs, localTodayStr) {
   if (!appointment || typeof appointment !== 'object') return false;
   if (typeof nowMs !== 'number' || !Number.isFinite(nowMs)) return false;
+  if (!timeAnchor || !timeAnchor.isValid) return false;
   if (!localTodayStr || currentCalendarDate !== localTodayStr) return false;
 
   const rawStatus = typeof appointment.status === 'string' ? appointment.status.trim().toLowerCase() : '';
@@ -1325,16 +1402,11 @@ const startTimeResync = () => {
   stopTimeResync();
   if (typeof setInterval === 'function') {
     timeResyncTimerId = setInterval(async () => {
-      try {
-        const res = await fetch('/api/owner/calendar-context', { credentials: 'same-origin' });
-        if (res.ok) {
-          const json = await res.json();
-          if (json && json.success && json.data) {
-            updateTimeAnchor(json.data.server_now, json.data.timezone);
-            updateLiveLineAndLateBadges();
-          }
-        }
-      } catch (_) {}
+      const ctxData = await fetchCalendarContext(currentRequestedLocationId);
+      if (ctxData && ctxData.server_now && ctxData.timezone) {
+        updateTimeAnchor(ctxData.server_now, ctxData.timezone);
+        updateLiveLineAndLateBadges();
+      }
     }, 5 * 60 * 1000);
     if (timeResyncTimerId && typeof timeResyncTimerId.unref === 'function') {
       timeResyncTimerId.unref();
@@ -1344,10 +1416,26 @@ const startTimeResync = () => {
 
 if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
   window.addEventListener('beforeunload', () => {
+    calendarContextGeneration++;
+    adminLoadGeneration++;
+    if (calendarContextAbortController) {
+      try { calendarContextAbortController.abort(); } catch (_) {}
+      calendarContextAbortController = null;
+    }
+    inFlightCalendarContextPromise = null;
+    inFlightCalendarContextLocationId = null;
     stopLiveLineTimer();
     stopTimeResync();
   });
   window.addEventListener('pagehide', () => {
+    calendarContextGeneration++;
+    adminLoadGeneration++;
+    if (calendarContextAbortController) {
+      try { calendarContextAbortController.abort(); } catch (_) {}
+      calendarContextAbortController = null;
+    }
+    inFlightCalendarContextPromise = null;
+    inFlightCalendarContextLocationId = null;
     stopLiveLineTimer();
     stopTimeResync();
   });
@@ -1356,6 +1444,14 @@ if (typeof window !== 'undefined' && typeof window.addEventListener === 'functio
 if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
   document.addEventListener('visibilitychange', async () => {
     if (document.visibilityState === 'hidden') {
+      calendarContextGeneration++;
+      adminLoadGeneration++;
+      if (calendarContextAbortController) {
+        try { calendarContextAbortController.abort(); } catch (_) {}
+        calendarContextAbortController = null;
+      }
+      inFlightCalendarContextPromise = null;
+      inFlightCalendarContextLocationId = null;
       stopLiveLineTimer();
       stopTimeResync();
     } else if (document.visibilityState === 'visible') {
@@ -1366,28 +1462,18 @@ if (typeof document !== 'undefined' && typeof document.addEventListener === 'fun
         stopTimeResync();
         return;
       }
-      try {
-        const res = await fetch('/api/owner/calendar-context', { credentials: 'same-origin' });
-        if (res.ok) {
-          const json = await res.json();
-          if (json && json.success && json.data) {
-            updateTimeAnchor(json.data.server_now, json.data.timezone);
-            updateLiveLineAndLateBadges();
-            startLiveLineTimer();
-            startTimeResync();
-            return;
-          }
-        } else if (res.status === 401 || res.status === 403) {
-          stopLiveLineTimer();
-          stopTimeResync();
-          showLogin(adminT('sessionExpired'));
-          return;
-        }
-      } catch (_) {}
-      invalidateTimeAnchor();
-      stopLiveLineTimer();
-      stopTimeResync();
-      updateLiveLineAndLateBadges();
+      const ctxData = await fetchCalendarContext(currentRequestedLocationId);
+      if (ctxData && ctxData.server_now && ctxData.timezone) {
+        updateTimeAnchor(ctxData.server_now, ctxData.timezone);
+        updateLiveLineAndLateBadges();
+        startLiveLineTimer();
+        startTimeResync();
+      } else {
+        invalidateTimeAnchor();
+        stopLiveLineTimer();
+        stopTimeResync();
+        updateLiveLineAndLateBadges();
+      }
     }
   });
 }
@@ -1657,8 +1743,11 @@ function setupCalendarToolbar() {
   if (todayBtn && !todayBtn._hasCalendarListener) {
     todayBtn._hasCalendarListener = true;
     todayBtn.addEventListener('click', () => {
-      currentCalendarDate = getSingaporeToday();
-      renderAppointmentsView();
+      const authToday = getAuthoritativeToday();
+      if (authToday) {
+        currentCalendarDate = authToday;
+        renderAppointmentsView();
+      }
     });
   }
 
@@ -2355,6 +2444,11 @@ function setAdminLocale(locale) {
 globalScope.setAdminLocale = setAdminLocale;
 
 function showLogin(message = '') {
+  calendarContextGeneration++;
+  if (calendarContextAbortController) {
+    try { calendarContextAbortController.abort(); } catch (_) {}
+    calendarContextAbortController = null;
+  }
   stopLiveLineTimer();
   stopTimeResync();
   invalidateTimeAnchor();
@@ -2484,6 +2578,11 @@ async function adminLogin() {
 }
 
 async function ownerLogout() {
+  calendarContextGeneration++;
+  if (calendarContextAbortController) {
+    try { calendarContextAbortController.abort(); } catch (_) {}
+    calendarContextAbortController = null;
+  }
   stopLiveLineTimer();
   stopTimeResync();
   invalidateTimeAnchor();
@@ -2536,7 +2635,13 @@ function getStatusText(status) {
 
 
 // 加载预约
-async function loadAppointments() {
+async function loadAppointments(targetLocationId = '') {
+
+  const reqLocId = targetLocationId ? String(targetLocationId).trim() : '';
+  if (reqLocId && reqLocId !== currentRequestedLocationId) {
+    adminLoadGeneration++;
+  }
+  const thisLoadGen = adminLoadGeneration;
 
   content.className = 'loading';
   content.setAttribute?.('aria-busy', 'true');
@@ -2544,27 +2649,38 @@ async function loadAppointments() {
   content.textContent =
     adminT('loadingAppointments');
 
+  if (targetLocationId) {
+    currentRequestedLocationId = reqLocId;
+  }
+
   try {
 
-    const [appointmentsResponse, staffResponse, calendarContextResponse] =
+    const [appointmentsResponse, staffResponse, calendarContextData] =
       await Promise.all([
         fetch('/api/appointments-db', {
-          credentials: 'same-origin'
+          credentials: 'same-origin',
+          cache: 'no-store'
         }),
         fetch('/api/owner/staff', {
-          credentials: 'same-origin'
+          credentials: 'same-origin',
+          cache: 'no-store'
         }).catch(() => null),
-        fetch('/api/owner/calendar-context', {
-          credentials: 'same-origin'
-        }).catch(() => null)
+        fetchCalendarContext(targetLocationId || currentRequestedLocationId).catch(() => null)
       ]);
+
+    if (thisLoadGen !== adminLoadGeneration) {
+      return;
+    }
+
+    if (appointmentsResponse.status === 401 || appointmentsResponse.status === 403) {
+      showLogin(adminT('sessionExpired'));
+      return;
+    }
 
     const result =
       await appointmentsResponse.json();
 
-    if (appointmentsResponse.status === 401 || appointmentsResponse.status === 403) {
-      showLogin(adminT('sessionExpired'));
-
+    if (thisLoadGen !== adminLoadGeneration) {
       return;
     }
 
@@ -2583,34 +2699,30 @@ async function loadAppointments() {
       } catch (_) {}
     }
 
-    if (calendarContextResponse && calendarContextResponse.ok) {
-      try {
-        const ctxResult = await calendarContextResponse.json();
-        if (ctxResult && ctxResult.success && ctxResult.data) {
-          updateTimeAnchor(ctxResult.data.server_now, ctxResult.data.timezone);
-        } else {
-          invalidateTimeAnchor();
-        }
-      } catch (_) {
-        invalidateTimeAnchor();
+    if (calendarContextData && calendarContextData.server_now && calendarContextData.timezone) {
+      updateTimeAnchor(calendarContextData.server_now, calendarContextData.timezone);
+      startTimeResync();
+      const authToday = getAuthoritativeToday();
+      if (!currentCalendarDate && authToday) {
+        currentCalendarDate = authToday;
       }
     } else {
       invalidateTimeAnchor();
-    }
-
-    startTimeResync();
-
-    const authToday = getAuthoritativeToday();
-    if (!currentCalendarDate && authToday) {
-      currentCalendarDate = authToday;
+      stopLiveLineTimer();
+      stopTimeResync();
     }
 
     const appointments =
       result.data || [];
 
     acceptAuthoritativeAppointments(appointments);
+    renderAppointmentsView();
 
   } catch (error) {
+
+    if (thisLoadGen !== adminLoadGeneration) {
+      return;
+    }
 
     invalidateAppointmentActionContext();
     updateSummary([]);

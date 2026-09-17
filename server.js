@@ -1528,6 +1528,9 @@ app.get(
 
       const location = locationResult.rows[0];
 
+      res.set('Cache-Control', 'no-store, private, max-age=0');
+      res.set('Pragma', 'no-cache');
+
       res.json({
         success: true,
         data: {
@@ -4068,6 +4071,9 @@ app.get(
       }
 
       const appointments = result.rows[0];
+
+      res.set('Cache-Control', 'no-store, private, max-age=0');
+      res.set('Pragma', 'no-cache');
 
       res.json({
         success: true,
