@@ -930,15 +930,31 @@ const isValidIanaTimezone = (tz) => {
   }
 };
 
+const readMonotonicNow = () => {
+  try {
+    if (
+      typeof globalThis === 'undefined' ||
+      !globalThis.performance ||
+      typeof globalThis.performance.now !== 'function'
+    ) return null;
+    const value = globalThis.performance.now();
+    return Number.isFinite(value) ? value : null;
+  } catch (_) {
+    return null;
+  }
+};
+
 const updateTimeAnchor = (serverNowIso, timezone) => {
   const serverMs = Date.parse(serverNowIso);
-  if (!Number.isFinite(serverMs) || !isValidIanaTimezone(timezone)) {
+  const perfNow = readMonotonicNow();
+  if (
+    !Number.isFinite(serverMs) ||
+    !isValidIanaTimezone(timezone) ||
+    perfNow === null
+  ) {
     timeAnchor = { serverNowMs: null, performanceNow: null, timezone: null, isValid: false };
     return false;
   }
-  const perfNow = (typeof performance !== 'undefined' && typeof performance.now === 'function')
-    ? performance.now()
-    : Date.now();
   timeAnchor = {
     serverNowMs: serverMs,
     performanceNow: perfNow,
@@ -1027,10 +1043,22 @@ const fetchCalendarContext = async (targetLocationId = '') => {
 
 const getAuthoritativeNowMs = () => {
   if (!timeAnchor || !timeAnchor.isValid) return null;
-  const perfNow = (typeof performance !== 'undefined' && typeof performance.now === 'function')
-    ? performance.now()
-    : Date.now();
-  return timeAnchor.serverNowMs + (perfNow - timeAnchor.performanceNow);
+  const perfNow = readMonotonicNow();
+  if (
+    perfNow === null ||
+    !Number.isFinite(timeAnchor.performanceNow) ||
+    perfNow < timeAnchor.performanceNow
+  ) {
+    invalidateTimeAnchor();
+    return null;
+  }
+  const authoritativeNow =
+    timeAnchor.serverNowMs + (perfNow - timeAnchor.performanceNow);
+  if (!Number.isFinite(authoritativeNow)) {
+    invalidateTimeAnchor();
+    return null;
+  }
+  return authoritativeNow;
 };
 
 const getAuthoritativeLocalDate = (nowMs, timezone) => {
@@ -1119,6 +1147,28 @@ try {
   }
 } catch (_) {}
 let currentCalendarDate = '';
+let currentCalendarTimezone = null;
+
+const getViewDateFromServerSnapshot = (serverNowIso, timezone) => {
+  const serverMs = Date.parse(serverNowIso);
+  if (!Number.isFinite(serverMs) || !isValidIanaTimezone(timezone)) return null;
+  return getAuthoritativeLocalDate(serverMs, timezone.trim());
+};
+
+const getViewDateFromAppointments = (appointments, timezone) => {
+  if (!Array.isArray(appointments)) return null;
+  for (const appointment of appointments) {
+    const startAt = appointment?.start_at || appointment?.startAt;
+    if (typeof startAt !== 'string' || !Number.isFinite(Date.parse(startAt))) continue;
+    if (isValidIanaTimezone(timezone)) {
+      const zonedDate = getAuthoritativeLocalDate(Date.parse(startAt), timezone.trim());
+      if (zonedDate) return zonedDate;
+    }
+    const explicitDate = startAt.match(/^(\d{4}-\d{2}-\d{2})T/);
+    if (explicitDate) return explicitDate[1];
+  }
+  return null;
+};
 
 const cloneAppointments = (appts) => {
   if (!Array.isArray(appts)) return [];
@@ -1387,6 +1437,7 @@ const updateLiveLineAndLateBadges = () => {
 const startLiveLineTimer = () => {
   stopLiveLineTimer();
   if (currentViewMode !== 'calendar') return;
+  if (getAuthoritativeNowMs() === null) return;
   updateLiveLineAndLateBadges();
   if (typeof setInterval === 'function') {
     liveLineTimerId = setInterval(() => {
@@ -1400,11 +1451,17 @@ const startLiveLineTimer = () => {
 
 const startTimeResync = () => {
   stopTimeResync();
+  if (getAuthoritativeNowMs() === null) return;
   if (typeof setInterval === 'function') {
     timeResyncTimerId = setInterval(async () => {
       const ctxData = await fetchCalendarContext(currentRequestedLocationId);
       if (ctxData && ctxData.server_now && ctxData.timezone) {
-        updateTimeAnchor(ctxData.server_now, ctxData.timezone);
+        if (!updateTimeAnchor(ctxData.server_now, ctxData.timezone)) {
+          stopLiveLineTimer();
+          stopTimeResync();
+          updateLiveLineAndLateBadges();
+          return;
+        }
         updateLiveLineAndLateBadges();
       }
     }, 5 * 60 * 1000);
@@ -1464,7 +1521,12 @@ if (typeof document !== 'undefined' && typeof document.addEventListener === 'fun
       }
       const ctxData = await fetchCalendarContext(currentRequestedLocationId);
       if (ctxData && ctxData.server_now && ctxData.timezone) {
-        updateTimeAnchor(ctxData.server_now, ctxData.timezone);
+        if (!updateTimeAnchor(ctxData.server_now, ctxData.timezone)) {
+          stopLiveLineTimer();
+          stopTimeResync();
+          updateLiveLineAndLateBadges();
+          return;
+        }
         updateLiveLineAndLateBadges();
         startLiveLineTimer();
         startTimeResync();
@@ -1742,12 +1804,30 @@ function setupCalendarToolbar() {
 
   if (todayBtn && !todayBtn._hasCalendarListener) {
     todayBtn._hasCalendarListener = true;
-    todayBtn.addEventListener('click', () => {
-      const authToday = getAuthoritativeToday();
-      if (authToday) {
-        currentCalendarDate = authToday;
+    todayBtn.addEventListener('click', async () => {
+      const previousViewDate = currentCalendarDate;
+      const ctxData = await fetchCalendarContext(currentRequestedLocationId);
+      const serverViewDate = ctxData
+        ? getViewDateFromServerSnapshot(ctxData.server_now, ctxData.timezone)
+        : null;
+      if (!serverViewDate) {
+        invalidateTimeAnchor();
+        stopLiveLineTimer();
+        stopTimeResync();
+        currentCalendarDate = previousViewDate;
         renderAppointmentsView();
+        return;
       }
+      currentCalendarTimezone = ctxData.timezone.trim();
+      currentCalendarDate = serverViewDate;
+      if (updateTimeAnchor(ctxData.server_now, ctxData.timezone)) {
+        startLiveLineTimer();
+        startTimeResync();
+      } else {
+        stopLiveLineTimer();
+        stopTimeResync();
+      }
+      renderAppointmentsView();
     });
   }
 
@@ -2380,6 +2460,10 @@ const acceptAuthoritativeAppointments = (apiAppointments) => {
     currentRenderGeneration++;
     currentAppointmentMap.clear();
     currentAppointmentsSnapshot = safeSnapshot;
+    if (!currentCalendarDate) {
+      currentCalendarDate =
+        getViewDateFromAppointments(safeSnapshot, currentCalendarTimezone) || '';
+    }
 
     if (typeof globalScope !== 'undefined' && globalScope) {
       globalScope.currentAppointments = cloneAppointments(safeSnapshot);
@@ -2700,11 +2784,23 @@ async function loadAppointments(targetLocationId = '') {
     }
 
     if (calendarContextData && calendarContextData.server_now && calendarContextData.timezone) {
-      updateTimeAnchor(calendarContextData.server_now, calendarContextData.timezone);
-      startTimeResync();
-      const authToday = getAuthoritativeToday();
-      if (!currentCalendarDate && authToday) {
-        currentCalendarDate = authToday;
+      const serverViewDate = getViewDateFromServerSnapshot(
+        calendarContextData.server_now,
+        calendarContextData.timezone
+      );
+      if (serverViewDate) {
+        currentCalendarTimezone = calendarContextData.timezone.trim();
+        if (!currentCalendarDate) currentCalendarDate = serverViewDate;
+      }
+      if (updateTimeAnchor(calendarContextData.server_now, calendarContextData.timezone)) {
+        startTimeResync();
+        const authToday = getAuthoritativeToday();
+        if (!currentCalendarDate && authToday) {
+          currentCalendarDate = authToday;
+        }
+      } else {
+        stopLiveLineTimer();
+        stopTimeResync();
       }
     } else {
       invalidateTimeAnchor();

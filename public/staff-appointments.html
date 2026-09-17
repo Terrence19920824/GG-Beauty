@@ -1527,18 +1527,34 @@
       }
     };
 
+    const readMonotonicNow = () => {
+      try {
+        if (
+          typeof globalThis === 'undefined' ||
+          !globalThis.performance ||
+          typeof globalThis.performance.now !== 'function'
+        ) return null;
+        const value = globalThis.performance.now();
+        return Number.isFinite(value) ? value : null;
+      } catch (_) {
+        return null;
+      }
+    };
+
     const updateTimeAnchor = (serverNowIso, timezone) => {
       const serverMs = Date.parse(serverNowIso);
-      if (!Number.isFinite(serverMs) || !isValidIanaTimezone(timezone)) {
+      const perfNow = readMonotonicNow();
+      if (
+        !Number.isFinite(serverMs) ||
+        !isValidIanaTimezone(timezone) ||
+        perfNow === null
+      ) {
         state.authoritativeServerNowMs = null;
         state.anchorPerformanceMs = null;
         state.authoritativeTimezone = null;
         state.isTimeAuthorityValid = false;
         return false;
       }
-      const perfNow = (typeof performance !== 'undefined' && typeof performance.now === 'function')
-        ? performance.now()
-        : Date.now();
       state.authoritativeServerNowMs = serverMs;
       state.anchorPerformanceMs = perfNow;
       state.authoritativeTimezone = timezone.trim();
@@ -1558,10 +1574,22 @@
       if (!state.isTimeAuthorityValid || typeof state.authoritativeServerNowMs !== 'number') {
         return null;
       }
-      const perfNow = (typeof performance !== 'undefined' && typeof performance.now === 'function')
-        ? performance.now()
-        : Date.now();
-      return state.authoritativeServerNowMs + (perfNow - state.anchorPerformanceMs);
+      const perfNow = readMonotonicNow();
+      if (
+        perfNow === null ||
+        !Number.isFinite(state.anchorPerformanceMs) ||
+        perfNow < state.anchorPerformanceMs
+      ) {
+        invalidateTimeAnchor();
+        return null;
+      }
+      const authoritativeNow =
+        state.authoritativeServerNowMs + (perfNow - state.anchorPerformanceMs);
+      if (!Number.isFinite(authoritativeNow)) {
+        invalidateTimeAnchor();
+        return null;
+      }
+      return authoritativeNow;
     };
 
     const getAuthoritativeLocalDate = (nowMs, timezone) => {
@@ -1770,6 +1798,7 @@
 
     const startStaffLiveTimer = () => {
       stopStaffLiveTimer();
+      if (getAuthoritativeNowMs() === null) return;
       updateStaffLiveElements();
       if (typeof setInterval === 'function') {
         staffLiveTimerId = setInterval(updateStaffLiveElements, 30000);

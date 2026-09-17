@@ -484,6 +484,9 @@ const createAdminTestDOM = () => {
         if (!listeners.has(event)) listeners.set(event, []);
         listeners.get(event).push(fn);
       },
+      async dispatch(event, payload = {}) {
+        for (const fn of listeners.get(event) || []) await fn(payload);
+      },
       querySelector: () => null
     };
   };
@@ -1538,4 +1541,251 @@ test('32. Staff stale response after pagehide: delayed appointments response is 
 
   // 4. Assert timers remain stopped (not started by delayed response)
   assert.strictEqual(activeIntervals.size, 0, 'No staff live timer should run after pagehide despite delayed response');
+});
+
+test('33. Owner authoritative clock fails closed for missing, throwing, non-finite, and regressing monotonic clocks', () => {
+  const scenarios = [
+    { name: 'performance missing', performance: undefined, anchor: false },
+    { name: 'performance.now missing', performance: {}, anchor: false },
+    { name: 'performance.now throws', performance: { now: () => { throw new Error('clock unavailable'); } }, anchor: false },
+    { name: 'performance.now NaN', performance: { now: () => Number.NaN }, anchor: false },
+    { name: 'performance.now Infinity', performance: { now: () => Number.POSITIVE_INFINITY }, anchor: false },
+    { name: 'monotonic regression', performance: { now: (() => { const values = [1000, 999]; return () => values.shift(); })() }, anchor: true }
+  ];
+
+  for (const scenario of scenarios) {
+    const elements = createAdminTestDOM();
+    let intervals = 0;
+    const context = createAdminTestContext({
+      elements,
+      setInterval: () => { intervals += 1; return intervals; },
+      clearInterval: () => {}
+    });
+    if (scenario.performance === undefined) delete context.performance;
+    else context.performance = scenario.performance;
+    context.globalThis = context;
+    vm.createContext(context);
+    vm.runInContext(adminScriptMatch[1], context, { filename: 'public/admin.html' });
+
+    const anchorResult = vm.runInContext(
+      "updateTimeAnchor('2030-01-01T00:00:00.000Z', 'Asia/Singapore')",
+      context
+    );
+    assert.strictEqual(anchorResult, scenario.anchor, `${scenario.name}: unexpected anchor result`);
+    const now = vm.runInContext('getAuthoritativeNowMs()', context);
+    assert.strictEqual(now, null, `${scenario.name}: authoritative now must fail closed`);
+    assert.strictEqual(vm.runInContext('getAuthoritativeToday()', context), null);
+    assert.strictEqual(
+      vm.runInContext("isAppointmentLate({status:'pending',start_at:'2029-12-31T23:00:00.000Z'}, 1893456900000, '2030-01-01')", context),
+      false,
+      `${scenario.name}: late indicator must fail closed`
+    );
+    vm.runInContext("currentViewMode='calendar'; startLiveLineTimer(); startTimeResync();", context);
+    assert.strictEqual(intervals, 0, `${scenario.name}: no time timer may start`);
+  }
+});
+
+test('34. Staff authoritative clock failures do not start live timers or render late state', async () => {
+  const scenarios = [
+    ['performance missing', undefined],
+    ['performance.now missing', {}],
+    ['performance.now throws', { now: () => { throw new Error('clock unavailable'); } }],
+    ['performance.now NaN', { now: () => Number.NaN }],
+    ['performance.now Infinity', { now: () => Number.POSITIVE_INFINITY }]
+  ];
+
+  for (const [name, performanceValue] of scenarios) {
+    let intervals = 0;
+    const created = [];
+    const makeElement = () => ({
+      classList: { add() {}, remove() {}, toggle() {}, contains: () => false },
+      className: { baseVal: '' },
+      setAttribute() {}, getAttribute: () => null, replaceChildren() {}, appendChild(child) { created.push(child); },
+      querySelector: () => null, querySelectorAll: () => [], addEventListener() {}, hidden: false, style: {},
+      focus() {}, textContent: '', value: ''
+    });
+    const context = {
+      console, Date, Intl, JSON,
+      navigator: { languages: ['zh-CN'] },
+      localStorage: { getItem: () => 'zh-CN', setItem: () => {} },
+      performance: performanceValue,
+      setInterval: () => { intervals += 1; return intervals; },
+      clearInterval: () => {},
+      setTimeout, clearTimeout,
+      document: {
+        documentElement: { lang: '' }, body: { style: {} },
+        getElementById: () => makeElement(), querySelectorAll: () => [], querySelector: () => makeElement(),
+        createElement: () => makeElement(), createElementNS: () => makeElement(), addEventListener: () => {},
+        visibilityState: 'visible'
+      },
+      window: { addEventListener: () => {}, location: { href: '' }, setTimeout, clearTimeout },
+      fetch: async url => ({
+        ok: true, status: 200,
+        json: async () => ({
+          success: true,
+          data: url.includes('/api/staff/me')
+            ? { name: 'Staff A', permissions: {} }
+            : {
+                date: '2030-01-01', timezone: 'Asia/Singapore', server_now: '2030-01-01T10:30:00.000Z',
+                appointments: [{
+                  id: ID.appointmentA,
+                  status: 'pending',
+                  startAt: '2030-01-01T10:00:00.000Z',
+                  endAt: '2030-01-01T11:00:00.000Z',
+                  customerName: 'Test Customer',
+                  customerPhone: '****1234',
+                  serviceName: 'Test Service',
+                  durationMinutes: 60
+                }]
+              }
+        })
+      }),
+      ggI18n: i18n
+    };
+    if (performanceValue === undefined) delete context.performance;
+    context.globalThis = context;
+    vm.runInNewContext(staffScriptMatch[1], context, { filename: 'public/staff-appointments.html' });
+    await new Promise(resolve => setTimeout(resolve, 20));
+    assert.strictEqual(intervals, 0, `${name}: staff live timer must not start`);
+    assert.strictEqual(created.some(node => node?.textContent === 'Test Customer'), true, `${name}: staff appointment must remain rendered`);
+    assert.strictEqual(created.some(node => String(node?.className || '').includes('staff-late-badge')), false, `${name}: no late badge`);
+  }
+});
+
+test('35. Date.now tampering cannot affect valid owner authority and is never a monotonic fallback', () => {
+  const elements = createAdminTestDOM();
+  let monotonic = 1000;
+  class TamperedDate extends Date {
+    static now() { return -999999999999; }
+  }
+  const context = createAdminTestContext({ elements, perfNow: () => monotonic });
+  context.Date = TamperedDate;
+  context.globalThis = context;
+  vm.createContext(context);
+  vm.runInContext(adminScriptMatch[1], context, { filename: 'public/admin.html' });
+  assert.strictEqual(vm.runInContext("updateTimeAnchor('2030-01-01T00:00:00.000Z','Asia/Singapore')", context), true);
+  monotonic = 2500;
+  assert.strictEqual(
+    vm.runInContext('getAuthoritativeNowMs()', context),
+    Date.parse('2030-01-01T00:00:00.000Z') + 1500
+  );
+  context.performance = undefined;
+  assert.strictEqual(vm.runInContext('getAuthoritativeNowMs()', context), null, 'Date.now must not be used as fallback');
+});
+
+test('36. Production authoritative clock functions contain no Date.now fallback and internals remain lexical', () => {
+  for (const [name, source] of [['owner', adminHtml], ['staff', staffHtml]]) {
+    const update = source.match(/const updateTimeAnchor = [\s\S]*?\n\s*};/);
+    const current = source.match(/const getAuthoritativeNowMs = [\s\S]*?\n\s*};/);
+    assert.ok(update, `${name}: updateTimeAnchor must exist`);
+    assert.ok(current, `${name}: getAuthoritativeNowMs must exist`);
+    assert.doesNotMatch(update[0], /Date\.now\s*\(/, `${name}: anchor must not use Date.now`);
+    assert.doesNotMatch(current[0], /Date\.now\s*\(/, `${name}: current time must not use Date.now`);
+    assert.match(update[0], /readMonotonicNow\(\)/);
+    assert.match(current[0], /readMonotonicNow\(\)/);
+  }
+  for (const name of ['timeAnchor', 'calendarContextAbortController', 'calendarContextGeneration', 'liveLineTimerId', 'timeResyncTimerId']) {
+    assert.doesNotMatch(adminHtml, new RegExp(`globalScope\\.${name}\\s*=`), `${name} must not be exported`);
+  }
+  for (const name of ['staffAbortController', 'staffRequestGeneration', 'staffLiveTimerId']) {
+    assert.doesNotMatch(staffHtml, new RegExp(`(?:window|globalThis)\\.${name}\\s*=`), `${name} must not be exported`);
+  }
+});
+
+test('37. Owner calendar retains appointments, staff roster, view date, and checkout/status rendering when time authority is invalid', async () => {
+  const elements = createAdminTestDOM();
+  const appointment = {
+    id: ID.appointmentA,
+    status: 'completed',
+    start_at: '2030-01-01T10:00:00.000Z',
+    end_at: '2030-01-01T11:00:00.000Z',
+    customer_name: 'Visible Customer',
+    service_name: 'Visible Service',
+    can_start_checkout: true,
+    checkout: null,
+    items: [{
+      sequence_no: 1,
+      service_name_snapshot: 'Visible Service',
+      staff_assignments: [{ role: 'primary', staff_id: ID.staffA, staff_name: 'Visible Staff' }]
+    }]
+  };
+  const context = createAdminTestContext({
+    elements,
+    fetch: async url => {
+      if (url.includes('/api/owner/calendar-context')) return {
+        ok: true, status: 200,
+        json: async () => ({ success: true, data: { server_now: '2030-01-01T08:00:00.000Z', timezone: 'Asia/Singapore', location_id: ID.locationA1 } })
+      };
+      if (url.includes('/api/owner/staff')) return {
+        ok: true, status: 200,
+        json: async () => ({ success: true, data: [{ id: ID.staffA, name: 'Visible Staff' }] })
+      };
+      return { ok: true, status: 200, json: async () => ({ success: true, data: [appointment] }) };
+    }
+  });
+  delete context.performance;
+  context.globalThis = context;
+  vm.createContext(context);
+  vm.runInContext(adminScriptMatch[1], context, { filename: 'public/admin.html' });
+  vm.runInContext("currentViewMode='calendar'", context);
+  await context.loadAppointments();
+
+  let html = elements.get('content').innerHTML;
+  assert.match(html, /Visible Customer/);
+  assert.match(html, /Visible Staff/);
+  assert.match(html, /status-completed/);
+  assert.doesNotMatch(html, /owner-calendar-live-line/);
+  assert.doesNotMatch(html, /owner-calendar-late-badge/);
+  assert.strictEqual(vm.runInContext('currentCalendarDate', context), '2030-01-01');
+
+  vm.runInContext('invalidateTimeAnchor(); renderAppointmentsView();', context);
+  html = elements.get('content').innerHTML;
+  assert.match(html, /Visible Customer/, 'invalidating time authority must not clear appointments');
+  assert.match(html, /Visible Staff/, 'invalidating time authority must not clear staff');
+  assert.strictEqual(vm.runInContext('currentCalendarDate', context), '2030-01-01');
+  assert.strictEqual(vm.runInContext('currentAppointmentsSnapshot.length', context), 1);
+  assert.strictEqual(vm.runInContext('currentStaffSnapshot.length', context), 1);
+});
+
+test('38. Today sync failure preserves the existing view date and appointments without device-clock fallback', async () => {
+  const elements = createAdminTestDOM();
+  let contextAvailable = true;
+  const appointment = {
+    id: ID.appointmentA,
+    status: 'pending',
+    start_at: '2030-01-01T10:00:00.000Z',
+    end_at: '2030-01-01T11:00:00.000Z',
+    customer_name: 'Preserved Customer',
+    service_name: 'Preserved Service',
+    items: []
+  };
+  const context = createAdminTestContext({
+    elements,
+    fetch: async url => {
+      if (url.includes('/api/owner/calendar-context')) {
+        if (!contextAvailable) throw new Error('context unavailable');
+        return {
+          ok: true, status: 200,
+          json: async () => ({ success: true, data: { server_now: '2030-01-01T08:00:00.000Z', timezone: 'Asia/Singapore', location_id: ID.locationA1 } })
+        };
+      }
+      if (url.includes('/api/owner/staff')) return { ok: true, status: 200, json: async () => ({ success: true, data: [] }) };
+      return { ok: true, status: 200, json: async () => ({ success: true, data: [appointment] }) };
+    }
+  });
+  delete context.performance;
+  context.globalThis = context;
+  vm.createContext(context);
+  vm.runInContext(adminScriptMatch[1], context, { filename: 'public/admin.html' });
+  vm.runInContext("currentViewMode='calendar'", context);
+  await context.loadAppointments();
+  assert.strictEqual(vm.runInContext('currentCalendarDate', context), '2030-01-01');
+
+  contextAvailable = false;
+  await elements.get('calendarTodayBtn').dispatch('click');
+  assert.strictEqual(vm.runInContext('currentCalendarDate', context), '2030-01-01');
+  const html = elements.get('content').innerHTML;
+  assert.match(html, /Preserved Customer/);
+  assert.doesNotMatch(html, /owner-calendar-live-line|owner-calendar-late-badge/);
+  assert.strictEqual(vm.runInContext('getAuthoritativeNowMs()', context), null);
 });
