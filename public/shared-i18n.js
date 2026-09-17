@@ -12,7 +12,7 @@
       calendar: '日历', staff: '员工', services: '服务', customers: '顾客', checkout: '收银', more: '更多',
       save: '保存', saveProfile: '保存基本资料', saving: '保存中...', saved: '已保存', saveFailed: '保存失败', savedReloadFailed: '已保存，但重新读取失败，请重试', unsavedChanges: '有未保存更改', discardUnsavedChanges: '有未保存更改。放弃更改并继续吗？', profileSaveDiscardsUnsaved: '其他设置有未保存更改。保存基本资料会重新读取员工设置，是否放弃这些更改并继续？', cancel: '取消', edit: '编辑', add: '新增', confirm: '确认', complete: '完成', retry: '重试',
       pending: '待确认', confirmed: '已确认', arrived: '已到店', in_service: '服务中', completed: '已完成', cancelled: '已取消', noShow: '未到店', no_show: '未到店', unknownStatus: '状态未知',
-      name: '姓名', phone: '电话', email: 'Email', price: '价格', duration: '时长', category: '分类', status: '状态', actions: '操作',
+      name: '姓名', phone: '电话', email: 'Email', price: '价格', duration: '时长', category: '分类', status: '状态', actions: '操作', staffAvatar: '员工头像',
       enabled: '启用', disabled: '停用', bookable: '可预约', notBookable: '未开放预约', active: '启用', inactive: '停用',
       today: '今天', tomorrow: '明天', date: '日期', time: '时间', loading: '加载中', loadFailed: '加载失败', error: '发生错误',
       ownerPageTitle: 'GG-Beauty 老板端预约后台', customerPageTitle: 'GG-Beauty 在线预约', ownerTitle: 'GG-Beauty 老板端', ownerSubtitle: '预约管理后台', refreshAppointments: '刷新预约', logout: '退出登录', comingSoon: '即将推出',
@@ -35,7 +35,7 @@
       calendar: 'Calendar', staff: 'Staff', services: 'Services', customers: 'Customers', checkout: 'Checkout', more: 'More',
       save: 'Save', saveProfile: 'Save Profile', saving: 'Saving...', saved: 'Saved', saveFailed: 'Save failed', savedReloadFailed: 'Saved, but failed to reload the latest data. Please retry.', unsavedChanges: 'Unsaved changes', discardUnsavedChanges: 'You have unsaved changes. Discard them and continue?', profileSaveDiscardsUnsaved: 'Other staff settings have unsaved changes. Saving the profile reloads staff settings. Discard those changes and continue?', cancel: 'Cancel', edit: 'Edit', add: 'Add', confirm: 'Confirm', complete: 'Complete', retry: 'Retry',
       pending: 'Pending', confirmed: 'Confirmed', arrived: 'Arrived', in_service: 'In Service', completed: 'Completed', cancelled: 'Cancelled', noShow: 'No Show', no_show: 'No Show', unknownStatus: 'Unknown Status',
-      name: 'Name', phone: 'Phone', email: 'Email', price: 'Price', duration: 'Duration', category: 'Category', status: 'Status', actions: 'Actions',
+      name: 'Name', phone: 'Phone', email: 'Email', price: 'Price', duration: 'Duration', category: 'Category', status: 'Status', actions: 'Actions', staffAvatar: 'Staff avatar',
       enabled: 'Enabled', disabled: 'Disabled', bookable: 'Bookable', notBookable: 'Not bookable', active: 'Active', inactive: 'Inactive',
       today: 'Today', tomorrow: 'Tomorrow', date: 'Date', time: 'Time', loading: 'Loading', loadFailed: 'Load Failed', error: 'Something went wrong',
       ownerPageTitle: 'GG-Beauty Owner Dashboard', customerPageTitle: 'GG-Beauty Online Appointment', ownerTitle: 'GG-Beauty Owner', ownerSubtitle: 'Appointment Dashboard', refreshAppointments: 'Refresh Appointments', logout: 'Log Out', comingSoon: 'Coming later',
@@ -162,6 +162,20 @@
     return { locale, name: requested.name || english.name || chinese.name || canonicalName, description: requested.description || english.description || chinese.description || canonicalDescription };
   }
 
+  function getStaffInitials(name) {
+    if (typeof name !== 'string') return '';
+    const trimmed = name.trim();
+    if (!trimmed) return '';
+    const parts = trimmed.split(/[\s_\-]+/).filter(Boolean);
+    if (parts.length >= 2) {
+      const first = Array.from(parts[0])[0] || '';
+      const second = Array.from(parts[1])[0] || '';
+      return (first + second).toUpperCase();
+    }
+    const chars = Array.from(trimmed);
+    return chars.slice(0, 2).join('').toUpperCase();
+  }
+
   return {
     DEFAULT_LOCALE,
     STORAGE_KEY,
@@ -180,6 +194,7 @@
     formatPrice,
     formatStatus,
     formatCheckoutStatus,
-    resolveLocalizedService
+    resolveLocalizedService,
+    getStaffInitials
   };
 });

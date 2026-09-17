@@ -107,8 +107,17 @@
     }
 
     .identity {
+      display: flex;
+      align-items: center;
+      gap: 12px;
       min-height: 54px;
       margin-top: 20px;
+    }
+
+    .identity-text {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
     }
 
     .identity-row {
@@ -122,12 +131,18 @@
       margin: 0;
       font-size: 1.05rem;
       font-weight: 700;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
 
     .location-name {
-      margin: 6px 0 0;
+      margin: 4px 0 0;
       color: var(--muted);
-      font-size: 0.9rem;
+      font-size: 0.88rem;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
 
     .view-switch {
@@ -205,6 +220,7 @@
 
     .calendar-nav-button {
       width: 44px;
+      min-width: 44px;
       min-height: 44px;
       border: 1px solid var(--line);
       border-radius: 12px;
@@ -225,13 +241,20 @@
     }
 
     .calendar-today-button {
-      margin-top: 3px;
-      padding: 2px 10px;
+      min-width: 44px;
+      min-height: 44px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      margin-top: 2px;
+      padding: 4px 10px;
       border: 0;
+      border-radius: 8px;
       background: transparent;
       color: var(--accent);
-      font-size: 0.76rem;
+      font-size: 0.8rem;
       font-weight: 700;
+      box-sizing: border-box;
     }
 
     .date-picker-label {
@@ -838,8 +861,13 @@
 
       <section class="identity-row">
         <div class="identity" aria-live="polite">
-          <p id="staff-name" class="staff-name"></p>
-          <p id="location-name" class="location-name"></p>
+          <div id="staff-avatar" class="staff-avatar-circle staff-avatar-placeholder" role="img" aria-label="Staff avatar">
+            <span id="staff-avatar-text" class="staff-avatar-initials notranslate" translate="no"></span>
+          </div>
+          <div class="identity-text">
+            <p id="staff-name" class="staff-name notranslate" translate="no"></p>
+            <p id="location-name" class="location-name notranslate" translate="no"></p>
+          </div>
         </div>
         <nav class="view-switch" aria-label="View">
           <button id="view-calendar" type="button">Calendar</button>
@@ -1007,16 +1035,16 @@
         selectDate: 'Select Date',
         list: 'List',
         calendar: 'Calendar',
-        previousDay: 'Previous day',
-        nextDay: 'Next day',
+        previousDay: 'Previous Day',
+        nextDay: 'Next Day',
         noAppointments: 'No appointments',
-        loading: 'Loading…',
+        loading: 'Loading',
         minutes: 'min',
         noAppointmentsToday: 'No appointments today',
         noAppointmentsDate: 'No appointments on this date',
-        sessionExpired: 'Session expired. Please log in again.',
+        sessionExpired: 'Session Expired',
         logIn: 'Log In',
-        loadFailed: 'Failed to load. Please try again.',
+        loadFailed: 'Load Failed',
         retry: 'Retry',
         close: 'Close',
         changeTime: 'Change Time',
@@ -1035,9 +1063,8 @@
         notAllowed: 'Not allowed',
         unableToMove: 'Unable to move appointment',
         unknownStatus: 'Unknown Status',
-        sessionExpired: 'Session Expired',
-        loading: 'Loading',
-        loadFailed: 'Load Failed',
+        staffAvatar: 'Staff avatar',
+        timeHeader: 'TIME',
         statuses: {
           pending: 'Pending',
           confirmed: 'Confirmed',
@@ -1055,8 +1082,8 @@
         selectDate: '选择日期',
         list: '列表',
         calendar: '日历',
-        previousDay: '前一天',
-        nextDay: '后一天',
+        previousDay: '上一天',
+        nextDay: '下一天',
         noAppointments: '暂无预约',
         loading: '加载中',
         minutes: '分钟',
@@ -1083,6 +1110,8 @@
         notAllowed: '无权限修改',
         unableToMove: '无法修改预约时间',
         unknownStatus: '状态未知',
+        staffAvatar: '员工头像',
+        timeHeader: '时间',
         statuses: {
           pending: '待确认',
           confirmed: '已确认',
@@ -1097,6 +1126,10 @@
 
     const getSavedLanguage = () => {
       try {
+        const unified = localStorage.getItem('gg_beauty_locale');
+        if (unified) {
+          return unified.toLowerCase().startsWith('zh') ? 'zh' : 'en';
+        }
         const savedLanguage = localStorage.getItem(
           LANGUAGE_STORAGE_KEY
         );
@@ -1106,6 +1139,11 @@
         }
       } catch (error) {
         // Storage can be unavailable in private or restricted browser modes.
+      }
+
+      if (globalThis.ggI18n && typeof globalThis.ggI18n.detectBrowserLocale === 'function') {
+        const detected = globalThis.ggI18n.detectBrowserLocale(navigator);
+        return detected.startsWith('zh') ? 'zh' : 'en';
       }
 
       const browserLanguages = Array.isArray(navigator.languages)
@@ -1154,6 +1192,8 @@
       languageZh: document.getElementById('language-zh'),
       viewList: document.getElementById('view-list'),
       viewCalendar: document.getElementById('view-calendar'),
+      staffAvatar: document.getElementById('staff-avatar'),
+      staffAvatarText: document.getElementById('staff-avatar-text'),
       staffName: document.getElementById('staff-name'),
       locationName: document.getElementById('location-name'),
       todayButton: document.getElementById('today-button'),
@@ -1200,6 +1240,80 @@
     };
 
     const currentText = () => translations[state.language];
+
+    const getStaffInitials = (name) => {
+      if (globalThis.ggI18n && typeof globalThis.ggI18n.getStaffInitials === 'function') {
+        return globalThis.ggI18n.getStaffInitials(name);
+      }
+      if (typeof name !== 'string') return '';
+      const trimmed = name.trim();
+      if (!trimmed) return '';
+      const parts = trimmed.split(/[\s_\-]+/).filter(Boolean);
+      if (parts.length >= 2) {
+        const first = Array.from(parts[0])[0] || '';
+        const second = Array.from(parts[1])[0] || '';
+        return (first + second).toUpperCase();
+      }
+      const chars = Array.from(trimmed);
+      return chars.slice(0, 2).join('').toUpperCase();
+    };
+
+    const getStaffAvatarAriaLabel = name => {
+      const trimmed = typeof name === 'string' ? name.trim() : '';
+      if (state.language === 'zh') {
+        return trimmed ? `员工头像：${trimmed}` : '员工头像';
+      }
+      return trimmed ? `Staff avatar: ${trimmed}` : 'Staff avatar';
+    };
+
+    const createAvatarElement = (name, className = 'staff-avatar-circle') => {
+      const avatar = document.createElement('div');
+      avatar.className = className;
+      avatar.setAttribute('role', 'img');
+      avatar.setAttribute('aria-label', getStaffAvatarAriaLabel(name));
+
+      const initials = getStaffInitials(name);
+      if (initials) {
+        const span = document.createElement('span');
+        span.className = 'staff-avatar-initials notranslate';
+        span.setAttribute('translate', 'no');
+        span.textContent = initials;
+        avatar.appendChild(span);
+      } else {
+        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svg.setAttribute('viewBox', '0 0 24 24');
+        svg.setAttribute('width', '20');
+        svg.setAttribute('height', '20');
+        svg.setAttribute('fill', 'currentColor');
+        svg.setAttribute('aria-hidden', 'true');
+        svg.className.baseVal = 'staff-avatar-fallback-icon';
+
+        const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        circle.setAttribute('cx', '12');
+        circle.setAttribute('cy', '8');
+        circle.setAttribute('r', '4');
+        svg.appendChild(circle);
+
+        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        path.setAttribute('d', 'M4 20c0-4 4-6 8-6s8 2 8 6');
+        svg.appendChild(path);
+
+        avatar.appendChild(svg);
+      }
+      return avatar;
+    };
+
+    const getServiceDisplayName = appointment => {
+      if (Array.isArray(appointment?.items) && appointment.items.length > 0) {
+        const itemNames = appointment.items
+          .map(it => it.serviceName || it.service_name || it.name)
+          .filter(Boolean);
+        if (itemNames.length > 0) {
+          return itemNames.join(' + ');
+        }
+      }
+      return appointment?.serviceName || '—';
+    };
 
     const addDays = (dateString, numberOfDays) => {
       const date = new Date(`${dateString}T00:00:00.000Z`);
@@ -1402,6 +1516,18 @@
       const card = document.createElement('article');
       card.className = 'appointment-card';
 
+      const normalizedStatus = normalizeStatus(appointment.status);
+
+      const statusText =
+        currentText().statuses[normalizedStatus] ||
+        currentText().unknownStatus;
+      const serviceDisplayName = getServiceDisplayName(appointment);
+
+      card.setAttribute(
+        'aria-label',
+        `${formatTime(appointment.startAt)} – ${formatTime(appointment.endAt)}, ${appointment.customerName || ''}, ${serviceDisplayName}, ${statusText}`
+      );
+
       const cardTop = document.createElement('div');
       cardTop.className = 'card-top';
 
@@ -1412,12 +1538,6 @@
           `${formatTime(appointment.startAt)} – ${formatTime(appointment.endAt)}`
         )
       );
-
-      const normalizedStatus = normalizeStatus(appointment.status);
-
-      const statusText =
-        currentText().statuses[normalizedStatus] ||
-        currentText().unknownStatus;
 
       const badge = document.createElement('span');
       badge.className = `status-badge calendar-status-pill status-${normalizedStatus}`;
@@ -1437,13 +1557,14 @@
       cardTop.appendChild(badge);
 
       card.appendChild(cardTop);
-      card.appendChild(
-        createTextElement(
-          'p',
-          'customer-name',
-          appointment.customerName || '—'
-        )
+      const customerEl = createTextElement(
+        'p',
+        'customer-name notranslate',
+        appointment.customerName || '—'
       );
+      customerEl.setAttribute('translate', 'no');
+      card.appendChild(customerEl);
+
       card.appendChild(
         createTextElement(
           'p',
@@ -1454,13 +1575,13 @@
 
       const serviceRow = document.createElement('div');
       serviceRow.className = 'service-row';
-      serviceRow.appendChild(
-        createTextElement(
-          'p',
-          'service-name',
-          appointment.serviceName || '—'
-        )
+      const serviceEl = createTextElement(
+        'p',
+        'service-name notranslate',
+        serviceDisplayName
       );
+      serviceEl.setAttribute('translate', 'no');
+      serviceRow.appendChild(serviceEl);
       serviceRow.appendChild(
         createTextElement(
           'p',
@@ -1695,12 +1816,29 @@
       const calendar = document.createElement('div');
       calendar.className = 'calendar-view';
 
-      const staffHeader = createTextElement(
-        'div',
-        'calendar-staff-header',
-        state.profile ? state.profile.name : ''
-      );
-      calendar.appendChild(staffHeader);
+      const headerRow = document.createElement('div');
+      headerRow.className = 'calendar-header-row';
+
+      const timeHeader = document.createElement('div');
+      timeHeader.className = 'calendar-time-header';
+      timeHeader.textContent = currentText().timeHeader || 'TIME';
+      headerRow.appendChild(timeHeader);
+
+      const staffColHeader = document.createElement('div');
+      staffColHeader.className = 'calendar-staff-column-header calendar-staff-header';
+
+      const staffName = state.profile ? state.profile.name : '';
+      const colAvatar = createAvatarElement(staffName, 'staff-avatar-circle');
+      staffColHeader.appendChild(colAvatar);
+
+      const staffNameSpan = document.createElement('span');
+      staffNameSpan.className = 'calendar-staff-name notranslate';
+      staffNameSpan.setAttribute('translate', 'no');
+      staffNameSpan.textContent = staffName;
+      staffColHeader.appendChild(staffNameSpan);
+
+      headerRow.appendChild(staffColHeader);
+      calendar.appendChild(headerRow);
 
       const scroll = document.createElement('div');
       scroll.className = 'calendar-scroll';
@@ -1772,6 +1910,11 @@
             CALENDAR_MINUTE_HEIGHT - 3
         );
         const normalizedStatus = normalizeStatus(appointment.status);
+        const statusText =
+          currentText().statuses[normalizedStatus] ||
+          currentText().unknownStatus;
+        const serviceDisplayName = getServiceDisplayName(appointment);
+
         const block = document.createElement('button');
         block.type = 'button';
         block.className =
@@ -1780,30 +1923,52 @@
         block.style.height = `${height}px`;
         block.setAttribute(
           'aria-label',
-          `${formatTime(appointment.startAt)} – ${formatTime(appointment.endAt)}, ${appointment.customerName || ''}, ${appointment.serviceName || ''}, ${currentText().statuses[normalizedStatus] || currentText().unknownStatus}`
+          `${formatTime(appointment.startAt)} – ${formatTime(appointment.endAt)}, ${appointment.customerName || ''}, ${serviceDisplayName}, ${statusText}`
         );
 
-        block.appendChild(
-          createTextElement(
-            'span',
-            'calendar-appointment-time',
-            `${formatTime(appointment.startAt)} – ${formatTime(appointment.endAt)}`
-          )
+        const cardHeader = document.createElement('div');
+        cardHeader.className = 'calendar-appointment-header';
+
+        const timeSpan = createTextElement(
+          'span',
+          'calendar-appointment-time',
+          `${formatTime(appointment.startAt)} – ${formatTime(appointment.endAt)}`
         );
-        block.appendChild(
-          createTextElement(
-            'span',
-            'calendar-appointment-name',
-            appointment.customerName || '—'
-          )
+        cardHeader.appendChild(timeSpan);
+
+        const statusPill = document.createElement('span');
+        statusPill.className = `calendar-status-pill status-${normalizedStatus}`;
+        statusPill.setAttribute('role', 'status');
+        statusPill.setAttribute('aria-label', statusText);
+
+        const statusIcon = document.createElement('span');
+        statusIcon.className = 'calendar-status-icon';
+        statusIcon.setAttribute('aria-hidden', 'true');
+        statusPill.appendChild(statusIcon);
+
+        const statusLabel = document.createElement('span');
+        statusLabel.className = 'status-text';
+        statusLabel.textContent = statusText;
+        statusPill.appendChild(statusLabel);
+
+        cardHeader.appendChild(statusPill);
+        block.appendChild(cardHeader);
+
+        const nameSpan = createTextElement(
+          'span',
+          'calendar-appointment-name notranslate',
+          appointment.customerName || '—'
         );
-        block.appendChild(
-          createTextElement(
-            'span',
-            'calendar-appointment-service',
-            appointment.serviceName || '—'
-          )
+        nameSpan.setAttribute('translate', 'no');
+        block.appendChild(nameSpan);
+
+        const serviceSpan = createTextElement(
+          'span',
+          'calendar-appointment-service notranslate',
+          serviceDisplayName
         );
+        serviceSpan.setAttribute('translate', 'no');
+        block.appendChild(serviceSpan);
 
         if (height >= 92 && appointment.customerPhone) {
           block.appendChild(
@@ -1865,11 +2030,14 @@
       document.title = text.pageTitle;
       elements.pageTitle.textContent = text.pageTitle;
       elements.todayButton.textContent = text.today;
+      elements.todayButton.setAttribute('aria-label', text.today);
       elements.tomorrowButton.textContent = text.tomorrow;
+      elements.tomorrowButton.setAttribute('aria-label', text.tomorrow);
       elements.datePickerText.textContent = text.selectDate;
       elements.viewList.textContent = text.list;
       elements.viewCalendar.textContent = text.calendar;
       elements.calendarToday.textContent = text.today;
+      elements.calendarToday.setAttribute('aria-label', text.today);
       elements.previousDay.setAttribute(
         'aria-label',
         text.previousDay
@@ -1918,12 +2086,45 @@
         state.selectedDate
       );
 
-      elements.staffName.textContent = state.profile
-        ? state.profile.name
-        : '';
+      const rawStaffName = state.profile ? state.profile.name : '';
+      elements.staffName.textContent = rawStaffName;
       elements.locationName.textContent = state.profile
         ? `${state.profile.shopName} · ${state.profile.locationName}`
         : '';
+
+      const avatarLabel = getStaffAvatarAriaLabel(rawStaffName);
+      elements.staffAvatar.setAttribute('aria-label', avatarLabel);
+      const initials = getStaffInitials(rawStaffName);
+      if (initials) {
+        elements.staffAvatarText.textContent = initials;
+        elements.staffAvatarText.hidden = false;
+        const fallback = elements.staffAvatar.querySelector('.staff-avatar-fallback-icon');
+        if (fallback) fallback.remove();
+      } else {
+        elements.staffAvatarText.textContent = '';
+        elements.staffAvatarText.hidden = true;
+        if (!elements.staffAvatar.querySelector('.staff-avatar-fallback-icon')) {
+          const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+          svg.setAttribute('viewBox', '0 0 24 24');
+          svg.setAttribute('width', '20');
+          svg.setAttribute('height', '20');
+          svg.setAttribute('fill', 'currentColor');
+          svg.setAttribute('aria-hidden', 'true');
+          svg.className.baseVal = 'staff-avatar-fallback-icon';
+
+          const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+          circle.setAttribute('cx', '12');
+          circle.setAttribute('cy', '8');
+          circle.setAttribute('r', '4');
+          svg.appendChild(circle);
+
+          const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+          path.setAttribute('d', 'M4 20c0-4 4-6 8-6s8 2 8 6');
+          svg.appendChild(path);
+
+          elements.staffAvatar.appendChild(svg);
+        }
+      }
       elements.selectedDate.textContent = formatDate(
         state.selectedDate
       );
@@ -2092,6 +2293,10 @@
         localStorage.setItem(
           LANGUAGE_STORAGE_KEY,
           language
+        );
+        localStorage.setItem(
+          'gg_beauty_locale',
+          language === 'zh' ? 'zh-CN' : 'en'
         );
       } catch (error) {
         // Language switching still works when storage is unavailable.

@@ -421,3 +421,126 @@ a:focus-visible {
   font-weight: 500;
   line-height: 1.5;
 }
+
+/* ==========================================================================
+   C4: Staff Personal Mobile Timeline Styles & Avatar
+   ========================================================================== */
+
+:root {
+  --staff-avatar-size: 44px;
+}
+
+/* Staff Avatar Circle & Placeholder */
+.staff-avatar-circle,
+.staff-avatar-placeholder {
+  width: var(--staff-avatar-size, 44px);
+  height: var(--staff-avatar-size, 44px);
+  min-width: var(--staff-avatar-size, 44px);
+  min-height: var(--staff-avatar-size, 44px);
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface, #ffffff);
+  border: 1.5px solid var(--line, #e2e8f0);
+  color: var(--text, #1e293b);
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1;
+  text-transform: uppercase;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  user-select: none;
+  overflow: hidden;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+.staff-avatar-initials {
+  display: inline-block;
+  letter-spacing: 0.02em;
+}
+
+.staff-avatar-fallback-icon {
+  display: inline-block;
+  width: 20px;
+  height: 20px;
+  color: var(--muted, #68737d);
+}
+
+/* Timeline Sticky Header Row (Image 1 Mobile Timeline) */
+.calendar-header-row {
+  display: flex;
+  align-items: center;
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  min-height: 54px;
+  border-bottom: 1px solid var(--line, #e2e8f0);
+  background: rgba(255, 255, 255, 0.96);
+  backdrop-filter: blur(8px);
+  box-sizing: border-box;
+}
+
+.calendar-time-header {
+  width: 58px;
+  min-width: 58px;
+  text-align: right;
+  padding-right: 12px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--muted, #68737d);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  box-sizing: border-box;
+}
+
+.calendar-staff-column-header {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 8px;
+  gap: 3px;
+  min-width: 0;
+}
+
+.calendar-staff-column-header .staff-avatar-circle {
+  width: 40px;
+  height: 40px;
+  min-width: 40px;
+  min-height: 40px;
+  font-size: 14px;
+}
+
+.calendar-staff-column-header .calendar-staff-name {
+  font-size: 0.82rem;
+  font-weight: 750;
+  color: var(--text, #172027);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+/* Appointment Card in Timeline (C4) */
+.calendar-appointment-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  width: 100%;
+}
+
+.calendar-appointment .calendar-status-pill {
+  padding: 2px 7px;
+  font-size: 10px;
+  gap: 4px;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+
+.calendar-appointment .calendar-status-icon {
+  width: 7px;
+  height: 7px;
+}
