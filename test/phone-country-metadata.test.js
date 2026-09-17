@@ -10,6 +10,9 @@ const {
   EXCEPTIONAL_COUNTRY_ISOS,
   USER_ASSIGNED_COUNTRY_ISOS,
   NON_GEOGRAPHIC_CALLING_CODES,
+  getExceptionalCountryIsos,
+  getUserAssignedCountryIsos,
+  getNonGeographicCallingCodes,
   getRegionKind,
   getSupportedPhoneCountries,
   isSupportedCountryIso,
@@ -347,4 +350,105 @@ test('searchCustomerPhoneSelectorCountries: searches by Calling Code, ISO, and C
   // Empty or invalid search returns all
   assert.equal(searchCustomerPhoneSelectorCountries('', 'zh-CN').length, getCustomerPhoneSelectorCountries('zh-CN').length);
   assert.equal(searchCustomerPhoneSelectorCountries(null, 'zh-CN').length, getCustomerPhoneSelectorCountries('zh-CN').length);
+});
+
+// ==========================================
+// Anti-Tampering & Classification Immutability Tests
+// ==========================================
+test('anti-tampering: pre-cache mutation attempts cannot contaminate AC, TA, XK or non-geographic classification', () => {
+  // 1. Attempt add/delete/clear/push/splice on exported classification structures before fresh classification calls
+  assert.throws(() => { EXCEPTIONAL_COUNTRY_ISOS.add('SG'); }, TypeError);
+  assert.throws(() => { EXCEPTIONAL_COUNTRY_ISOS.delete('AC'); }, TypeError);
+  assert.throws(() => { EXCEPTIONAL_COUNTRY_ISOS.clear(); }, TypeError);
+  assert.throws(() => { EXCEPTIONAL_COUNTRY_ISOS.push('SG'); }, TypeError);
+  assert.throws(() => { EXCEPTIONAL_COUNTRY_ISOS[0] = 'SG'; }, TypeError);
+
+  assert.throws(() => { USER_ASSIGNED_COUNTRY_ISOS.add('SG'); }, TypeError);
+  assert.throws(() => { USER_ASSIGNED_COUNTRY_ISOS.delete('XK'); }, TypeError);
+  assert.throws(() => { USER_ASSIGNED_COUNTRY_ISOS.clear(); }, TypeError);
+
+  assert.throws(() => { NON_GEOGRAPHIC_CALLING_CODES.add('+65'); }, TypeError);
+  assert.throws(() => { NON_GEOGRAPHIC_CALLING_CODES.delete('+800'); }, TypeError);
+  assert.throws(() => { NON_GEOGRAPHIC_CALLING_CODES.clear(); }, TypeError);
+
+  // Even with prototype-based tampering attempts, private sets remain untouched
+  try { Set.prototype.add.call(EXCEPTIONAL_COUNTRY_ISOS, 'SG'); } catch (_) {}
+  try { Set.prototype.clear.call(EXCEPTIONAL_COUNTRY_ISOS); } catch (_) {}
+  try { Set.prototype.add.call(USER_ASSIGNED_COUNTRY_ISOS, 'SG'); } catch (_) {}
+  try { Set.prototype.add.call(NON_GEOGRAPHIC_CALLING_CODES, '+65'); } catch (_) {}
+
+  // 1. AC is permanently exceptional
+  assert.equal(getRegionKind('AC'), REGION_KINDS.EXCEPTIONAL);
+  assert.equal(getRegionKind('ac'), REGION_KINDS.EXCEPTIONAL);
+
+  // 2. TA is permanently exceptional
+  assert.equal(getRegionKind('TA'), REGION_KINDS.EXCEPTIONAL);
+  assert.equal(getRegionKind('ta'), REGION_KINDS.EXCEPTIONAL);
+
+  // 3. XK is permanently user_assigned
+  assert.equal(getRegionKind('XK'), REGION_KINDS.USER_ASSIGNED);
+  assert.equal(getRegionKind('xk'), REGION_KINDS.USER_ASSIGNED);
+
+  // 4. +800 and other non-geographics are permanently non_geographic
+  assert.equal(getRegionKind(null, '+800'), REGION_KINDS.NON_GEOGRAPHIC);
+  assert.equal(getRegionKind(null, '800'), REGION_KINDS.NON_GEOGRAPHIC);
+  assert.equal(getRegionKind(null, '+808'), REGION_KINDS.NON_GEOGRAPHIC);
+  assert.equal(getRegionKind(null, '+870'), REGION_KINDS.NON_GEOGRAPHIC);
+});
+
+test('anti-tampering: pre-cache and post-cache mutation attempts cannot leak AC, TA, XK into default Selector', () => {
+  // Attempt mutations
+  try { EXCEPTIONAL_COUNTRY_ISOS.clear(); } catch (_) {}
+  try { USER_ASSIGNED_COUNTRY_ISOS.clear(); } catch (_) {}
+
+  // 5. Default selector still excludes AC, TA, XK
+  const selectorBefore = getCustomerPhoneSelectorCountries('zh-CN');
+  assert.equal(selectorBefore.some(x => x.iso2 === 'AC'), false);
+  assert.equal(selectorBefore.some(x => x.iso2 === 'TA'), false);
+  assert.equal(selectorBefore.some(x => x.iso2 === 'XK'), false);
+  assert.equal(selectorBefore.some(x => x.callingCode === '+800'), false);
+
+  // 6. Post-cache repeated modification attempts
+  try { EXCEPTIONAL_COUNTRY_ISOS.clear(); } catch (_) {}
+  try { USER_ASSIGNED_COUNTRY_ISOS.clear(); } catch (_) {}
+  selectorBefore.pop();
+  selectorBefore.shift();
+  if (selectorBefore[0]) {
+    selectorBefore[0].iso2 = 'AC';
+    selectorBefore[0].regionKind = 'exceptional';
+  }
+
+  // Next selector invocation still clean
+  const selectorAfter = getCustomerPhoneSelectorCountries('zh-CN');
+  assert.equal(selectorAfter.some(x => x.iso2 === 'AC'), false);
+  assert.equal(selectorAfter.some(x => x.iso2 === 'TA'), false);
+  assert.equal(selectorAfter.some(x => x.iso2 === 'XK'), false);
+  assert.equal(selectorAfter[0].iso2, 'SG');
+
+  // 7. Searching for AC, TA, XK or non-geographic numbers never returns hidden territories
+  const searchAC = searchCustomerPhoneSelectorCountries('AC', 'en');
+  assert.equal(searchAC.some(x => x.iso2 === 'AC'), false);
+
+  const searchTA = searchCustomerPhoneSelectorCountries('TA', 'en');
+  assert.equal(searchTA.some(x => x.iso2 === 'TA'), false);
+
+  const searchXK = searchCustomerPhoneSelectorCountries('XK', 'en');
+  assert.equal(searchXK.some(x => x.iso2 === 'XK'), false);
+
+  const search800 = searchCustomerPhoneSelectorCountries('+800', 'en');
+  assert.equal(search800.length, 0);
+
+  // 8. Public getters return fresh, immutable arrays
+  const excList = getExceptionalCountryIsos();
+  assert.deepEqual(excList, ['AC', 'TA']);
+  assert.ok(Object.isFrozen(excList));
+  assert.throws(() => { excList.push('SG'); }, TypeError);
+
+  const userList = getUserAssignedCountryIsos();
+  assert.deepEqual(userList, ['XK']);
+  assert.ok(Object.isFrozen(userList));
+
+  const nonGeoList = getNonGeographicCallingCodes();
+  assert.ok(nonGeoList.includes('+800'));
+  assert.ok(Object.isFrozen(nonGeoList));
 });
