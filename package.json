@@ -9,6 +9,7 @@
     "@supabase/supabase-js": "^2.57.4",
     "bcryptjs": "^3.0.2",
     "express": "^4.19.2",
+    "libphonenumber-js": "1.13.13",
     "pg": "^8.13.1"
   }
 }
