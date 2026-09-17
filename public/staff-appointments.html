@@ -8,6 +8,7 @@
   >
   <meta name="color-scheme" content="light">
   <title>My Appointments</title>
+  <link rel="stylesheet" href="/calendar-shared.css">
   <style>
     :root {
       --background: #f5f6f8;
@@ -86,12 +87,17 @@
     }
 
     .language-switch button {
-      min-width: 26px;
-      padding: 2px 0;
+      min-width: 44px;
+      min-height: 44px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 2px 4px;
       border: 0;
-      border-bottom: 1px solid transparent;
+      border-bottom: 2px solid transparent;
       background: transparent;
       color: inherit;
+      box-sizing: border-box;
     }
 
     .language-switch button.active {
@@ -135,12 +141,17 @@
     }
 
     .view-switch button {
-      min-width: 28px;
-      padding: 3px 0;
+      min-width: 44px;
+      min-height: 44px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 3px 6px;
       border: 0;
-      border-bottom: 1px solid transparent;
+      border-bottom: 2px solid transparent;
       background: transparent;
       color: inherit;
+      box-sizing: border-box;
     }
 
     .view-switch button.active {
@@ -398,6 +409,11 @@
       opacity: 0.78;
     }
 
+    .calendar-appointment.status-unknown {
+      border-left-color: var(--color-status-unknown, #475569);
+      background: var(--color-status-unknown-soft, #f1f5f9);
+    }
+
     .calendar-appointment-time,
     .calendar-appointment-name,
     .calendar-appointment-service,
@@ -480,6 +496,11 @@
     .status-cancelled {
       background: #fbe9e9;
       color: var(--danger);
+    }
+
+    .status-unknown {
+      background: var(--color-status-unknown-soft, #f1f5f9);
+      color: var(--color-status-unknown, #475569);
     }
 
     .customer-name {
@@ -1013,12 +1034,15 @@
         timeUnavailable: 'Time unavailable',
         notAllowed: 'Not allowed',
         unableToMove: 'Unable to move appointment',
-        unknownStatus: 'Unknown',
+        unknownStatus: 'Unknown Status',
+        sessionExpired: 'Session Expired',
+        loading: 'Loading',
+        loadFailed: 'Load Failed',
         statuses: {
           pending: 'Pending',
           confirmed: 'Confirmed',
           arrived: 'Arrived',
-          in_service: 'In service',
+          in_service: 'In Service',
           completed: 'Completed',
           cancelled: 'Cancelled',
           no_show: 'No Show'
@@ -1034,13 +1058,13 @@
         previousDay: '前一天',
         nextDay: '后一天',
         noAppointments: '暂无预约',
-        loading: '加载中…',
+        loading: '加载中',
         minutes: '分钟',
         noAppointmentsToday: '今天没有预约',
         noAppointmentsDate: '该日期没有预约',
-        sessionExpired: '登录已失效，请重新登录',
+        sessionExpired: '登录已过期',
         logIn: '重新登录',
-        loadFailed: '加载失败，请重试',
+        loadFailed: '加载失败',
         retry: '重新加载',
         close: '关闭',
         changeTime: '修改时间',
@@ -1058,7 +1082,7 @@
         timeUnavailable: '该时间不可用',
         notAllowed: '无权限修改',
         unableToMove: '无法修改预约时间',
-        unknownStatus: '未知状态',
+        unknownStatus: '状态未知',
         statuses: {
           pending: '待确认',
           confirmed: '已确认',
@@ -1395,13 +1419,22 @@
         currentText().statuses[normalizedStatus] ||
         currentText().unknownStatus;
 
-      cardTop.appendChild(
-        createTextElement(
-          'span',
-          `status-badge status-${normalizedStatus}`,
-          statusText
-        )
-      );
+      const badge = document.createElement('span');
+      badge.className = `status-badge calendar-status-pill status-${normalizedStatus}`;
+      badge.setAttribute('role', 'status');
+      badge.setAttribute('aria-label', statusText);
+
+      const icon = document.createElement('span');
+      icon.className = 'calendar-status-icon';
+      icon.setAttribute('aria-hidden', 'true');
+      badge.appendChild(icon);
+
+      const textSpan = document.createElement('span');
+      textSpan.className = 'status-text';
+      textSpan.textContent = statusText;
+      badge.appendChild(textSpan);
+
+      cardTop.appendChild(badge);
 
       card.appendChild(cardTop);
       card.appendChild(
@@ -1747,7 +1780,7 @@
         block.style.height = `${height}px`;
         block.setAttribute(
           'aria-label',
-          `${formatTime(appointment.startAt)} – ${formatTime(appointment.endAt)}, ${appointment.customerName || ''}, ${appointment.serviceName || ''}`
+          `${formatTime(appointment.startAt)} – ${formatTime(appointment.endAt)}, ${appointment.customerName || ''}, ${appointment.serviceName || ''}, ${currentText().statuses[normalizedStatus] || currentText().unknownStatus}`
         );
 
         block.appendChild(

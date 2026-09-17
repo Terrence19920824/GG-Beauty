@@ -6,6 +6,8 @@
 
   <title data-i18n="ownerPageTitle">GG-Beauty 老板端预约后台</title>
 
+  <link rel="stylesheet" href="/calendar-shared.css">
+
   <style>
     :root {
       --status-pending: #8a6d00;
@@ -326,11 +328,17 @@
     }
 
     .status {
-      display: inline-block;
-      padding: 5px 9px;
-      border-radius: 20px;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 999px;
       font-size: 12px;
       font-weight: 600;
+      line-height: 1.4;
+      border: 1px solid transparent;
+      white-space: nowrap;
+      box-sizing: border-box;
     }
 
     .pending {
@@ -362,6 +370,26 @@
     .completed {
       background: var(--status-completed-soft);
       color: var(--status-completed);
+    }
+
+    .status.unknown,
+    .unknown {
+      background: var(--color-status-unknown-soft, #f1f5f9);
+      color: var(--color-status-unknown, #475569);
+    }
+
+    table button[data-action="status"] {
+      min-height: 44px;
+      min-width: 44px;
+      padding: 8px 12px;
+      margin: 2px 4px 2px 0;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      background: white;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      box-sizing: border-box;
     }
 
     .empty,
@@ -725,7 +753,7 @@
 
   <div class="card">
 
-    <div id="content" class="loading" aria-busy="true">
+    <div id="content" class="loading" aria-busy="true" aria-live="polite">
       <span data-i18n="loadingAppointments">正在读取预约...</span>
     </div>
 
@@ -1030,8 +1058,13 @@ const renderAppointmentsView = () => {
     currentAppointmentsSnapshot.map(rawItem => {
       const item = rawItem || {};
 
+      const rawStatus = typeof item.status === 'string' ? item.status.trim().toLowerCase() : '';
+      const canonicalStatus = globalThis.ggI18n && typeof globalThis.ggI18n.normalizeAppointmentStatus === 'function'
+        ? globalThis.ggI18n.normalizeAppointmentStatus(rawStatus)
+        : (['pending', 'confirmed', 'arrived', 'in_service', 'completed', 'no_show', 'cancelled'].includes(rawStatus) ? rawStatus : 'unknown');
+
       const statusClass =
-        escapeHtml(String(item.status || 'pending'));
+        escapeHtml(canonicalStatus);
 
       const checkoutFinancialState =
         resolveCheckoutFinancialState(item);
@@ -1049,13 +1082,13 @@ const renderAppointmentsView = () => {
       }
 
       let statusBtnsHtml = '';
-      if (item.status === 'pending') {
+      if (canonicalStatus === 'pending') {
         const kConfirm = String(++localKeySeq);
         localActionMap.set(kConfirm, { type: 'status', appointmentId: item.id, targetStatus: 'confirmed' });
         const kCancel = String(++localKeySeq);
         localActionMap.set(kCancel, { type: 'status', appointmentId: item.id, targetStatus: 'cancelled' });
         statusBtnsHtml = `<button type="button" data-action="status" data-action-key="${kConfirm}" data-target-status="confirmed">${escapeHtml(adminT('confirm'))}</button><button type="button" data-action="status" data-action-key="${kCancel}" data-target-status="cancelled">${escapeHtml(adminT('cancel'))}</button>`;
-      } else if (item.status === 'confirmed') {
+      } else if (canonicalStatus === 'confirmed') {
         const kArrive = String(++localKeySeq);
         localActionMap.set(kArrive, { type: 'status', appointmentId: item.id, targetStatus: 'arrived' });
         const kNoShow = String(++localKeySeq);
@@ -1063,11 +1096,11 @@ const renderAppointmentsView = () => {
         const kCancel = String(++localKeySeq);
         localActionMap.set(kCancel, { type: 'status', appointmentId: item.id, targetStatus: 'cancelled' });
         statusBtnsHtml = `<button type="button" data-action="status" data-action-key="${kArrive}" data-target-status="arrived">${escapeHtml(adminT('arrived'))}</button><button type="button" data-action="status" data-action-key="${kNoShow}" data-target-status="no_show">${escapeHtml(adminT('noShow'))}</button><button type="button" data-action="status" data-action-key="${kCancel}" data-target-status="cancelled">${escapeHtml(adminT('cancel'))}</button>`;
-      } else if (item.status === 'arrived') {
+      } else if (canonicalStatus === 'arrived') {
         const kInService = String(++localKeySeq);
         localActionMap.set(kInService, { type: 'status', appointmentId: item.id, targetStatus: 'in_service' });
         statusBtnsHtml = `<button type="button" data-action="status" data-action-key="${kInService}" data-target-status="in_service">${escapeHtml(adminT('in_service'))}</button>`;
-      } else if (item.status === 'in_service') {
+      } else if (canonicalStatus === 'in_service') {
         const kComplete = String(++localKeySeq);
         localActionMap.set(kComplete, { type: 'status', appointmentId: item.id, targetStatus: 'completed' });
         statusBtnsHtml = `<button type="button" data-action="status" data-action-key="${kComplete}" data-target-status="completed">${escapeHtml(adminT('complete'))}</button>`;
@@ -1093,8 +1126,9 @@ const renderAppointmentsView = () => {
             ${formatStaffCell(item)}
           </td>
           <td>
-            <span class="status ${statusClass}">
-              ${getStatusText(item.status)}
+            <span class="status ${statusClass}" role="status" aria-label="${escapeHtml(getStatusText(item.status))}">
+              <span class="calendar-status-icon" aria-hidden="true"></span>
+              <span class="status-text">${getStatusText(item.status)}</span>
             </span>
             ${getCheckoutBadgeHtml(checkoutFinancialState)}
           </td>
@@ -1444,7 +1478,11 @@ function formatSingaporeTime(dateString) {
 
 
 function getStatusText(status) {
-  return escapeHtml(globalThis.ggI18n.formatStatus(status, globalThis.ownerSelfService?._state.locale || 'en') || status || '-');
+  const activeLocale = globalThis.ownerSelfService?._state?.locale || 'en';
+  if (globalThis.ggI18n && typeof globalThis.ggI18n.formatStatus === 'function') {
+    return escapeHtml(globalThis.ggI18n.formatStatus(status, activeLocale));
+  }
+  return escapeHtml(String(status || '-'));
 }
 
 

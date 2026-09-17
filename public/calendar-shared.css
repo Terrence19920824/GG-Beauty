@@ -1,0 +1,423 @@
+/* GG-Beauty Shared Calendar Visual Foundation (C1)
+   Shared design tokens, authoritative status pills, touch target ergonomics,
+   accessibility, focus states, and state panels.
+   Unified across Owner/Front Desk Calendar and Staff Mobile Appointments.
+*/
+
+:root {
+  /* Layout & Touch Target Tokens (iPad & Mobile ergonomics) */
+  --calendar-touch-min: 44px;
+  --calendar-minute-height: 1.25px;
+  --calendar-col-min-width: 140px;
+  --calendar-time-col-width: 60px;
+  --calendar-header-height: 64px;
+
+  /* Authoritative Appointment Status Tokens (WCAG AA Contrast Compliant >= 4.5:1) */
+  /* pending */
+  --color-status-pending: #8a6d00;
+  --color-status-pending-soft: #fff3cd;
+  --color-status-pending-border: #f59e0b;
+
+  /* confirmed */
+  --color-status-confirmed: #1d4ed8;
+  --color-status-confirmed-soft: #dbeafe;
+  --color-status-confirmed-border: #3b82f6;
+
+  /* arrived */
+  --color-status-arrived: #047857;
+  --color-status-arrived-soft: #d1fae5;
+  --color-status-arrived-border: #10b981;
+
+  /* in-service */
+  --color-status-in-service: #15803d;
+  --color-status-in-service-soft: #dcfce7;
+  --color-status-in-service-border: #22c55e;
+
+  /* completed */
+  --color-status-completed: #475569;
+  --color-status-completed-soft: #f1f5f9;
+  --color-status-completed-border: #94a3b8;
+
+  /* no-show */
+  --color-status-no-show: #b91c1c;
+  --color-status-no-show-soft: #fee2e2;
+  --color-status-no-show-border: #ef4444;
+
+  /* cancelled */
+  --color-status-cancelled: #57534e;
+  --color-status-cancelled-soft: #f5f5f4;
+  --color-status-cancelled-border: #a8a29e;
+
+  /* unknown (fail-closed fallback for missing, invalid or non-lifecycle statuses) */
+  --color-status-unknown: #475569;
+  --color-status-unknown-soft: #f1f5f9;
+  --color-status-unknown-border: #94a3b8;
+
+  /* Reserved Overlay Tokens for Future Phases */
+  /* late-alert (C7 reserved) */
+  --color-late-alert: #b91c1c;
+  --color-late-alert-soft: #fef2f2;
+  --color-late-alert-border: #f87171;
+
+  /* live-time-line (C6 reserved) */
+  --color-live-time-line: #ef4444;
+  --color-live-time-dot: #b91c1c;
+
+  /* UI Feedback, Loading, Error & Interaction Tokens */
+  --color-calendar-loading: #475569;
+  --color-calendar-loading-soft: #f1f5f9;
+  --color-calendar-error: #b91c1c;
+  --color-calendar-error-soft: #fee2e2;
+  --color-calendar-focus: #111111;
+  --color-focus-ring: #111111;
+  --shadow-calendar-focus: 0 0 0 3px rgba(17, 17, 17, 0.25);
+  --shadow-calendar-focus-inset: inset 0 0 0 2px #111111;
+}
+
+/* Touch targets: 44x44px minimum touch area */
+.calendar-action-btn,
+.calendar-nav-btn,
+.calendar-date-btn,
+.checkout-btn,
+button.calendar-btn,
+table button[data-action="status"] {
+  min-width: var(--calendar-touch-min, 44px);
+  min-height: var(--calendar-touch-min, 44px);
+  box-sizing: border-box;
+}
+
+/* Clear, accessible Focus Visible */
+:focus-visible {
+  outline: 2px solid var(--color-calendar-focus, #111111) !important;
+  outline-offset: 2px !important;
+}
+
+button:focus-visible,
+[role="button"]:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--color-calendar-focus, #111111) !important;
+  outline-offset: 2px !important;
+}
+
+/* Prefers-reduced-motion support */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Unified Status Pill */
+.calendar-status-pill,
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+  border: 1px solid transparent;
+  white-space: nowrap;
+  box-sizing: border-box;
+  text-decoration: none;
+}
+
+/* Non-color geometric indicator glyph/icon */
+.calendar-status-icon {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border: 1.5px solid currentColor;
+  border-radius: 50%;
+  position: relative;
+  flex-shrink: 0;
+  box-sizing: border-box;
+}
+
+/* Status variants and distinct geometric shapes */
+/* 1. Pending: clock */
+.status-pending,
+.status.pending,
+.calendar-status-pill.status-pending {
+  background: var(--color-status-pending-soft);
+  color: var(--color-status-pending);
+  border-color: var(--color-status-pending-border);
+}
+.status-pending .calendar-status-icon,
+.status.pending .calendar-status-icon,
+.calendar-status-pill.status-pending .calendar-status-icon {
+  border-radius: 50%;
+}
+.status-pending .calendar-status-icon::after,
+.status.pending .calendar-status-icon::after,
+.calendar-status-pill.status-pending .calendar-status-icon::after {
+  content: "";
+  position: absolute;
+  top: 1px;
+  left: 2.5px;
+  width: 2px;
+  height: 2px;
+  border-left: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+}
+
+/* 2. Confirmed: calendar box */
+.status-confirmed,
+.status.confirmed,
+.calendar-status-pill.status-confirmed {
+  background: var(--color-status-confirmed-soft);
+  color: var(--color-status-confirmed);
+  border-color: var(--color-status-confirmed-border);
+}
+.status-confirmed .calendar-status-icon,
+.status.confirmed .calendar-status-icon,
+.calendar-status-pill.status-confirmed .calendar-status-icon {
+  border-radius: 2px;
+}
+.status-confirmed .calendar-status-icon::after,
+.status.confirmed .calendar-status-icon::after,
+.calendar-status-pill.status-confirmed .calendar-status-icon::after {
+  content: "";
+  position: absolute;
+  top: 1.5px;
+  left: 1px;
+  width: 4px;
+  height: 1.5px;
+  background: currentColor;
+}
+
+/* 3. Arrived: concentric target circle */
+.status-arrived,
+.status.arrived,
+.calendar-status-pill.status-arrived {
+  background: var(--color-status-arrived-soft);
+  color: var(--color-status-arrived);
+  border-color: var(--color-status-arrived-border);
+}
+.status-arrived .calendar-status-icon,
+.status.arrived .calendar-status-icon,
+.calendar-status-pill.status-arrived .calendar-status-icon {
+  border-radius: 50%;
+}
+.status-arrived .calendar-status-icon::after,
+.status.arrived .calendar-status-icon::after,
+.calendar-status-pill.status-arrived .calendar-status-icon::after {
+  content: "";
+  position: absolute;
+  top: 1.5px;
+  left: 1.5px;
+  width: 3px;
+  height: 3px;
+  background: currentColor;
+  border-radius: 50%;
+}
+
+/* 4. In Service: triangle indicator */
+.status-in_service,
+.status-in-service,
+.status.in_service,
+.calendar-status-pill.status-in-service,
+.calendar-status-pill.status-in_service {
+  background: var(--color-status-in-service-soft);
+  color: var(--color-status-in-service);
+  border-color: var(--color-status-in-service-border);
+}
+.status-in_service .calendar-status-icon,
+.status-in-service .calendar-status-icon,
+.status.in_service .calendar-status-icon,
+.calendar-status-pill.status-in-service .calendar-status-icon,
+.calendar-status-pill.status-in_service .calendar-status-icon {
+  border: none;
+  width: 0;
+  height: 0;
+  border-style: solid;
+  border-width: 4.5px 0 4.5px 7px;
+  border-color: transparent transparent transparent currentColor;
+  border-radius: 0;
+}
+
+/* 5. Completed: solid checkmark */
+.status-completed,
+.status.completed,
+.calendar-status-pill.status-completed {
+  background: var(--color-status-completed-soft);
+  color: var(--color-status-completed);
+  border-color: var(--color-status-completed-border);
+}
+.status-completed .calendar-status-icon,
+.status.completed .calendar-status-icon,
+.calendar-status-pill.status-completed .calendar-status-icon {
+  border-radius: 50%;
+  background: currentColor;
+  position: relative;
+}
+.status-completed .calendar-status-icon::after,
+.status.completed .calendar-status-icon::after,
+.calendar-status-pill.status-completed .calendar-status-icon::after {
+  content: "";
+  position: absolute;
+  top: 0.5px;
+  left: 2px;
+  width: 2px;
+  height: 4px;
+  border-right: 1.5px solid #ffffff;
+  border-bottom: 1.5px solid #ffffff;
+  transform: rotate(45deg);
+}
+
+/* 6. No Show: diagonal slash / cross */
+.status-no_show,
+.status-no-show,
+.status.no_show,
+.calendar-status-pill.status-no-show,
+.calendar-status-pill.status-no_show {
+  background: var(--color-status-no-show-soft);
+  color: var(--color-status-no-show);
+  border-color: var(--color-status-no-show-border);
+}
+.status-no_show .calendar-status-icon,
+.status-no-show .calendar-status-icon,
+.status.no_show .calendar-status-icon,
+.calendar-status-pill.status-no-show .calendar-status-icon,
+.calendar-status-pill.status-no_show .calendar-status-icon {
+  border-radius: 50%;
+  position: relative;
+}
+.status-no_show .calendar-status-icon::after,
+.status-no-show .calendar-status-icon::after,
+.status.no_show .calendar-status-icon::after,
+.calendar-status-pill.status-no-show .calendar-status-icon::after,
+.calendar-status-pill.status-no_show .calendar-status-icon::after {
+  content: "";
+  position: absolute;
+  top: 2.5px;
+  left: 0.5px;
+  width: 5px;
+  height: 1.5px;
+  background: currentColor;
+  transform: rotate(45deg);
+}
+
+/* 7. Cancelled: horizontal dash */
+.status-cancelled,
+.status.cancelled,
+.calendar-status-pill.status-cancelled {
+  background: var(--color-status-cancelled-soft);
+  color: var(--color-status-cancelled);
+  border-color: var(--color-status-cancelled-border);
+}
+.status-cancelled .calendar-status-icon,
+.status.cancelled .calendar-status-icon,
+.calendar-status-pill.status-cancelled .calendar-status-icon {
+  border-radius: 50%;
+  position: relative;
+}
+.status-cancelled .calendar-status-icon::after,
+.status.cancelled .calendar-status-icon::after,
+.calendar-status-pill.status-cancelled .calendar-status-icon::after {
+  content: "";
+  position: absolute;
+  top: 2.5px;
+  left: 1px;
+  width: 4px;
+  height: 1.5px;
+  background: currentColor;
+}
+
+/* 8. Unknown: dashed ring */
+.status-unknown,
+.status.unknown,
+.calendar-status-pill.status-unknown {
+  background: var(--color-status-unknown-soft);
+  color: var(--color-status-unknown);
+  border-color: var(--color-status-unknown-border);
+}
+.status-unknown .calendar-status-icon,
+.status.unknown .calendar-status-icon,
+.calendar-status-pill.status-unknown .calendar-status-icon {
+  border-radius: 50%;
+  border-style: dashed;
+}
+
+/* 9. Late Alert (Reserved for Phase C7) */
+.status-late-alert,
+.calendar-status-pill.status-late-alert {
+  background: var(--color-late-alert-soft);
+  color: var(--color-late-alert);
+  border-color: var(--color-late-alert-border);
+}
+.status-late-alert .calendar-status-icon,
+.calendar-status-pill.status-late-alert .calendar-status-icon {
+  border-radius: 1px;
+  width: 0;
+  height: 0;
+  border-style: solid;
+  border-width: 0 5px 8.5px 5px;
+  border-color: transparent transparent currentColor transparent;
+}
+
+/* Empty, Loading, Error, Unauthorized State Panels */
+.calendar-state-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 36px 16px;
+  text-align: center;
+  min-height: 180px;
+  box-sizing: border-box;
+}
+
+.calendar-state-panel.loading {
+  color: var(--color-calendar-loading);
+}
+
+.calendar-state-panel.error {
+  color: var(--color-calendar-error);
+}
+
+.calendar-state-panel.unauthorized {
+  color: #b45309;
+}
+
+.calendar-state-panel.empty {
+  color: #64748b;
+}
+
+.calendar-state-panel .calendar-state-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  margin-bottom: 10px;
+  border: 2px solid currentColor;
+  box-sizing: border-box;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.calendar-state-panel.loading .calendar-state-icon {
+  border-top-color: transparent;
+  animation: calendar-spin 0.8s linear infinite;
+}
+
+@keyframes calendar-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.calendar-state-message {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.5;
+}
