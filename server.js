@@ -1453,6 +1453,109 @@ app.get('/api/services-db', async (req, res) => {
 
 
 // ==================================================
+// 读取 Owner 日历上下文（权威时间与地点时区）
+// ==================================================
+
+app.get(
+  '/api/owner/calendar-context',
+  requireOwnerAuth,
+  requireOwnerRole(['owner', 'manager', 'admin']),
+  async (req, res) => {
+    const trustedShopId = req.ownerAuth.shopId;
+    const requestedLocationId =
+      typeof req.query.locationId === 'string'
+        ? req.query.locationId.trim()
+        : '';
+
+    if (requestedLocationId && !isUuid(requestedLocationId)) {
+      return res.status(404).json({
+        success: false,
+        message: '未找到请求的地点'
+      });
+    }
+
+    let client;
+    try {
+      client = await app.locals.ownerAuthPool.connect();
+
+      let locationResult;
+      if (requestedLocationId) {
+        locationResult = await client.query(
+          `
+          SELECT id, timezone
+          FROM locations
+          WHERE id = $1
+            AND shop_id = $2
+            AND is_active = TRUE
+          LIMIT 1
+          `,
+          [requestedLocationId, trustedShopId]
+        );
+
+        if (locationResult.rows.length === 0) {
+          return res.status(404).json({
+            success: false,
+            message: '未找到请求的地点'
+          });
+        }
+      } else {
+        locationResult = await client.query(
+          `
+          SELECT id, timezone
+          FROM locations
+          WHERE shop_id = $1
+            AND is_active = TRUE
+          ORDER BY created_at ASC
+          LIMIT 2
+          `,
+          [trustedShopId]
+        );
+
+        if (locationResult.rows.length === 0) {
+          return res.status(404).json({
+            success: false,
+            message: '未找到请求的地点'
+          });
+        }
+
+        if (locationResult.rows.length > 1) {
+          return res.status(400).json({
+            success: false,
+            message: '店铺存在多个营业地点，必须指定 locationId'
+          });
+        }
+      }
+
+      const location = locationResult.rows[0];
+
+      res.json({
+        success: true,
+        data: {
+          server_now: new Date().toISOString(),
+          timezone: location.timezone,
+          location_id: location.id
+        }
+      });
+    } catch (error) {
+      console.error(
+        'Read calendar context error:',
+        safeStaffAuthErrorCode(error)
+      );
+
+      res.status(500).json({
+        success: false,
+        message: '读取日历上下文失败'
+      });
+    } finally {
+      if (client) {
+        client.release();
+      }
+    }
+  }
+);
+
+
+// ==================================================
 // 从数据库读取真实预约
 // ==================================================
 
@@ -3857,7 +3960,8 @@ app.get(
     }
 
     try {
-      const result = await pool.query(
+      const activePool = req.app?.locals?.bookingPool || pool;
+      const result = await activePool.query(
         `
         WITH staff_scope AS (
           SELECT
@@ -3968,6 +4072,7 @@ app.get(
       res.json({
         success: true,
         data: {
+          server_now: new Date().toISOString(),
           date: appointments.appointment_date,
           timezone: appointments.timezone,
           appointments: appointments.appointments

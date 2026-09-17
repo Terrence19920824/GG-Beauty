@@ -300,6 +300,20 @@ const createTestContext = (initialStorage = {}) => {
           json: async () => ({ success: true, data: currentApiStaff })
         };
       }
+      if (url.includes('/api/owner/calendar-context')) {
+        return {
+          status: 200,
+          ok: true,
+          json: async () => ({
+            success: true,
+            data: {
+              server_now: new Date().toISOString(),
+              timezone: 'Asia/Singapore',
+              location_id: '00000000-0000-0000-0000-000000000001'
+            }
+          })
+        };
+      }
       if (url.includes('/api/admin/update-status-db')) {
         return {
           status: 200,

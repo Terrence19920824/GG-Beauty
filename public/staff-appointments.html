@@ -1065,6 +1065,10 @@
         unknownStatus: 'Unknown Status',
         staffAvatar: 'Staff avatar',
         timeHeader: 'TIME',
+        currentTime: 'Current Time',
+        late15Min: '15 min late',
+        notArrived: 'Not arrived',
+        lateIndicatorAria: '15 min late - Not arrived',
         statuses: {
           pending: 'Pending',
           confirmed: 'Confirmed',
@@ -1112,6 +1116,10 @@
         unknownStatus: '状态未知',
         staffAvatar: '员工头像',
         timeHeader: '时间',
+        currentTime: '当前时间',
+        late15Min: '已迟到 15 分钟',
+        notArrived: '尚未到店',
+        lateIndicatorAria: '已迟到 15 分钟 - 尚未到店',
         statuses: {
           pending: '待确认',
           confirmed: '已确认',
@@ -1180,6 +1188,10 @@
       selectionMode: 'today',
       displayMode: getSavedView(),
       timezone: 'Asia/Singapore',
+      authoritativeServerNowMs: null,
+      anchorPerformanceMs: null,
+      authoritativeTimezone: null,
+      isTimeAuthorityValid: false,
       loading: true,
       view: 'content',
       activeAppointment: null,
@@ -1505,6 +1517,278 @@
         : 'unknown';
     };
 
+    const isValidIanaTimezone = tz => {
+      if (typeof tz !== 'string' || !tz.trim()) return false;
+      try {
+        Intl.DateTimeFormat(undefined, { timeZone: tz.trim() });
+        return true;
+      } catch (_) {
+        return false;
+      }
+    };
+
+    const updateTimeAnchor = (serverNowIso, timezone) => {
+      const serverMs = Date.parse(serverNowIso);
+      if (!Number.isFinite(serverMs) || !isValidIanaTimezone(timezone)) {
+        state.authoritativeServerNowMs = null;
+        state.anchorPerformanceMs = null;
+        state.authoritativeTimezone = null;
+        state.isTimeAuthorityValid = false;
+        return false;
+      }
+      const perfNow = (typeof performance !== 'undefined' && typeof performance.now === 'function')
+        ? performance.now()
+        : Date.now();
+      state.authoritativeServerNowMs = serverMs;
+      state.anchorPerformanceMs = perfNow;
+      state.authoritativeTimezone = timezone.trim();
+      state.timezone = timezone.trim();
+      state.isTimeAuthorityValid = true;
+      return true;
+    };
+
+    const invalidateTimeAnchor = () => {
+      state.authoritativeServerNowMs = null;
+      state.anchorPerformanceMs = null;
+      state.authoritativeTimezone = null;
+      state.isTimeAuthorityValid = false;
+    };
+
+    const getAuthoritativeNowMs = () => {
+      if (!state.isTimeAuthorityValid || typeof state.authoritativeServerNowMs !== 'number') {
+        return null;
+      }
+      const perfNow = (typeof performance !== 'undefined' && typeof performance.now === 'function')
+        ? performance.now()
+        : Date.now();
+      return state.authoritativeServerNowMs + (perfNow - state.anchorPerformanceMs);
+    };
+
+    const getAuthoritativeLocalDate = (nowMs, timezone) => {
+      if (typeof nowMs !== 'number' || !timezone) return null;
+      try {
+        return new Intl.DateTimeFormat('en-CA', {
+          timeZone: timezone,
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit'
+        }).format(new Date(nowMs));
+      } catch (_) {
+        return null;
+      }
+    };
+
+    const getAuthoritativeLocalMinutes = (nowMs, timezone) => {
+      if (typeof nowMs !== 'number' || !timezone) return null;
+      try {
+        const parts = new Intl.DateTimeFormat('en-GB', {
+          timeZone: timezone,
+          hour: 'numeric',
+          minute: 'numeric',
+          hourCycle: 'h23'
+        }).formatToParts(new Date(nowMs));
+        let hour = 0;
+        let minute = 0;
+        for (const p of parts) {
+          if (p.type === 'hour') hour = parseInt(p.value, 10);
+          if (p.type === 'minute') minute = parseInt(p.value, 10);
+        }
+        return hour * 60 + minute;
+      } catch (_) {
+        return null;
+      }
+    };
+
+    const formatAuthoritativeTime = (nowMs, timezone) => {
+      if (typeof nowMs !== 'number' || !timezone) return '';
+      try {
+        return new Intl.DateTimeFormat('en-GB', {
+          timeZone: timezone,
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: false
+        }).format(new Date(nowMs));
+      } catch (_) {
+        return '';
+      }
+    };
+
+    const isAppointmentLate = (appointment, nowMs, localTodayStr) => {
+      if (!appointment || typeof appointment !== 'object') return false;
+      if (typeof nowMs !== 'number' || !Number.isFinite(nowMs)) return false;
+      if (!localTodayStr || state.selectedDate !== localTodayStr) return false;
+
+      const rawStatus = typeof appointment.status === 'string' ? appointment.status.trim().toLowerCase() : '';
+      const canonicalStatus = globalThis.ggI18n && typeof globalThis.ggI18n.normalizeAppointmentStatus === 'function'
+        ? globalThis.ggI18n.normalizeAppointmentStatus(rawStatus)
+        : normalizeStatus(rawStatus);
+
+      if (canonicalStatus !== 'pending' && canonicalStatus !== 'confirmed') {
+        return false;
+      }
+
+      const startIso = appointment.startAt || appointment.start_at;
+      const startMs = Date.parse(startIso);
+      if (!Number.isFinite(startMs)) return false;
+
+      const fifteenMinutesMs = 15 * 60 * 1000;
+      return nowMs >= (startMs + fifteenMinutesMs);
+    };
+
+    const createLateBadgeElement = () => {
+      const lateBadge = document.createElement('div');
+      lateBadge.className = 'staff-late-badge';
+      lateBadge.setAttribute('role', 'alert');
+      const mainText = currentText().late15Min || '已迟到 15 分钟';
+      const subText = currentText().notArrived || '尚未到店';
+      lateBadge.setAttribute('aria-label', `${mainText} - ${subText}`);
+
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      svg.setAttribute('viewBox', '0 0 16 16');
+      svg.setAttribute('width', '12');
+      svg.setAttribute('height', '12');
+      svg.setAttribute('fill', 'currentColor');
+      svg.setAttribute('aria-hidden', 'true');
+      svg.className.baseVal = 'late-icon';
+
+      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      path.setAttribute('d', 'M8.982 1.566a1.13 1.13 0 0 0-1.96 0L.165 13.233c-.457.778.091 1.767.98 1.767h13.713c.889 0 1.438-.99.98-1.767L8.982 1.566zM8 5c.535 0 .954.462.9.995l-.35 3.507a.552.552 0 0 1-1.1 0L7.1 5.995A.905.905 0 0 1 8 5zm.002 6a1 1 0 1 1 0 2 1 1 0 0 1 0-2z');
+      svg.appendChild(path);
+      lateBadge.appendChild(svg);
+
+      const mainSpan = document.createElement('span');
+      mainSpan.className = 'late-text-main';
+      mainSpan.textContent = mainText;
+      lateBadge.appendChild(mainSpan);
+
+      const subSpan = document.createElement('span');
+      subSpan.className = 'late-text-sub';
+      subSpan.textContent = subText;
+      lateBadge.appendChild(subSpan);
+
+      return lateBadge;
+    };
+
+    const renderLiveLine = timelineContainer => {
+      if (!timelineContainer) return;
+      let lineEl = timelineContainer.querySelector('.staff-timeline-live-line');
+
+      const nowMs = getAuthoritativeNowMs();
+      const isAuthorityValid = Boolean(nowMs && state.isTimeAuthorityValid);
+      const authTz = isAuthorityValid ? state.authoritativeTimezone : null;
+      const authToday = isAuthorityValid ? getAuthoritativeLocalDate(nowMs, authTz) : null;
+      const isSelectedToday = Boolean(isAuthorityValid && authToday && state.selectedDate === authToday);
+
+      let showLiveLine = false;
+      let topPx = 0;
+      let timeText = '';
+
+      if (isSelectedToday) {
+        const localMins = getAuthoritativeLocalMinutes(nowMs, authTz);
+        if (localMins !== null && localMins >= CALENDAR_START_MINUTES && localMins <= CALENDAR_END_MINUTES) {
+          showLiveLine = true;
+          topPx = (localMins - CALENDAR_START_MINUTES) * CALENDAR_MINUTE_HEIGHT;
+          timeText = formatAuthoritativeTime(nowMs, authTz);
+        }
+      }
+
+      if (showLiveLine) {
+        if (!lineEl) {
+          lineEl = document.createElement('div');
+          lineEl.className = 'staff-timeline-live-line';
+
+          const dot = document.createElement('span');
+          dot.className = 'live-line-dot';
+          dot.setAttribute('aria-hidden', 'true');
+          lineEl.appendChild(dot);
+
+          const badge = document.createElement('span');
+          badge.className = 'live-line-badge';
+          badge.setAttribute('aria-label', currentText().currentTime || 'Current Time');
+          lineEl.appendChild(badge);
+
+          const rule = document.createElement('span');
+          rule.className = 'live-line-rule';
+          rule.setAttribute('aria-hidden', 'true');
+          lineEl.appendChild(rule);
+
+          timelineContainer.appendChild(lineEl);
+        }
+        lineEl.style.top = `${topPx}px`;
+        const badge = lineEl.querySelector('.live-line-badge');
+        if (badge) badge.textContent = timeText;
+      } else if (lineEl) {
+        lineEl.remove();
+      }
+    };
+
+    let staffLiveTimerId = null;
+
+    const updateStaffLiveElements = () => {
+      const nowMs = getAuthoritativeNowMs();
+      const isAuthorityValid = Boolean(nowMs && state.isTimeAuthorityValid);
+      const authTz = isAuthorityValid ? state.authoritativeTimezone : null;
+      const authToday = isAuthorityValid ? getAuthoritativeLocalDate(nowMs, authTz) : null;
+
+      if (state.displayMode === 'calendar') {
+        const timeline = elements.appointmentList.querySelector('.timeline');
+        if (timeline) {
+          renderLiveLine(timeline);
+        }
+      }
+
+      const cards = elements.appointmentList.querySelectorAll('[data-appointment-id]');
+      cards.forEach(cardEl => {
+        const id = cardEl.getAttribute('data-appointment-id');
+        const appointment = state.appointments.find(a => String(a.id) === String(id));
+        if (!appointment) return;
+
+        const late = isAppointmentLate(appointment, nowMs, authToday);
+        const existingBadge = cardEl.querySelector('.staff-late-badge');
+
+        if (late) {
+          cardEl.classList.add('is-late');
+          if (!existingBadge) {
+            const badgeEl = createLateBadgeElement();
+            const header = cardEl.querySelector('.card-top, .calendar-appointment-header');
+            if (header && header.nextSibling) {
+              cardEl.insertBefore(badgeEl, header.nextSibling);
+            } else {
+              cardEl.appendChild(badgeEl);
+            }
+          }
+        } else {
+          cardEl.classList.remove('is-late');
+          if (existingBadge) {
+            existingBadge.remove();
+          }
+        }
+      });
+    };
+
+    const startStaffLiveTimer = () => {
+      stopStaffLiveTimer();
+      updateStaffLiveElements();
+      if (typeof setInterval === 'function') {
+        staffLiveTimerId = setInterval(updateStaffLiveElements, 30000);
+        if (staffLiveTimerId && typeof staffLiveTimerId.unref === 'function') {
+          staffLiveTimerId.unref();
+        }
+      }
+    };
+
+    const stopStaffLiveTimer = () => {
+      if (staffLiveTimerId && typeof clearInterval === 'function') {
+        clearInterval(staffLiveTimerId);
+        staffLiveTimerId = null;
+      }
+    };
+
+    if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+      window.addEventListener('beforeunload', stopStaffLiveTimer);
+      window.addEventListener('pagehide', stopStaffLiveTimer);
+    }
+
     const createTextElement = (tagName, className, text) => {
       const element = document.createElement(tagName);
       element.className = className;
@@ -1515,6 +1799,7 @@
     const renderAppointmentCard = appointment => {
       const card = document.createElement('article');
       card.className = 'appointment-card';
+      card.setAttribute('data-appointment-id', String(appointment.id));
 
       const normalizedStatus = normalizeStatus(appointment.status);
 
@@ -1555,8 +1840,16 @@
       badge.appendChild(textSpan);
 
       cardTop.appendChild(badge);
-
       card.appendChild(cardTop);
+
+      const nowMs = getAuthoritativeNowMs();
+      const authTz = (nowMs && state.isTimeAuthorityValid) ? state.authoritativeTimezone : null;
+      const authToday = authTz ? getAuthoritativeLocalDate(nowMs, authTz) : null;
+      if (isAppointmentLate(appointment, nowMs, authToday)) {
+        card.classList.add('is-late');
+        card.appendChild(createLateBadgeElement());
+      }
+
       const customerEl = createTextElement(
         'p',
         'customer-name notranslate',
@@ -1919,6 +2212,7 @@
         block.type = 'button';
         block.className =
           `calendar-appointment status-${normalizedStatus}`;
+        block.setAttribute('data-appointment-id', String(appointment.id));
         block.style.top = `${top}px`;
         block.style.height = `${height}px`;
         block.setAttribute(
@@ -1953,6 +2247,14 @@
 
         cardHeader.appendChild(statusPill);
         block.appendChild(cardHeader);
+
+        const nowMs = getAuthoritativeNowMs();
+        const authTz = (nowMs && state.isTimeAuthorityValid) ? state.authoritativeTimezone : null;
+        const authToday = authTz ? getAuthoritativeLocalDate(nowMs, authTz) : null;
+        if (isAppointmentLate(appointment, nowMs, authToday)) {
+          block.classList.add('is-late');
+          block.appendChild(createLateBadgeElement());
+        }
 
         const nameSpan = createTextElement(
           'span',
@@ -1996,6 +2298,8 @@
           )
         );
       }
+
+      renderLiveLine(timeline);
 
       scroll.appendChild(timeline);
       calendar.appendChild(scroll);
@@ -2149,6 +2453,7 @@
       );
 
       if (state.loading) {
+        stopStaffLiveTimer();
         const skeletons = [1, 2].map(() => {
           const skeleton = document.createElement('div');
           skeleton.className = 'appointment-card skeleton';
@@ -2159,6 +2464,7 @@
       }
 
       if (state.view === 'session') {
+        stopStaffLiveTimer();
         renderStatePanel(
           text.sessionExpired,
           text.logIn,
@@ -2170,6 +2476,7 @@
       }
 
       if (state.view === 'error') {
+        stopStaffLiveTimer();
         renderStatePanel(
           text.loadFailed,
           text.retry,
@@ -2180,10 +2487,12 @@
 
       if (state.displayMode === 'calendar') {
         renderCalendar();
+        startStaffLiveTimer();
         return;
       }
 
       if (state.appointments.length === 0) {
+        stopStaffLiveTimer();
         renderStatePanel(
           state.selectionMode === 'today'
             ? text.noAppointmentsToday
@@ -2195,6 +2504,7 @@
       elements.appointmentList.replaceChildren(
         ...state.appointments.map(renderAppointmentCard)
       );
+      startStaffLiveTimer();
     };
 
     const fetchJson = async url => {
@@ -2235,6 +2545,11 @@
           : '/api/staff/appointments';
 
         const data = await fetchJson(url);
+        if (data && data.server_now && data.timezone) {
+          updateTimeAnchor(data.server_now, data.timezone);
+        } else {
+          invalidateTimeAnchor();
+        }
         state.selectedDate = data.date;
         if (!date) {
           state.todayDate = data.date;
@@ -2244,6 +2559,7 @@
           ? data.appointments
           : [];
       } catch (error) {
+        invalidateTimeAnchor();
         state.appointments = [];
         state.view = error.isSessionError
           ? 'session'
@@ -2265,6 +2581,12 @@
           fetchJson('/api/staff/appointments')
         ]);
 
+        if (appointmentData && appointmentData.server_now && appointmentData.timezone) {
+          updateTimeAnchor(appointmentData.server_now, appointmentData.timezone);
+        } else {
+          invalidateTimeAnchor();
+        }
+
         state.profile = profile;
         state.selectedDate = appointmentData.date;
         state.todayDate = appointmentData.date;
@@ -2276,6 +2598,7 @@
           ? appointmentData.appointments
           : [];
       } catch (error) {
+        invalidateTimeAnchor();
         state.appointments = [];
         state.view = error.isSessionError
           ? 'session'
@@ -2423,6 +2746,16 @@
           closeMoveTimePanel();
         } else {
           closeAppointmentSheet();
+        }
+      }
+    });
+
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') {
+        stopStaffLiveTimer();
+      } else if (document.visibilityState === 'visible') {
+        if (state.selectedDate) {
+          loadAppointments(state.selectedDate);
         }
       }
     });

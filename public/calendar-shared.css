@@ -979,3 +979,125 @@ a:focus-visible {
   color: var(--muted, #68737d);
   font-size: 14px;
 }
+
+/* ==================================================
+   Authoritative Live Time Line & 15-Min Late Indicator
+   ================================================== */
+
+.owner-calendar-live-line,
+.staff-timeline-live-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  width: 100%;
+  height: 2px;
+  background-color: #ef4444;
+  z-index: 25;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  transform: translateY(-50%);
+}
+
+.live-line-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background-color: #ef4444;
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.25);
+  margin-left: 2px;
+  flex-shrink: 0;
+  animation: live-line-pulse 2s infinite ease-in-out;
+}
+
+.live-line-badge {
+  background-color: #ef4444;
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 999px;
+  margin-left: 4px;
+  flex-shrink: 0;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+  letter-spacing: 0.02em;
+}
+
+.live-line-rule {
+  flex: 1;
+  height: 2px;
+  background-color: #ef4444;
+}
+
+@keyframes live-line-pulse {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.2);
+    opacity: 0.85;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .live-line-dot {
+    animation: none !important;
+  }
+}
+
+/* 15-Minute Late Indicator Overlay */
+.owner-calendar-appointment.is-late,
+.calendar-appointment.is-late,
+.appointment-card.is-late,
+.calendar-appointment-card.is-late {
+  border-left: 4px solid #ef4444 !important;
+  background-color: #fef2f2 !important;
+}
+
+.owner-calendar-late-badge,
+.staff-late-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background-color: #fee2e2;
+  color: #991b1b;
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1.2;
+  margin-bottom: 4px;
+  border: 1px solid #fca5a5;
+  box-sizing: border-box;
+  max-width: 100%;
+}
+
+.owner-calendar-late-badge .late-icon,
+.staff-late-badge .late-icon {
+  color: #dc2626;
+  flex-shrink: 0;
+  width: 12px;
+  height: 12px;
+}
+
+.owner-calendar-late-badge .late-text-main,
+.staff-late-badge .late-text-main {
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.owner-calendar-late-badge .late-text-sub,
+.staff-late-badge .late-text-sub {
+  font-weight: 500;
+  opacity: 0.9;
+  white-space: nowrap;
+}
+
+tr.is-late td {
+  background-color: #fef2f2;
+}
+
+tr.is-late td:first-child {
+  border-left: 4px solid #ef4444;
+}

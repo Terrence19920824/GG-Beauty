@@ -891,17 +891,141 @@ function safeGetElement(id) {
   }
 }
 
+let timeAnchor = {
+  serverNowMs: null,
+  performanceNow: null,
+  timezone: null,
+  isValid: false
+};
+let liveLineTimerId = null;
+let timeResyncTimerId = null;
+
+const stopLiveLineTimer = () => {
+  if (liveLineTimerId && typeof clearInterval === 'function') {
+    clearInterval(liveLineTimerId);
+    liveLineTimerId = null;
+  }
+};
+
+const stopTimeResync = () => {
+  if (timeResyncTimerId && typeof clearInterval === 'function') {
+    clearInterval(timeResyncTimerId);
+    timeResyncTimerId = null;
+  }
+};
+
+const isValidIanaTimezone = (tz) => {
+  if (typeof tz !== 'string' || !tz.trim()) return false;
+  try {
+    Intl.DateTimeFormat(undefined, { timeZone: tz.trim() });
+    return true;
+  } catch (_) {
+    return false;
+  }
+};
+
+const updateTimeAnchor = (serverNowIso, timezone) => {
+  const serverMs = Date.parse(serverNowIso);
+  if (!Number.isFinite(serverMs) || !isValidIanaTimezone(timezone)) {
+    timeAnchor = { serverNowMs: null, performanceNow: null, timezone: null, isValid: false };
+    return false;
+  }
+  const perfNow = (typeof performance !== 'undefined' && typeof performance.now === 'function')
+    ? performance.now()
+    : Date.now();
+  timeAnchor = {
+    serverNowMs: serverMs,
+    performanceNow: perfNow,
+    timezone: timezone.trim(),
+    isValid: true
+  };
+  return true;
+};
+
+const invalidateTimeAnchor = () => {
+  timeAnchor = { serverNowMs: null, performanceNow: null, timezone: null, isValid: false };
+};
+
+const getAuthoritativeNowMs = () => {
+  if (!timeAnchor || !timeAnchor.isValid) return null;
+  const perfNow = (typeof performance !== 'undefined' && typeof performance.now === 'function')
+    ? performance.now()
+    : Date.now();
+  return timeAnchor.serverNowMs + (perfNow - timeAnchor.performanceNow);
+};
+
+const getAuthoritativeLocalDate = (nowMs, timezone) => {
+  if (typeof nowMs !== 'number' || !timezone) return null;
+  try {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: timezone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    }).format(new Date(nowMs));
+  } catch (_) {
+    return null;
+  }
+};
+
+const getAuthoritativeLocalMinutes = (nowMs, timezone) => {
+  if (typeof nowMs !== 'number' || !timezone) return null;
+  try {
+    const parts = new Intl.DateTimeFormat('en-GB', {
+      timeZone: timezone,
+      hour: 'numeric',
+      minute: 'numeric',
+      hourCycle: 'h23'
+    }).formatToParts(new Date(nowMs));
+    let hour = 0;
+    let minute = 0;
+    for (const p of parts) {
+      if (p.type === 'hour') hour = parseInt(p.value, 10);
+      if (p.type === 'minute') minute = parseInt(p.value, 10);
+    }
+    return hour * 60 + minute;
+  } catch (_) {
+    return null;
+  }
+};
+
+const formatAuthoritativeTime = (nowMs, timezone) => {
+  if (typeof nowMs !== 'number' || !timezone) return '';
+  try {
+    return new Intl.DateTimeFormat('en-GB', {
+      timeZone: timezone,
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false
+    }).format(new Date(nowMs));
+  } catch (_) {
+    return '';
+  }
+};
+
+const getAuthoritativeToday = () => {
+  const nowMs = getAuthoritativeNowMs();
+  if (nowMs && timeAnchor.isValid) {
+    return getAuthoritativeLocalDate(nowMs, timeAnchor.timezone);
+  }
+  return null;
+};
+
 function getSingaporeToday() {
-  return new Intl.DateTimeFormat(
-    'en-CA',
-    {
+  const auth = getAuthoritativeToday();
+  if (auth) return auth;
+  try {
+    return new Intl.DateTimeFormat('en-CA', {
       timeZone: 'Asia/Singapore',
       year: 'numeric',
       month: '2-digit',
       day: '2-digit'
-    }
-  ).format(new Date());
+    }).format(new Date());
+  } catch (_) {
+    return new Date().toISOString().slice(0, 10);
+  }
 }
+
 
 let currentRenderGeneration = 0;
 let currentAppointmentsSnapshot = [];
@@ -951,6 +1075,9 @@ const invalidateAppointmentActionContext = () => {
   currentAppointmentMap.clear();
   currentAppointmentsSnapshot = [];
   currentStaffSnapshot = [];
+  stopLiveLineTimer();
+  stopTimeResync();
+  invalidateTimeAnchor();
   if (typeof globalScope !== 'undefined' && globalScope) {
     globalScope.currentAppointments = [];
   }
@@ -958,10 +1085,11 @@ const invalidateAppointmentActionContext = () => {
 
 function addDaysToDate(dateStr, days) {
   try {
+    const tz = (timeAnchor && timeAnchor.isValid && timeAnchor.timezone) ? timeAnchor.timezone : 'Asia/Singapore';
     const [y, m, d] = dateStr.split('-').map(Number);
-    const dt = new Date(Date.UTC(y, m - 1, d + days, 4, 0, 0));
+    const dt = new Date(Date.UTC(y, m - 1, d + days, 12, 0, 0));
     return new Intl.DateTimeFormat('en-CA', {
-      timeZone: 'Asia/Singapore',
+      timeZone: tz,
       year: 'numeric',
       month: '2-digit',
       day: '2-digit'
@@ -974,8 +1102,9 @@ function addDaysToDate(dateStr, days) {
 function getSingaporeDateString(isoString) {
   if (!isoString) return '';
   try {
+    const tz = (timeAnchor && timeAnchor.isValid && timeAnchor.timezone) ? timeAnchor.timezone : 'Asia/Singapore';
     return new Intl.DateTimeFormat('en-CA', {
-      timeZone: 'Asia/Singapore',
+      timeZone: tz,
       year: 'numeric',
       month: '2-digit',
       day: '2-digit'
@@ -988,12 +1117,13 @@ function getSingaporeDateString(isoString) {
 function getSingaporeMinutes(isoString) {
   if (!isoString) return null;
   try {
+    const tz = (timeAnchor && timeAnchor.isValid && timeAnchor.timezone) ? timeAnchor.timezone : 'Asia/Singapore';
     const date = new Date(isoString);
     const parts = new Intl.DateTimeFormat('en-GB', {
-      timeZone: 'Asia/Singapore',
+      timeZone: tz,
       hour: 'numeric',
       minute: 'numeric',
-      hour12: false
+      hourCycle: 'h23'
     }).formatToParts(date);
     let hour = 0;
     let minute = 0;
@@ -1010,8 +1140,9 @@ function getSingaporeMinutes(isoString) {
 function formatSingaporeHourMinute(isoString) {
   if (!isoString) return '-';
   try {
+    const tz = (timeAnchor && timeAnchor.isValid && timeAnchor.timezone) ? timeAnchor.timezone : 'Asia/Singapore';
     return new Intl.DateTimeFormat('en-GB', {
-      timeZone: 'Asia/Singapore',
+      timeZone: tz,
       hour: '2-digit',
       minute: '2-digit',
       hour12: false
@@ -1024,10 +1155,11 @@ function formatSingaporeHourMinute(isoString) {
 function formatCalendarHeaderDate(dateStr, locale) {
   if (!dateStr) return '';
   try {
+    const tz = (timeAnchor && timeAnchor.isValid && timeAnchor.timezone) ? timeAnchor.timezone : 'Asia/Singapore';
     const [y, m, d] = dateStr.split('-').map(Number);
-    const dt = new Date(Date.UTC(y, m - 1, d, 4, 0, 0));
+    const dt = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
     return new Intl.DateTimeFormat(locale || 'en', {
-      timeZone: 'Asia/Singapore',
+      timeZone: tz,
       year: 'numeric',
       month: locale === 'zh-CN' ? 'long' : 'short',
       day: 'numeric',
@@ -1036,6 +1168,228 @@ function formatCalendarHeaderDate(dateStr, locale) {
   } catch (_) {
     return dateStr;
   }
+}
+
+const isAppointmentLate = (appointment, nowMs, localTodayStr) => {
+  if (!appointment || typeof appointment !== 'object') return false;
+  if (typeof nowMs !== 'number' || !Number.isFinite(nowMs)) return false;
+  if (!localTodayStr || currentCalendarDate !== localTodayStr) return false;
+
+  const rawStatus = typeof appointment.status === 'string' ? appointment.status.trim().toLowerCase() : '';
+  const canonicalStatus = globalThis.ggI18n && typeof globalThis.ggI18n.normalizeAppointmentStatus === 'function'
+    ? globalThis.ggI18n.normalizeAppointmentStatus(rawStatus)
+    : rawStatus;
+
+  if (canonicalStatus !== 'pending' && canonicalStatus !== 'confirmed') {
+    return false;
+  }
+
+  const startIso = appointment.start_at || appointment.startAt;
+  const startMs = Date.parse(startIso);
+  if (!Number.isFinite(startMs)) return false;
+
+  const fifteenMinutesMs = 15 * 60 * 1000;
+  return nowMs >= (startMs + fifteenMinutesMs);
+};
+
+const updateLiveLineAndLateBadges = () => {
+  const body = content.querySelector('.owner-calendar-body');
+  const nowMs = getAuthoritativeNowMs();
+  const isAuthorityValid = Boolean(nowMs && timeAnchor && timeAnchor.isValid);
+  const authTz = isAuthorityValid ? timeAnchor.timezone : null;
+  const authToday = isAuthorityValid ? getAuthoritativeLocalDate(nowMs, authTz) : null;
+  const isSelectedToday = Boolean(isAuthorityValid && authToday && currentCalendarDate === authToday);
+
+  // 1. Live Time Line
+  if (body) {
+    let liveLineEl = body.querySelector('.owner-calendar-live-line');
+    let showLiveLine = false;
+    let topPx = 0;
+    let timeText = '';
+
+    if (isSelectedToday) {
+      const currentMin = getAuthoritativeLocalMinutes(nowMs, authTz);
+      if (typeof currentMin === 'number' && currentMin >= 540 && currentMin <= 1260) {
+        showLiveLine = true;
+        topPx = (currentMin - 540) * 1.25;
+        timeText = formatAuthoritativeTime(nowMs, authTz);
+      }
+    }
+
+    if (showLiveLine) {
+      if (!liveLineEl) {
+        liveLineEl = document.createElement('div');
+        liveLineEl.className = 'owner-calendar-live-line';
+        liveLineEl.setAttribute('aria-hidden', 'true');
+
+        const dot = document.createElement('span');
+        dot.className = 'live-line-dot';
+
+        const badge = document.createElement('span');
+        badge.className = 'live-line-badge notranslate';
+        badge.setAttribute('translate', 'no');
+
+        const rule = document.createElement('span');
+        rule.className = 'live-line-rule';
+
+        liveLineEl.appendChild(dot);
+        liveLineEl.appendChild(badge);
+        liveLineEl.appendChild(rule);
+        body.appendChild(liveLineEl);
+      }
+      liveLineEl.style.top = `${topPx}px`;
+      const badge = liveLineEl.querySelector('.live-line-badge');
+      if (badge && badge.textContent !== timeText) {
+        badge.textContent = timeText;
+      }
+    } else {
+      if (liveLineEl) {
+        liveLineEl.remove();
+      }
+    }
+  }
+
+  // 2. Late Badges (15-min late indicator)
+  const cards = content.querySelectorAll('.owner-calendar-appointment');
+  cards.forEach(card => {
+    const apptId = card.dataset.appointmentId;
+    const appointment = currentAppointmentsSnapshot.find(item => item && String(item.id).trim() === String(apptId).trim());
+    const isLate = isAppointmentLate(appointment, nowMs, authToday);
+
+    let lateBadge = card.querySelector('.owner-calendar-late-badge');
+    if (isLate) {
+      card.classList.add('is-late');
+      if (!lateBadge) {
+        lateBadge = document.createElement('div');
+        lateBadge.className = 'owner-calendar-late-badge';
+        lateBadge.setAttribute('role', 'alert');
+        lateBadge.setAttribute('aria-label', `${adminT('late15Min')} - ${adminT('notArrived')}`);
+        lateBadge.innerHTML = `
+          <svg class="late-icon" viewBox="0 0 16 16" width="12" height="12" fill="currentColor" aria-hidden="true">
+            <path d="M8.982 1.566a1.13 1.13 0 0 0-1.96 0L.165 13.233c-.457.778.091 1.767.98 1.767h13.713c.889 0 1.438-.99.98-1.767L8.982 1.566zM8 5c.535 0 .954.462.9.995l-.35 3.507a.552.552 0 0 1-1.1 0L7.1 5.995A.905.905 0 0 1 8 5zm.002 6a1 1 0 1 1 0 2 1 1 0 0 1 0-2z"/>
+          </svg>
+          <span class="late-text-main">${escapeHtml(adminT('late15Min'))}</span>
+          <span class="late-text-sub">${escapeHtml(adminT('notArrived'))}</span>
+        `;
+        const timeHeader = card.querySelector('.calendar-card-header');
+        if (timeHeader && timeHeader.nextSibling) {
+          card.insertBefore(lateBadge, timeHeader.nextSibling);
+        } else {
+          card.appendChild(lateBadge);
+        }
+      } else {
+        lateBadge.setAttribute('aria-label', `${adminT('late15Min')} - ${adminT('notArrived')}`);
+        const main = lateBadge.querySelector('.late-text-main');
+        const sub = lateBadge.querySelector('.late-text-sub');
+        if (main) main.textContent = adminT('late15Min');
+        if (sub) sub.textContent = adminT('notArrived');
+      }
+    } else {
+      card.classList.remove('is-late');
+      if (lateBadge) {
+        lateBadge.remove();
+      }
+    }
+  });
+
+  // Table rows in list view
+  const rows = content.querySelectorAll('tbody tr');
+  rows.forEach(row => {
+    const apptId = row.dataset?.appointmentId;
+    if (!apptId) return;
+    const appointment = currentAppointmentsSnapshot.find(item => item && String(item.id).trim() === String(apptId).trim());
+    const isLate = isAppointmentLate(appointment, nowMs, authToday);
+    if (isLate) {
+      row.classList.add('is-late');
+    } else {
+      row.classList.remove('is-late');
+    }
+  });
+}
+
+const startLiveLineTimer = () => {
+  stopLiveLineTimer();
+  if (currentViewMode !== 'calendar') return;
+  updateLiveLineAndLateBadges();
+  if (typeof setInterval === 'function') {
+    liveLineTimerId = setInterval(() => {
+      updateLiveLineAndLateBadges();
+    }, 30000);
+    if (liveLineTimerId && typeof liveLineTimerId.unref === 'function') {
+      liveLineTimerId.unref();
+    }
+  }
+};
+
+const startTimeResync = () => {
+  stopTimeResync();
+  if (typeof setInterval === 'function') {
+    timeResyncTimerId = setInterval(async () => {
+      try {
+        const res = await fetch('/api/owner/calendar-context', { credentials: 'same-origin' });
+        if (res.ok) {
+          const json = await res.json();
+          if (json && json.success && json.data) {
+            updateTimeAnchor(json.data.server_now, json.data.timezone);
+            updateLiveLineAndLateBadges();
+          }
+        }
+      } catch (_) {}
+    }, 5 * 60 * 1000);
+    if (timeResyncTimerId && typeof timeResyncTimerId.unref === 'function') {
+      timeResyncTimerId.unref();
+    }
+  }
+};
+
+if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+  window.addEventListener('beforeunload', () => {
+    stopLiveLineTimer();
+    stopTimeResync();
+  });
+  window.addEventListener('pagehide', () => {
+    stopLiveLineTimer();
+    stopTimeResync();
+  });
+}
+
+if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+  document.addEventListener('visibilitychange', async () => {
+    if (document.visibilityState === 'hidden') {
+      stopLiveLineTimer();
+      stopTimeResync();
+    } else if (document.visibilityState === 'visible') {
+      const isAuthActive = (typeof adminContent !== 'undefined' && adminContent && !adminContent.hidden) &&
+                           (typeof loginOverlay !== 'undefined' && loginOverlay && loginOverlay.style.display === 'none');
+      if (!isAuthActive) {
+        stopLiveLineTimer();
+        stopTimeResync();
+        return;
+      }
+      try {
+        const res = await fetch('/api/owner/calendar-context', { credentials: 'same-origin' });
+        if (res.ok) {
+          const json = await res.json();
+          if (json && json.success && json.data) {
+            updateTimeAnchor(json.data.server_now, json.data.timezone);
+            updateLiveLineAndLateBadges();
+            startLiveLineTimer();
+            startTimeResync();
+            return;
+          }
+        } else if (res.status === 401 || res.status === 403) {
+          stopLiveLineTimer();
+          stopTimeResync();
+          showLogin(adminT('sessionExpired'));
+          return;
+        }
+      } catch (_) {}
+      invalidateTimeAnchor();
+      stopLiveLineTimer();
+      stopTimeResync();
+      updateLiveLineAndLateBadges();
+    }
+  });
 }
 
 function resolveAppointmentPrimaryStaff(appointment, staffSnapshot) {
@@ -1619,8 +1973,23 @@ const renderAppointmentsView = () => {
 
         const timeDisplay = `${formatSingaporeHourMinute(item.start_at)} - ${formatSingaporeHourMinute(item.end_at)}`;
 
+        const nowMs = getAuthoritativeNowMs();
+        const authTz = (nowMs && timeAnchor.isValid) ? timeAnchor.timezone : null;
+        const authToday = authTz ? getAuthoritativeLocalDate(nowMs, authTz) : null;
+        const isLate = isAppointmentLate(item, nowMs, authToday);
+
+        const lateBadgeHtml = isLate
+          ? `<div class="owner-calendar-late-badge" role="alert" aria-label="${escapeHtml(adminT('late15Min'))} - ${escapeHtml(adminT('notArrived'))}">
+              <svg class="late-icon" viewBox="0 0 16 16" width="12" height="12" fill="currentColor" aria-hidden="true">
+                <path d="M8.982 1.566a1.13 1.13 0 0 0-1.96 0L.165 13.233c-.457.778.091 1.767.98 1.767h13.713c.889 0 1.438-.99.98-1.767L8.982 1.566zM8 5c.535 0 .954.462.9.995l-.35 3.507a.552.552 0 0 1-1.1 0L7.1 5.995A.905.905 0 0 1 8 5zm.002 6a1 1 0 1 1 0 2 1 1 0 0 1 0-2z"/>
+              </svg>
+              <span class="late-text-main">${escapeHtml(adminT('late15Min'))}</span>
+              <span class="late-text-sub">${escapeHtml(adminT('notArrived'))}</span>
+            </div>`
+          : '';
+
         return `
-          <div class="owner-calendar-appointment status-${statusClass}${layout.hasOverlap ? ' has-overlap' : ''}" style="${style}" tabindex="0" role="article" aria-label="${escapeHtml(item.customer_name || '')} ${escapeHtml(timeDisplay)} ${escapeHtml(getStatusText(item.status))}">
+          <div class="owner-calendar-appointment status-${statusClass}${layout.hasOverlap ? ' has-overlap' : ''}${isLate ? ' is-late' : ''}" data-appointment-id="${escapeHtml(item.id)}" style="${style}" tabindex="0" role="article" aria-label="${escapeHtml(item.customer_name || '')} ${escapeHtml(timeDisplay)} ${escapeHtml(getStatusText(item.status))}">
             <div class="calendar-card-header">
               <span class="calendar-card-time">${escapeHtml(timeDisplay)}</span>
               <span class="calendar-status-pill status-${statusClass}" role="status" aria-label="${escapeHtml(getStatusText(item.status))}">
@@ -1628,6 +1997,7 @@ const renderAppointmentsView = () => {
                 <span class="status-text">${getStatusText(item.status)}</span>
               </span>
             </div>
+            ${lateBadgeHtml}
             <div class="calendar-card-customer notranslate" translate="no">${escapeHtml(item.customer_name || '-')}</div>
             <div class="calendar-card-service notranslate" translate="no">${escapeHtml(serviceSummary)}</div>
             ${assistantHtml}
@@ -1645,6 +2015,28 @@ const renderAppointmentsView = () => {
       `;
     }).join('');
 
+    const nowMs = getAuthoritativeNowMs();
+    const isAuthorityValid = Boolean(nowMs && timeAnchor && timeAnchor.isValid);
+    const authTz = isAuthorityValid ? timeAnchor.timezone : null;
+    const authToday = isAuthorityValid ? getAuthoritativeLocalDate(nowMs, authTz) : null;
+    const isSelectedToday = Boolean(isAuthorityValid && authToday && currentCalendarDate === authToday);
+
+    let liveLineHtml = '';
+    if (isSelectedToday) {
+      const currentMin = getAuthoritativeLocalMinutes(nowMs, authTz);
+      if (typeof currentMin === 'number' && currentMin >= 540 && currentMin <= 1260) {
+        const topPx = (currentMin - 540) * 1.25;
+        const timeText = formatAuthoritativeTime(nowMs, authTz);
+        liveLineHtml = `
+          <div class="owner-calendar-live-line" style="top: ${topPx.toFixed(1)}px;" aria-hidden="true">
+            <span class="live-line-dot"></span>
+            <span class="live-line-badge notranslate" translate="no">${escapeHtml(timeText)}</span>
+            <span class="live-line-rule"></span>
+          </div>
+        `;
+      }
+    }
+
     content.className = '';
     content.setAttribute?.('aria-busy', 'false');
     content.innerHTML = `
@@ -1658,12 +2050,15 @@ const renderAppointmentsView = () => {
             <div class="owner-calendar-time-axis" aria-hidden="true">
               ${timeAxisHtml}
             </div>
+            ${liveLineHtml}
             ${bodyColsHtml}
           </div>
         </div>
       </div>
     `;
+    startLiveLineTimer();
   } else {
+    stopLiveLineTimer();
     if (
       !currentAppointmentsSnapshot ||
       currentAppointmentsSnapshot.length === 0
@@ -1730,8 +2125,23 @@ const renderAppointmentsView = () => {
           statusBtnsHtml = `<button type="button" data-action="status" data-action-key="${kComplete}" data-target-status="completed">${escapeHtml(adminT('complete'))}</button>`;
         }
 
+        const nowMs = getAuthoritativeNowMs();
+        const authTz = (nowMs && timeAnchor.isValid) ? timeAnchor.timezone : null;
+        const authToday = authTz ? getAuthoritativeLocalDate(nowMs, authTz) : null;
+        const isLate = isAppointmentLate(item, nowMs, authToday);
+
+        const lateBadgeHtml = isLate
+          ? `<div class="owner-calendar-late-badge" role="alert" aria-label="${escapeHtml(adminT('late15Min'))} - ${escapeHtml(adminT('notArrived'))}">
+              <svg class="late-icon" viewBox="0 0 16 16" width="12" height="12" fill="currentColor" aria-hidden="true">
+                <path d="M8.982 1.566a1.13 1.13 0 0 0-1.96 0L.165 13.233c-.457.778.091 1.767.98 1.767h13.713c.889 0 1.438-.99.98-1.767L8.982 1.566zM8 5c.535 0 .954.462.9.995l-.35 3.507a.552.552 0 0 1-1.1 0L7.1 5.995A.905.905 0 0 1 8 5zm.002 6a1 1 0 1 1 0 2 1 1 0 0 1 0-2z"/>
+              </svg>
+              <span class="late-text-main">${escapeHtml(adminT('late15Min'))}</span>
+              <span class="late-text-sub">${escapeHtml(adminT('notArrived'))}</span>
+            </div>`
+          : '';
+
         return `
-          <tr>
+          <tr${isLate ? ' class="is-late"' : ''}>
             <td>
               ${formatSingaporeTime(
                 item.start_at
@@ -1754,6 +2164,7 @@ const renderAppointmentsView = () => {
                 <span class="calendar-status-icon" aria-hidden="true"></span>
                 <span class="status-text">${getStatusText(item.status)}</span>
               </span>
+              ${lateBadgeHtml}
               ${getCheckoutBadgeHtml(checkoutFinancialState)}
             </td>
             <td>
@@ -1937,13 +2348,16 @@ function setAdminLocale(locale) {
   if (typeof updateCalendarToolbarUI === 'function') {
     updateCalendarToolbarUI();
   }
-  if (typeof renderAppointmentsView === 'function' && (currentAppointmentsSnapshot.length > 0 || currentViewMode === 'calendar')) {
+  if (typeof renderAppointmentsView === 'function' && currentAppointmentsSnapshot.length > 0) {
     renderAppointmentsView();
   }
 }
 globalScope.setAdminLocale = setAdminLocale;
 
 function showLogin(message = '') {
+  stopLiveLineTimer();
+  stopTimeResync();
+  invalidateTimeAnchor();
   invalidateAppointmentActionContext();
   adminContent.hidden = true;
   loginOverlay.style.display = 'flex';
@@ -1964,6 +2378,7 @@ function showLogin(message = '') {
   content.setAttribute?.('aria-busy', 'true');
   currentAppointments = [];
   globalThis.currentAppointments = currentAppointments;
+  content.innerHTML = '';
   content.textContent = adminT('loginRequired');
 
   if (globalThis.ownerSelfService) {
@@ -2069,6 +2484,9 @@ async function adminLogin() {
 }
 
 async function ownerLogout() {
+  stopLiveLineTimer();
+  stopTimeResync();
+  invalidateTimeAnchor();
   invalidateAppointmentActionContext();
   try {
     const response = await fetch('/api/owner/logout', {
@@ -2117,21 +2535,6 @@ function getStatusText(status) {
 }
 
 
-// 今天日期（新加坡）
-function getSingaporeToday() {
-
-  return new Intl.DateTimeFormat(
-    'en-CA',
-    {
-      timeZone: 'Asia/Singapore',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit'
-    }
-  ).format(new Date());
-}
-
-
 // 加载预约
 async function loadAppointments() {
 
@@ -2143,12 +2546,15 @@ async function loadAppointments() {
 
   try {
 
-    const [appointmentsResponse, staffResponse] =
+    const [appointmentsResponse, staffResponse, calendarContextResponse] =
       await Promise.all([
         fetch('/api/appointments-db', {
           credentials: 'same-origin'
         }),
         fetch('/api/owner/staff', {
+          credentials: 'same-origin'
+        }).catch(() => null),
+        fetch('/api/owner/calendar-context', {
           credentials: 'same-origin'
         }).catch(() => null)
       ]);
@@ -2175,6 +2581,28 @@ async function loadAppointments() {
           currentStaffSnapshot = cloneStaff(staffResult.data);
         }
       } catch (_) {}
+    }
+
+    if (calendarContextResponse && calendarContextResponse.ok) {
+      try {
+        const ctxResult = await calendarContextResponse.json();
+        if (ctxResult && ctxResult.success && ctxResult.data) {
+          updateTimeAnchor(ctxResult.data.server_now, ctxResult.data.timezone);
+        } else {
+          invalidateTimeAnchor();
+        }
+      } catch (_) {
+        invalidateTimeAnchor();
+      }
+    } else {
+      invalidateTimeAnchor();
+    }
+
+    startTimeResync();
+
+    const authToday = getAuthoritativeToday();
+    if (!currentCalendarDate && authToday) {
+      currentCalendarDate = authToday;
     }
 
     const appointments =
@@ -2214,31 +2642,16 @@ function updateSummary(appointments) {
     ).length;
 
   const today =
-    getSingaporeToday();
+    getAuthoritativeToday();
 
-  const todayCount =
-    safeList.filter(item => {
-
-      if (!item.start_at) {
-        return false;
-      }
-
-      const date =
-        new Intl.DateTimeFormat(
-          'en-CA',
-          {
-            timeZone: 'Asia/Singapore',
-            year: 'numeric',
-            month: '2-digit',
-            day: '2-digit'
-          }
-        ).format(
-          new Date(item.start_at)
-        );
-
-      return date === today;
-
-    }).length;
+  const todayCount = today
+    ? safeList.filter(item => {
+        if (!item.start_at) {
+          return false;
+        }
+        return getSingaporeDateString(item.start_at) === today;
+      }).length
+    : 0;
 
   document
     .getElementById('todayCount')
