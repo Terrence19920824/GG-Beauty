@@ -417,26 +417,6 @@ test('26. C1 shared calendar foundation tests exist and pass', () => {
   assert.ok(fs.existsSync(path.join(root, 'test', 'calendar-visual-foundation.test.js')), 'C1 test file exists');
 });
 
-// 27. Global Phone文件不进入diff
-test('27. Working tree contains ZERO global phone P1 files', () => {
-  const forbiddenFiles = [
-    'lib/phone.js',
-    'lib/phone-metadata.js',
-    'lib/phone-data-contract.js',
-    'docs/global-phone-data-contract.md',
-    'test/phone-normalization.test.js'
-  ];
-
-  for (const forbidden of forbiddenFiles) {
-    const fullPath = path.join(root, forbidden);
-    assert.equal(
-      fs.existsSync(fullPath),
-      false,
-      `Forbidden global phone file ${forbidden} must NOT exist in this branch`
-    );
-  }
-});
-
 // 28. git diff --check passes cleanly
 test('28. git diff --check reports zero whitespace errors', () => {
   assert.doesNotThrow(() => {

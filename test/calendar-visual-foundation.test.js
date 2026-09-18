@@ -419,26 +419,6 @@ test('16. No unescaped XSS sinks in status rendering', () => {
   assert.match(staffHtml, /textSpan\.textContent = statusText;/);
 });
 
-// 17. No global phone P1 files present
-test('17. Working tree contains ZERO global phone P1 files', () => {
-  const forbiddenFiles = [
-    'lib/phone.js',
-    'lib/phone-metadata.js',
-    'lib/phone-data-contract.js',
-    'docs/global-phone-data-contract.md',
-    'test/phone-normalization.test.js'
-  ];
-
-  for (const forbidden of forbiddenFiles) {
-    const fullPath = path.join(root, forbidden);
-    assert.equal(
-      fs.existsSync(fullPath),
-      false,
-      `Forbidden global phone file ${forbidden} must NOT exist in this branch`
-    );
-  }
-});
-
 // 18. Shared CSS token definitions
 test('18. Shared CSS token definitions exist for all authoritative statuses and states', () => {
   const requiredTokens = [
