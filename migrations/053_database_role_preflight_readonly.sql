@@ -2,6 +2,11 @@
 -- STRICTLY READ ONLY: verifies existing 000-052 baseline tables, current user role capabilities,
 -- and ensures clean environment for role and ACL provisioning.
 
+BEGIN TRANSACTION READ ONLY;
+
+SET LOCAL lock_timeout = '5s';
+SET LOCAL statement_timeout = '30s';
+
 DO $$
 DECLARE
   v_missing_tables text[];
@@ -68,17 +73,19 @@ BEGIN
       current_user;
   END IF;
 
-  -- 3. Check target roles if they already exist; ensure they are not contaminated with unwanted privileges
+  -- 3. Check target roles if they already exist; ensure they are not contaminated with unwanted privileges or inheritance
   FOR v_role_rec IN (
-    SELECT rolname, rolsuper, rolcreatedb, rolcreaterole, rolbypassrls, rolinherit
+    SELECT rolname, rolsuper, rolcreatedb, rolcreaterole, rolbypassrls, rolinherit, rolreplication
     FROM pg_roles
     WHERE rolname IN ('gg_migration_owner', 'gg_app_runtime', 'gg_app_onboarding')
   ) LOOP
-    IF v_role_rec.rolsuper OR v_role_rec.rolcreatedb OR v_role_rec.rolcreaterole OR v_role_rec.rolbypassrls THEN
-      RAISE EXCEPTION 'database role separation preflight: target role % already exists with excessive administrative privileges',
+    IF v_role_rec.rolsuper OR v_role_rec.rolcreatedb OR v_role_rec.rolcreaterole OR v_role_rec.rolbypassrls OR v_role_rec.rolinherit OR v_role_rec.rolreplication THEN
+      RAISE EXCEPTION 'database role separation preflight: target role % already exists with excessive administrative privileges or inherit flag',
         v_role_rec.rolname;
     END IF;
   END LOOP;
 
   RAISE NOTICE 'database role separation preflight: baseline verified (35 tables present, role admin authority confirmed)';
 END $$;
+
+COMMIT;
