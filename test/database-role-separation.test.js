@@ -41,15 +41,18 @@ test('053-055 database role separation migration chain is strictly bounded and f
   assert.match(sql055, /SET LOCAL statement_timeout\s*=\s*'30s'/);
 
   // 5. Explicit whitelist used: NO wildcards over pg_class or pg_proc in 054
-  assert.doesNotMatch(sql054, /FROM pg_class/);
-  assert.doesNotMatch(sql054, /FROM pg_proc/);
+  assert.doesNotMatch(sql054, /ALTER TABLE[^;]*OWNER TO/);
+  assert.doesNotMatch(sql054, /ALTER FUNCTION[^;]*OWNER TO/);
   assert.doesNotMatch(sql054, /REVOKE ALL ON ALL FUNCTIONS/);
 
   // 6. Schema and database boundaries
-  assert.match(sql054, /REVOKE ALL ON SCHEMA public FROM PUBLIC/);
-  assert.match(sql054, /REVOKE CREATE ON SCHEMA public FROM PUBLIC/);
+  assert.match(sql054, /REVOKE ALL ON SCHEMA public FROM gg_app_runtime, gg_app_onboarding/);
+  assert.doesNotMatch(sql054, /REVOKE[^;]*ON SCHEMA public FROM PUBLIC/);
   assert.match(sql054, /GRANT USAGE ON SCHEMA public TO gg_app_runtime, gg_app_onboarding/);
-  assert.match(sql054, /REVOKE TEMP ON DATABASE/);
+  assert.doesNotMatch(sql054, /(?:REVOKE|GRANT)\s+TEMP(?:ORARY)?\b/i);
+  assert.match(sql053, /PUBLIC TEMP baseline=true/);
+  assert.match(sql055, /application role has direct TEMP grant/);
+  assert.doesNotMatch(sql054, /GRANT SELECT, (?:INSERT, )?UPDATE ON/);
 
   // 7. Refined least-privilege table and column permissions
   // (a) Translation column-level UPDATE

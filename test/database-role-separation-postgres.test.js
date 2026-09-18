@@ -7,6 +7,12 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawn, spawnSync } = require('node:child_process');
 const { Client, Pool } = require('pg');
+const bcrypt = require('bcryptjs');
+const crypto = require('node:crypto');
+const { createOwnerAuth } = require('../lib/owner-auth');
+const { createCheckoutPos } = require('../lib/checkout-pos');
+const { moveAppointmentStructurePrecisely } = require('../lib/appointment-multi-service');
+const response = () => ({ code:200, headers:{}, status(code){this.code=code;return this;}, setHeader(k,v){this.headers[k]=v;}, json(body){this.body=body;return this;} });
 
 const ROOT = path.join(__dirname, '..');
 const PG_BIN = process.env.PG17_BIN || '/opt/homebrew/opt/postgresql@17/bin';
@@ -43,7 +49,7 @@ async function connectWhenReady(url, options = {}) {
 }
 
 test('PostgreSQL 17 database role separation foundation (053-055) enforces least-privilege', { timeout: 120000 }, async t => {
-  if (!fs.existsSync(path.join(PG_BIN, 'initdb'))) return t.skip('PostgreSQL 17 unavailable');
+  assert.ok(fs.existsSync(path.join(PG_BIN, 'initdb')), 'PostgreSQL 17 required; no skips');
 
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'gg-role-pg-'));
   const data = path.join(temp, 'data');
@@ -68,421 +74,43 @@ test('PostgreSQL 17 database role separation foundation (053-055) enforces least
   let admin;
   let runtimeClient;
   let bootstrapClient;
+  let runtimePool;
 
   try {
     admin = await connectWhenReady(adminUrl, { ssl: { rejectUnauthorized: false } });
 
-    // 1. Setup exact 35 baseline tables matching 000-052
+    // Only the pre-000 legacy foundation is a fixture. Every 000–052 file runs unchanged.
     await admin.query(`
-      CREATE EXTENSION IF NOT EXISTS pgcrypto;
-
-      CREATE TABLE shops (
-        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-        slug text UNIQUE NOT NULL,
-        name text NOT NULL,
-        status text NOT NULL DEFAULT 'active'
-      );
-      CREATE TABLE locations (
-        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-        shop_id uuid NOT NULL REFERENCES shops(id),
-        name text NOT NULL,
-        timezone text NOT NULL DEFAULT 'Asia/Singapore',
-        is_active boolean NOT NULL DEFAULT TRUE,
-        UNIQUE (shop_id, id)
-      );
-      CREATE TABLE staff (
-        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-        shop_id uuid NOT NULL REFERENCES shops(id),
-        staff_code text,
-        name text NOT NULL,
-        email text,
-        phone text,
-        is_active boolean NOT NULL DEFAULT TRUE,
-        bookable boolean NOT NULL DEFAULT TRUE,
-        UNIQUE (shop_id, id)
-      );
-      CREATE TABLE staff_working_hours (
-        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-        shop_id uuid NOT NULL REFERENCES shops(id),
-        staff_id uuid NOT NULL,
-        day_of_week smallint NOT NULL,
-        start_time time NOT NULL,
-        end_time time NOT NULL
-      );
-      CREATE TABLE customers (
-        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-        shop_id uuid NOT NULL REFERENCES shops(id),
-        name text NOT NULL,
-        phone text,
-        email text,
-        phone_normalized text,
-        member_code text,
-        date_of_birth date,
-        gender text,
-        phone_verified_at timestamptz,
-        identity_status text NOT NULL DEFAULT 'unverified_contact',
-        UNIQUE (shop_id, id)
-      );
-      CREATE TABLE service_categories (
-        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-        shop_id uuid NOT NULL REFERENCES shops(id),
-        canonical_name text NOT NULL,
-        icon_key text,
-        sort_order integer NOT NULL DEFAULT 0,
-        is_active boolean NOT NULL DEFAULT TRUE,
-        created_at timestamptz NOT NULL DEFAULT now(),
-        updated_at timestamptz NOT NULL DEFAULT now(),
-        UNIQUE (shop_id, id)
-      );
-      CREATE TABLE services (
-        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-        shop_id uuid NOT NULL REFERENCES shops(id),
-        category_id uuid REFERENCES service_categories(id),
-        name text NOT NULL,
-        duration_minutes integer NOT NULL DEFAULT 60,
-        price numeric NOT NULL DEFAULT 0,
-        is_active boolean NOT NULL DEFAULT TRUE,
-        UNIQUE (shop_id, id)
-      );
-      CREATE TABLE staff_services (
-        shop_id uuid NOT NULL,
-        staff_id uuid NOT NULL,
-        service_id uuid NOT NULL,
-        is_active boolean NOT NULL DEFAULT TRUE,
-        PRIMARY KEY (shop_id, staff_id, service_id)
-      );
-      CREATE TABLE staff_accounts (
-        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-        shop_id uuid NOT NULL REFERENCES shops(id),
-        staff_id uuid NOT NULL,
-        login_identifier text NOT NULL,
-        password_hash text NOT NULL,
-        is_active boolean NOT NULL DEFAULT TRUE,
-        session_version integer NOT NULL DEFAULT 1,
-        UNIQUE (shop_id, staff_id)
-      );
-      CREATE TABLE staff_location_assignments (
-        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-        shop_id uuid NOT NULL REFERENCES shops(id),
-        staff_id uuid NOT NULL,
-        location_id uuid NOT NULL,
-        is_active boolean NOT NULL DEFAULT TRUE,
-        UNIQUE (shop_id, staff_id, location_id)
-      );
-      CREATE TABLE staff_sessions (
-        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-        shop_id uuid NOT NULL,
-        staff_id uuid NOT NULL,
-        staff_account_id uuid NOT NULL,
-        token_hash text NOT NULL UNIQUE,
-        revoked_at timestamptz,
-        expires_at timestamptz NOT NULL,
-        session_version integer NOT NULL DEFAULT 1
-      );
-      CREATE TABLE staff_permissions (
-        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-        shop_id uuid NOT NULL REFERENCES shops(id),
-        staff_id uuid NOT NULL,
-        permission_name text NOT NULL,
-        UNIQUE (shop_id, staff_id, permission_name)
-      );
-      CREATE TABLE staff_location_working_hours (
-        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-        shop_id uuid NOT NULL REFERENCES shops(id),
-        staff_id uuid NOT NULL,
-        location_id uuid NOT NULL,
-        day_of_week smallint NOT NULL,
-        start_time time NOT NULL,
-        end_time time NOT NULL
-      );
-      CREATE TABLE staff_schedule_overrides (
-        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-        shop_id uuid NOT NULL REFERENCES shops(id),
-        staff_id uuid NOT NULL,
-        location_id uuid NOT NULL,
-        schedule_date date NOT NULL,
-        override_type text NOT NULL,
-        start_time time,
-        end_time time,
-        approval_status text NOT NULL DEFAULT 'approved',
-        is_active boolean NOT NULL DEFAULT TRUE
-      );
-      CREATE TABLE appointments (
-        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-        shop_id uuid NOT NULL REFERENCES shops(id),
-        location_id uuid NOT NULL REFERENCES locations(id),
-        staff_id uuid NOT NULL,
-        customer_id uuid NOT NULL,
-        booker_customer_id uuid NOT NULL,
-        recipient_customer_id uuid NOT NULL,
-        override_conflict boolean NOT NULL DEFAULT FALSE,
-        start_at timestamptz NOT NULL,
-        end_at timestamptz NOT NULL,
-        status text NOT NULL DEFAULT 'confirmed',
-        cancelled_at timestamptz,
-        service_completed_at timestamptz,
-        created_at timestamptz NOT NULL DEFAULT now(),
-        updated_at timestamptz NOT NULL DEFAULT now(),
-        UNIQUE (shop_id, id)
-      );
-      CREATE TABLE appointment_time_change_history (
-        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-        shop_id uuid NOT NULL REFERENCES shops(id),
-        location_id uuid NOT NULL,
-        appointment_id uuid NOT NULL,
-        staff_id uuid NOT NULL,
-        actor_type text NOT NULL CHECK (actor_type IN ('staff', 'admin', 'system')),
-        actor_id uuid,
-        old_start_at timestamptz NOT NULL,
-        old_end_at timestamptz NOT NULL,
-        new_start_at timestamptz NOT NULL,
-        new_end_at timestamptz NOT NULL,
-        reason text,
-        source text NOT NULL,
-        created_at timestamptz NOT NULL DEFAULT now()
-      );
-      CREATE TABLE appointment_items (
-        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-        shop_id uuid NOT NULL REFERENCES shops(id),
-        location_id uuid NOT NULL,
-        appointment_id uuid NOT NULL,
-        sequence_no integer NOT NULL,
-        service_id uuid NOT NULL,
-        service_name_snapshot text NOT NULL,
-        price_snapshot numeric,
-        duration_minutes_snapshot integer NOT NULL DEFAULT 60,
-        start_at timestamptz NOT NULL,
-        end_at timestamptz NOT NULL,
-        updated_at timestamptz NOT NULL DEFAULT now(),
-        UNIQUE (shop_id, id)
-      );
-      CREATE TABLE appointment_item_staff_assignments (
-        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-        shop_id uuid NOT NULL REFERENCES shops(id),
-        location_id uuid NOT NULL,
-        appointment_item_id uuid NOT NULL,
-        staff_id uuid NOT NULL,
-        role text NOT NULL DEFAULT 'primary',
-        blocks_time boolean NOT NULL DEFAULT TRUE,
-        start_at timestamptz NOT NULL,
-        end_at timestamptz NOT NULL,
-        updated_at timestamptz NOT NULL DEFAULT now(),
-        UNIQUE (shop_id, id)
-      );
-      CREATE TABLE owner_accounts (
-        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-        login_identifier text NOT NULL,
-        login_identifier_normalized text NOT NULL UNIQUE,
-        password_hash text NOT NULL,
-        display_name text NOT NULL,
-        is_active boolean NOT NULL DEFAULT TRUE,
-        session_version integer NOT NULL DEFAULT 1,
-        failed_login_attempts integer NOT NULL DEFAULT 0,
-        locked_until timestamptz,
-        password_changed_at timestamptz NOT NULL DEFAULT now(),
-        created_at timestamptz NOT NULL DEFAULT now(),
-        updated_at timestamptz NOT NULL DEFAULT now()
-      );
-      CREATE TABLE owner_shop_memberships (
-        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-        owner_account_id uuid NOT NULL REFERENCES owner_accounts(id),
-        shop_id uuid NOT NULL REFERENCES shops(id),
-        role text NOT NULL DEFAULT 'owner',
-        is_active boolean NOT NULL DEFAULT TRUE,
-        created_at timestamptz NOT NULL DEFAULT now(),
-        updated_at timestamptz NOT NULL DEFAULT now(),
-        UNIQUE (owner_account_id, shop_id)
-      );
-      CREATE TABLE owner_sessions (
-        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-        owner_account_id uuid NOT NULL REFERENCES owner_accounts(id),
-        token_hash text NOT NULL UNIQUE,
-        revoked_at timestamptz,
-        revoke_reason text,
-        expires_at timestamptz NOT NULL,
-        session_version integer NOT NULL DEFAULT 1,
-        created_at timestamptz NOT NULL DEFAULT now()
-      );
-      CREATE TABLE service_translations (
-        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-        shop_id uuid NOT NULL REFERENCES shops(id),
-        service_id uuid NOT NULL,
-        locale text NOT NULL,
-        name text NOT NULL,
-        description text,
-        created_at timestamptz NOT NULL DEFAULT now(),
-        updated_at timestamptz NOT NULL DEFAULT now(),
-        UNIQUE (shop_id, service_id, locale)
-      );
-      CREATE TABLE service_category_translations (
-        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-        shop_id uuid NOT NULL REFERENCES shops(id),
-        category_id uuid NOT NULL,
-        locale text NOT NULL,
-        name text NOT NULL,
-        created_at timestamptz NOT NULL DEFAULT now(),
-        updated_at timestamptz NOT NULL DEFAULT now(),
-        UNIQUE (shop_id, category_id, locale)
-      );
-      CREATE TABLE shop_customer_settings (
-        shop_id uuid PRIMARY KEY REFERENCES shops(id),
-        member_code_prefix text NOT NULL DEFAULT 'MEM-',
-        member_code_width smallint NOT NULL DEFAULT 6,
-        dob_requirement text NOT NULL DEFAULT 'optional',
-        default_phone_country_code text NOT NULL DEFAULT '+65'
-      );
-      CREATE TABLE shop_member_code_counters (
-        shop_id uuid PRIMARY KEY REFERENCES shops(id),
-        next_value bigint NOT NULL DEFAULT 1 CHECK (next_value > 0)
-      );
-      CREATE TABLE customer_phone_identities (
-        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-        shop_id uuid NOT NULL REFERENCES shops(id),
-        customer_id uuid NOT NULL,
-        phone_normalized text NOT NULL,
-        is_primary boolean NOT NULL DEFAULT TRUE,
-        verified_at timestamptz,
-        ended_at timestamptz,
-        UNIQUE (shop_id, customer_id, phone_normalized)
-      );
-      CREATE TABLE customer_otp_challenges (
-        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-        shop_id uuid NOT NULL REFERENCES shops(id),
-        customer_id uuid,
-        phone_normalized text NOT NULL,
-        otp_hash text NOT NULL,
-        purpose text NOT NULL,
-        expires_at timestamptz NOT NULL,
-        consumed_at timestamptz,
-        failed_attempts integer NOT NULL DEFAULT 0,
-        created_at timestamptz NOT NULL DEFAULT now()
-      );
-      CREATE TABLE customer_sessions (
-        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-        shop_id uuid NOT NULL REFERENCES shops(id),
-        customer_id uuid NOT NULL,
-        token_hash text NOT NULL UNIQUE,
-        expires_at timestamptz NOT NULL,
-        revoked_at timestamptz,
-        created_at timestamptz NOT NULL DEFAULT now()
-      );
-      CREATE TABLE customer_identity_audit (
-        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-        shop_id uuid NOT NULL REFERENCES shops(id),
-        customer_id uuid NOT NULL,
-        event_type text NOT NULL,
-        challenge_id uuid,
-        created_at timestamptz NOT NULL DEFAULT now()
-      );
-      CREATE TABLE appointment_status_history (
-        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-        shop_id uuid NOT NULL REFERENCES shops(id),
-        appointment_id uuid NOT NULL,
-        from_status text,
-        to_status text NOT NULL,
-        actor_type text NOT NULL,
-        actor_id text,
-        reason text,
-        source text,
-        created_at timestamptz NOT NULL DEFAULT now()
-      );
-      CREATE TABLE checkout_transactions (
-        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-        shop_id uuid NOT NULL REFERENCES shops(id),
-        appointment_id uuid NOT NULL,
-        customer_id uuid NOT NULL,
-        status text NOT NULL DEFAULT 'draft',
-        currency_code char(3) NOT NULL,
-        quote_total_minor bigint NOT NULL,
-        actual_total_minor bigint NOT NULL,
-        discount_total_minor bigint NOT NULL DEFAULT 0,
-        final_due_minor bigint NOT NULL,
-        paid_minor bigint NOT NULL DEFAULT 0,
-        idempotency_key text NOT NULL,
-        created_by_owner_id uuid,
-        created_at timestamptz NOT NULL DEFAULT now(),
-        updated_at timestamptz NOT NULL DEFAULT now(),
-        UNIQUE (shop_id, appointment_id),
-        UNIQUE (shop_id, idempotency_key),
-        UNIQUE (shop_id, id)
-      );
-      CREATE TABLE checkout_line_items (
-        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-        shop_id uuid NOT NULL REFERENCES shops(id),
-        checkout_id uuid NOT NULL REFERENCES checkout_transactions(id),
-        appointment_item_id uuid,
-        line_type text NOT NULL,
-        description_snapshot text NOT NULL,
-        quote_price_minor bigint NOT NULL DEFAULT 0,
-        actual_price_minor bigint NOT NULL DEFAULT 0,
-        discount_minor bigint NOT NULL DEFAULT 0,
-        final_value_minor bigint NOT NULL,
-        created_at timestamptz NOT NULL DEFAULT now()
-      );
-      CREATE TABLE checkout_payments (
-        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-        shop_id uuid NOT NULL REFERENCES shops(id),
-        checkout_id uuid NOT NULL REFERENCES checkout_transactions(id),
-        payment_method text NOT NULL,
-        value_kind text NOT NULL,
-        amount_minor bigint NOT NULL,
-        cash_collected_minor bigint NOT NULL DEFAULT 0,
-        created_at timestamptz NOT NULL DEFAULT now()
-      );
-      CREATE TABLE checkout_staff_attributions (
-        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-        shop_id uuid NOT NULL REFERENCES shops(id),
-        checkout_id uuid NOT NULL REFERENCES checkout_transactions(id),
-        staff_id uuid NOT NULL,
-        role text NOT NULL,
-        created_at timestamptz NOT NULL DEFAULT now()
-      );
-      CREATE TABLE checkout_financial_audit (
-        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-        shop_id uuid NOT NULL REFERENCES shops(id),
-        checkout_id uuid NOT NULL REFERENCES checkout_transactions(id),
-        appointment_id uuid NOT NULL,
-        event_type text NOT NULL,
-        before_snapshot jsonb,
-        after_snapshot jsonb NOT NULL,
-        reason text,
-        operator_type text NOT NULL,
-        operator_id text,
-        source text NOT NULL,
-        created_at timestamptz NOT NULL DEFAULT now()
-      );
-
-      -- Repository trigger functions from 000-052
-      CREATE OR REPLACE FUNCTION public.assign_customer_member_code() RETURNS trigger LANGUAGE plpgsql AS $$
-      DECLARE allocated bigint; prefix text; width smallint;
-      BEGIN
-        IF NEW.member_code IS NOT NULL THEN RETURN NEW; END IF;
-        SELECT member_code_prefix, member_code_width INTO prefix, width FROM public.shop_customer_settings WHERE shop_id=NEW.shop_id;
-        IF NOT FOUND THEN prefix := 'MEM-'; width := 6; END IF;
-        UPDATE public.shop_member_code_counters SET next_value=next_value+1 WHERE shop_id=NEW.shop_id RETURNING next_value-1 INTO allocated;
-        IF NOT FOUND THEN
-          INSERT INTO public.shop_member_code_counters(shop_id, next_value) VALUES (NEW.shop_id, 2);
-          allocated := 1;
-        END IF;
-        NEW.member_code := prefix || lpad(allocated::text, width, '0');
-        RETURN NEW;
-      END $$;
-      CREATE TRIGGER customers_assign_member_code BEFORE INSERT ON public.customers
-      FOR EACH ROW EXECUTE FUNCTION public.assign_customer_member_code();
-
-      CREATE OR REPLACE FUNCTION public.assignment_collision_sync_item_time()
-      RETURNS trigger LANGUAGE plpgsql SECURITY INVOKER SET search_path=pg_catalog,public AS $$
-      BEGIN
-        UPDATE public.appointment_item_staff_assignments
-        SET start_at=NEW.start_at, end_at=NEW.end_at, updated_at=NOW()
-        WHERE shop_id=NEW.shop_id AND location_id=NEW.location_id AND appointment_item_id=NEW.id;
-        RETURN NEW;
-      END $$;
-      CREATE TRIGGER appointment_items_sync_assignment_time
-      AFTER UPDATE OF start_at, end_at ON public.appointment_items
-      FOR EACH ROW EXECUTE FUNCTION public.assignment_collision_sync_item_time();
+      CREATE EXTENSION pgcrypto; CREATE EXTENSION btree_gist;
+      CREATE TABLE shops(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),slug text UNIQUE NOT NULL,name text NOT NULL,status text NOT NULL DEFAULT 'active');
+      CREATE TABLE locations(id uuid PRIMARY KEY,shop_id uuid NOT NULL REFERENCES shops(id),name text NOT NULL,timezone text NOT NULL DEFAULT 'Asia/Singapore',is_active boolean NOT NULL DEFAULT true,created_at timestamptz NOT NULL DEFAULT now());
+      CREATE TABLE staff(id uuid PRIMARY KEY,shop_id uuid NOT NULL REFERENCES shops(id),staff_code text,name text NOT NULL,email text,phone text,is_active boolean NOT NULL DEFAULT true,bookable boolean NOT NULL DEFAULT true,can_login boolean NOT NULL DEFAULT true,updated_at timestamptz NOT NULL DEFAULT now());
+      CREATE TABLE staff_working_hours(id uuid PRIMARY KEY,shop_id uuid NOT NULL,location_id uuid,staff_id uuid NOT NULL,day_of_week smallint NOT NULL,start_time time NOT NULL,end_time time NOT NULL);
+      CREATE TABLE customers(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),shop_id uuid NOT NULL REFERENCES shops(id),name text NOT NULL,phone text NOT NULL,email text);
+      CREATE TABLE services(id uuid PRIMARY KEY,shop_id uuid NOT NULL REFERENCES shops(id),category text,name text NOT NULL,description text,duration_minutes integer NOT NULL DEFAULT 60,price numeric NOT NULL DEFAULT 0,price_is_from boolean NOT NULL DEFAULT false,is_active boolean NOT NULL DEFAULT true,bookable boolean NOT NULL DEFAULT true,sort_order integer NOT NULL DEFAULT 0,updated_at timestamptz NOT NULL DEFAULT now());
+      CREATE TABLE staff_services(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),staff_id uuid NOT NULL REFERENCES staff(id) ON DELETE CASCADE,service_id uuid NOT NULL REFERENCES services(id) ON DELETE CASCADE,is_active boolean NOT NULL DEFAULT true,UNIQUE(staff_id,service_id));
+      CREATE TABLE appointments(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),shop_id uuid NOT NULL REFERENCES shops(id),location_id uuid NOT NULL REFERENCES locations(id),staff_id uuid NOT NULL REFERENCES staff(id) ON DELETE RESTRICT,customer_id uuid NOT NULL REFERENCES customers(id) ON DELETE RESTRICT,service_id uuid NOT NULL REFERENCES services(id),appointment_no text DEFAULT ('GG-'||substr(gen_random_uuid()::text,1,8)),start_at timestamptz NOT NULL,end_at timestamptz NOT NULL,status text NOT NULL DEFAULT 'confirmed',booking_source text,staff_selection_type text,cancelled_at timestamptz,service_completed_at timestamptz,override_conflict boolean NOT NULL DEFAULT false,created_at timestamptz NOT NULL DEFAULT now(),updated_at timestamptz NOT NULL DEFAULT now(),
+        CONSTRAINT prevent_staff_double_booking EXCLUDE USING gist(staff_id WITH =,tstzrange(start_at,end_at,'[)') WITH &&) WHERE(status IN ('pending','confirmed') AND override_conflict=false));
     `);
-
+    for (const file of fs.readdirSync(path.join(ROOT,'migrations')).filter(f => /^\d{3}_.*\.sql$/.test(f) && Number(f.slice(0,3)) <= 52).sort()) {
+      try { await admin.query(migration(file)); } catch (error) { error.message = `${file}: ${error.message}`; throw error; }
+    }
+    const beforeObjects = async () => (await admin.query(`SELECT jsonb_build_object(
+      'tables',(SELECT jsonb_agg(jsonb_build_array(oid,relowner,relacl) ORDER BY oid) FROM pg_class WHERE relnamespace='public'::regnamespace),
+      'columns',(SELECT jsonb_agg(jsonb_build_array(attrelid,attnum,attacl) ORDER BY attrelid,attnum) FROM pg_attribute WHERE attrelid IN (SELECT oid FROM pg_class WHERE relnamespace='public'::regnamespace)),
+      'functions',(SELECT jsonb_agg(jsonb_build_array(oid,proowner,proacl,prosrc) ORDER BY oid) FROM pg_proc WHERE pronamespace='public'::regnamespace),
+      'triggers',(SELECT jsonb_agg(jsonb_build_array(oid,tgrelid,tgfoid,tgenabled) ORDER BY oid) FROM pg_trigger WHERE tgrelid IN (SELECT oid FROM pg_class WHERE relnamespace='public'::regnamespace)),
+      'database',(SELECT datacl::text FROM pg_database WHERE datname=current_database()),
+      'roles',(SELECT jsonb_agg(rolname ORDER BY rolname) FROM pg_roles)) AS state`)).rows[0].state;
+    // Supabase-style non-superuser executor owns the baseline and has CREATEROLE.
+    await admin.query('CREATE ROLE expand_admin LOGIN NOINHERIT CREATEROLE; ALTER DATABASE postgres OWNER TO expand_admin');
+    for (const row of (await admin.query("SELECT relname FROM pg_class WHERE relnamespace='public'::regnamespace AND relkind='r'")).rows) {
+      await admin.query(`ALTER TABLE public.${row.relname} OWNER TO expand_admin`);
+    }
+    for (const row of (await admin.query("SELECT p.oid::regprocedure::text AS signature FROM pg_proc p WHERE pronamespace='public'::regnamespace AND NOT EXISTS(SELECT 1 FROM pg_depend WHERE classid='pg_proc'::regclass AND objid=p.oid AND deptype='e')")).rows) {
+      await admin.query(`ALTER FUNCTION ${row.signature} OWNER TO expand_admin`);
+    }
+    await admin.query('SET ROLE expand_admin');
     // Insert initial merchant test fixtures
     await admin.query(`
       INSERT INTO shops (id, slug, name, status) VALUES ('${ID.shop}', 'gg-beauty', 'GG Beauty', 'active');
@@ -490,8 +118,8 @@ test('PostgreSQL 17 database role separation foundation (053-055) enforces least
       INSERT INTO staff (id, shop_id, staff_code, name) VALUES ('${ID.staff}', '${ID.shop}', 'ST-01', 'Stylist Alice');
       INSERT INTO service_categories (id, shop_id, canonical_name, icon_key) VALUES ('${ID.category}', '${ID.shop}', 'Hair', 'scissors');
       INSERT INTO services (id, shop_id, category_id, name, duration_minutes, price) VALUES ('${ID.service}', '${ID.shop}', '${ID.category}', 'Haircut', 45, 50.00);
-      INSERT INTO shop_customer_settings (shop_id, member_code_prefix, member_code_width) VALUES ('${ID.shop}', 'GG-', 6);
-      INSERT INTO shop_member_code_counters (shop_id, next_value) VALUES ('${ID.shop}', 1);
+      UPDATE shop_customer_settings SET member_code_prefix='GG-' WHERE shop_id='${ID.shop}';
+
 
       -- Existing owner account for owner login test
       INSERT INTO owner_accounts (id, login_identifier, login_identifier_normalized, password_hash, display_name)
@@ -499,23 +127,16 @@ test('PostgreSQL 17 database role separation foundation (053-055) enforces least
       INSERT INTO owner_shop_memberships (owner_account_id, shop_id, role) VALUES ('${ID.owner}', '${ID.shop}', 'owner');
     `);
 
+    await admin.query('UPDATE owner_accounts SET password_hash=$1 WHERE id=$2',[bcrypt.hashSync('test-password-123!',10),ID.owner]);
+
     // 2. Execute 053 Preflight
     await admin.query(migration('053_database_role_preflight_readonly.sql'));
 
-    // 3. Test 054 Atomic Rollback on failure
-    await assert.rejects(
-      admin.query(`
-        DO $$
-        BEGIN
-          CREATE ROLE test_injected_role;
-          RAISE EXCEPTION 'simulated failure in 054 migration step';
-        END $$;
-      `),
-      err => err.message.includes('simulated failure in 054')
-    );
-    // Verify test_injected_role does not exist
-    const injectedRoleCheck = await admin.query("SELECT 1 FROM pg_roles WHERE rolname = 'test_injected_role'");
-    assert.equal(injectedRoleCheck.rows.length, 0);
+    // Inject failure at the end of the real 054, after every role/ACL/trigger change.
+    const snapshot = await beforeObjects();
+    await assert.rejects(admin.query(migration('054_database_role_acl_foundation.sql').replace(/COMMIT;\s*$/, () => "DO $$ BEGIN RAISE EXCEPTION 'injected final failure'; END $$; COMMIT;")), /injected final failure/);
+    await admin.query('ROLLBACK');
+    assert.deepEqual(await beforeObjects(), snapshot);
 
     // 4. Execute 054 ACL Foundation
     await admin.query(migration('054_database_role_acl_foundation.sql'));
@@ -575,13 +196,25 @@ test('PostgreSQL 17 database role separation foundation (053-055) enforces least
 
     // Create session
     const sessionRes = await runtimeClient.query(
-      `INSERT INTO owner_sessions (owner_account_id, token_hash, expires_at)
-       VALUES ($1, 'dummy-owner-session-hash-1', NOW() + INTERVAL '1 day')
+      `INSERT INTO owner_sessions (owner_account_id, membership_id, shop_id, session_version, token_hash, expires_at)
+       SELECT $1, id, shop_id, 1, repeat('a',64), NOW() + INTERVAL '1 day' FROM owner_shop_memberships WHERE owner_account_id=$1
        RETURNING id`,
       [ID.owner]
     );
     assert.ok(sessionRes.rows[0].id);
     await runtimeClient.query('COMMIT');
+
+    runtimePool = new Pool({connectionString:runtimeUrl,ssl:{rejectUnauthorized:false}});
+    const auth = createOwnerAuth({pool:runtimePool,bcrypt,crypto,isSameOriginRequest:()=>true,safeErrorCode:e=>e.code});
+    const loginResponse=response();
+    await auth.login({body:{loginIdentifier:'owner@gg.com',password:'test-password-123!',shopSlug:'gg-beauty'},headers:{}},loginResponse);
+    assert.equal(loginResponse.code,200); assert.equal(loginResponse.body.success,true);
+    const cookie=loginResponse.headers['Set-Cookie'].split(';')[0];
+    const authenticated={headers:{cookie}}; let authorized=false;
+    await auth.requireOwnerAuth(authenticated,response(),()=>{authorized=true;});
+    assert.equal(authorized,true);
+    const meResponse=response(); await auth.me(authenticated,meResponse); assert.equal(meResponse.body.success,true);
+    const logoutResponse=response(); await auth.logout(authenticated,logoutResponse); assert.equal(logoutResponse.body.success,true);
 
     // (B) Translation two real upserts (service_translations and service_category_translations)
     // 1. service_translations INSERT
@@ -636,15 +269,16 @@ test('PostgreSQL 17 database role separation foundation (053-055) enforces least
     assert.equal(newCustomer.member_code, 'GG-000001');
 
     // (D) Appointment and Multi-Service Items Creation
+    await runtimeClient.query('BEGIN');
     await runtimeClient.query(
-      `INSERT INTO appointments (id, shop_id, location_id, staff_id, customer_id, booker_customer_id, recipient_customer_id, start_at, end_at, status)
-       VALUES ($1, $2, $3, $4, $5, $5, $5, '2030-01-01 10:00:00+08', '2030-01-01 11:00:00+08', 'confirmed')`,
-      [ID.appointment, ID.shop, ID.location, ID.staff, newCustomer.id]
+      `INSERT INTO appointments (id, shop_id, location_id, staff_id, customer_id, booker_customer_id, recipient_customer_id, service_id, start_at, end_at, status)
+       VALUES ($1, $2, $3, $4, $5, $5, $5, $6, '2030-01-01 10:00:00+08', '2030-01-01 11:00:00+08', 'confirmed')`,
+      [ID.appointment, ID.shop, ID.location, ID.staff, newCustomer.id, ID.service]
     );
 
     await runtimeClient.query(
-      `INSERT INTO appointment_items (id, shop_id, location_id, appointment_id, sequence_no, service_id, service_name_snapshot, price_snapshot, start_at, end_at)
-       VALUES ($1, $2, $3, $4, 1, $5, 'Haircut', 50.00, '2030-01-01 10:00:00+08', '2030-01-01 11:00:00+08')`,
+      `INSERT INTO appointment_items (id, shop_id, location_id, appointment_id, sequence_no, service_id, service_name_snapshot, price_snapshot, duration_minutes_snapshot, snapshot_source, status, start_at, end_at)
+       VALUES ($1, $2, $3, $4, 1, $5, 'Haircut', 50.00, 60, 'booking', 'confirmed', '2030-01-01 10:00:00+08', '2030-01-01 11:00:00+08')`,
       [ID.item, ID.shop, ID.location, ID.appointment, ID.service]
     );
 
@@ -654,13 +288,19 @@ test('PostgreSQL 17 database role separation foundation (053-055) enforces least
       [ID.assignment, ID.shop, ID.location, ID.item, ID.staff]
     );
 
+    await runtimeClient.query('COMMIT');
+
     // (E) Appointment Assignment Trigger Time Sync
+    await runtimeClient.query('BEGIN');
+    await runtimeClient.query(
+      `UPDATE appointments SET start_at='2030-01-01 10:15:00+08', end_at='2030-01-01 11:15:00+08' WHERE id=$1`, [ID.appointment]);
     await runtimeClient.query(
       `UPDATE appointment_items
        SET start_at = '2030-01-01 10:15:00+08', end_at = '2030-01-01 11:15:00+08', updated_at = NOW()
        WHERE id = $1`,
       [ID.item]
     );
+    await runtimeClient.query('COMMIT');
     const syncedAssignment = (await runtimeClient.query(
       `SELECT start_at, end_at FROM appointment_item_staff_assignments WHERE id = $1`,
       [ID.assignment]
@@ -790,6 +430,25 @@ test('PostgreSQL 17 database role separation foundation (053-055) enforces least
     assert.equal(moveCteResult.rows.length, 1);
     assert.equal(moveCteResult.rows[0].appointment_id, ID.appointment);
 
+    // Execute the production move helper against the original 014 trigger chain.
+    await runtimeClient.query('BEGIN');
+    const actualMove = await moveAppointmentStructurePrecisely(runtimeClient, {
+      appointment: {
+        id: ID.appointment,
+        shop_id: ID.shop,
+        location_id: ID.location,
+        staff_id: ID.staff,
+        start_at: new Date('2030-01-01T06:00:00.000Z'),
+        end_at: new Date('2030-01-01T07:00:00.000Z')
+      },
+      newStartAt: '2030-01-01 15:00:00+08',
+      expectedItemCount: 1,
+      expectedAssignmentCount: 1,
+      actorStaffId: ID.staff
+    });
+    await runtimeClient.query('COMMIT');
+    assert.equal(actualMove.id, ID.appointment);
+
     // (G) Time history INSERT RETURNING direct verification
     const timeHistoryReturning = await runtimeClient.query(
       `INSERT INTO appointment_time_change_history (
@@ -798,7 +457,7 @@ test('PostgreSQL 17 database role separation foundation (053-055) enforces least
        ) VALUES (
          $1, $2, $3, $4, 'system', NULL,
          '2030-01-01 14:00:00+08', '2030-01-01 15:00:00+08',
-         '2030-01-01 15:00:00+08', '2030-01-01 16:00:00+08', 'test_source'
+         '2030-01-01 15:00:00+08', '2030-01-01 16:00:00+08', 'staff_time_picker'
        ) RETURNING id, appointment_id, created_at`,
       [ID.shop, ID.location, ID.appointment, ID.staff]
     );
@@ -817,29 +476,15 @@ test('PostgreSQL 17 database role separation foundation (053-055) enforces least
     );
     assert.equal(lockTxResult.rows.length, 0);
 
-    await runtimeClient.query(
-      `INSERT INTO checkout_transactions (id, shop_id, appointment_id, customer_id, currency_code, quote_total_minor, actual_total_minor, final_due_minor, idempotency_key)
-       VALUES ($1, $2, $3, $4, 'SGD', 5000, 5000, 5000, 'test-key')`,
-      [ID.checkout, ID.shop, ID.appointment, newCustomer.id]
-    );
-
-    await runtimeClient.query(
-      `INSERT INTO checkout_line_items (shop_id, checkout_id, appointment_item_id, line_type, description_snapshot, quote_price_minor, actual_price_minor, final_value_minor)
-       VALUES ($1, $2, $3, 'service', 'Haircut', 5000, 5000, 5000)`,
-      [ID.shop, ID.checkout, ID.item]
-    );
-
-    await runtimeClient.query(
-      `INSERT INTO checkout_payments (shop_id, checkout_id, payment_method, value_kind, amount_minor)
-       VALUES ($1, $2, 'cash', 'exact', 5000)`,
-      [ID.shop, ID.checkout]
-    );
-
-    await runtimeClient.query(
-      `INSERT INTO checkout_financial_audit (shop_id, checkout_id, appointment_id, event_type, after_snapshot, source, operator_type)
-       VALUES ($1, $2, $3, 'checkout_created', '{"total": 5000}', 'test', 'owner')`,
-      [ID.shop, ID.checkout, ID.appointment]
-    );
+    // Run the complete actual checkout handler, then its idempotent path.
+    const checkout=createCheckoutPos({pool:runtimePool});
+    const checkoutRequest={params:{appointmentId:ID.appointment},ownerAuth:{shopId:ID.shop,ownerAccountId:ID.owner},body:{idempotencyKey:'actual_checkout_key_123',payments:[{method:'cash',valueKind:'cash_collected',amountMinor:5000,cashCollectedMinor:5000}]}};
+    const checkoutResponse=response(); await checkout.create(checkoutRequest,checkoutResponse);
+    assert.equal(checkoutResponse.code,201,JSON.stringify(checkoutResponse.body));
+    assert.equal(checkoutResponse.body.success,true); ID.checkout=checkoutResponse.body.data.id;
+    const retry=response(); await checkout.create(checkoutRequest,retry);
+    assert.equal(retry.code,200); assert.equal(retry.body.idempotent,true);
+    assert.equal((await admin.query('SELECT count(*) FROM checkout_financial_audit WHERE checkout_id=$1',[ID.checkout])).rows[0].count,'1');
 
     // (I) Negative Security Checks for gg_app_runtime
     // 1. DDL rejected
@@ -931,17 +576,20 @@ test('PostgreSQL 17 database role separation foundation (053-055) enforces least
     );
     await assert.rejects(
       runtimeClient.query(
-        `INSERT INTO checkout_staff_attributions (shop_id, checkout_id, staff_id, role)
-         VALUES ('${ID.shop}', '${ID.checkout}', '${ID.staff}', 'stylist')`
+        `INSERT INTO checkout_staff_attributions
+           (shop_id, checkout_line_item_id, staff_id, attribution_role)
+         SELECT '${ID.shop}', id, '${ID.staff}', 'primary'
+         FROM checkout_line_items WHERE checkout_id = '${ID.checkout}' LIMIT 1`
       ),
       err => err.code === '42501'
     );
 
-    // 7. TEMP table creation rejected
-    await assert.rejects(
-      runtimeClient.query('CREATE TEMP TABLE evil_temp (x int)'),
-      err => err.code === '42501'
-    );
+    // EXPAND known exception: TEMP is inherited only from PUBLIC. Contract is separately authorized.
+    for (const role of ['gg_app_runtime','gg_app_onboarding']) {
+      assert.equal((await admin.query(`SELECT count(*) FROM pg_database d, LATERAL aclexplode(coalesce(d.datacl,acldefault('d',d.datdba))) a WHERE d.datname=current_database() AND a.grantee=(SELECT oid FROM pg_roles WHERE rolname=$1) AND a.privilege_type='TEMPORARY'`,[role])).rows[0].count,'0');
+    }
+    await runtimeClient.query('CREATE TEMP TABLE expand_temp (x int)');
+    await runtimeClient.query('DROP TABLE expand_temp');
 
     // 8. Privilege escalation / SET ROLE rejected
     await assert.rejects(
@@ -974,7 +622,7 @@ test('PostgreSQL 17 database role separation foundation (053-055) enforces least
 
     const createdOwner = (await bootstrapClient.query(
       `INSERT INTO public.owner_accounts (login_identifier, login_identifier_normalized, password_hash, display_name)
-       VALUES ('newowner@gg.com', 'newowner@gg.com', 'test-hash', 'Salon New Owner')
+       VALUES ('newowner@gg.com', 'newowner@gg.com', repeat('a', 60), 'Salon New Owner')
        RETURNING id`
     )).rows[0];
 
@@ -1050,6 +698,9 @@ else:
     );
     assert.equal(cliOwnerCheck.rows.length, 1);
 
+    await bootstrapClient.query('CREATE TEMP TABLE expand_onboarding_temp(x int)');
+    await bootstrapClient.query('DROP TABLE expand_onboarding_temp');
+
     // (B) Negative security checks for gg_app_onboarding
     // Trigger blocks actual UPDATE on shops
     await assert.rejects(
@@ -1097,13 +748,14 @@ else:
 
     // (C) Migration Owner Lock Guard Bypass Verification
     // The lock guard trigger does NOT block gg_migration_owner or admin updates
-    await admin.query('SET ROLE gg_migration_owner;');
+    await admin.query('RESET ROLE; SET ROLE expand_admin;');
     await admin.query(`UPDATE shops SET name = 'GG Beauty Owner Modified' WHERE id = '${ID.shop}'`);
     const modifiedShop = (await admin.query(`SELECT name FROM shops WHERE id = '${ID.shop}'`)).rows[0];
     assert.equal(modifiedShop.name, 'GG Beauty Owner Modified');
     await admin.query('RESET ROLE;');
 
   } finally {
+    if (runtimePool) await runtimePool.end();
     if (runtimeClient) await runtimeClient.end().catch(() => {});
     if (bootstrapClient) await bootstrapClient.end().catch(() => {});
     if (admin) await admin.end().catch(() => {});

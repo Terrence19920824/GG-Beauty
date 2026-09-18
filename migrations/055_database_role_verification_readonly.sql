@@ -10,6 +10,8 @@ SET LOCAL statement_timeout = '30s';
 DO $$
 DECLARE
   v_count integer;
+  v_baseline jsonb;
+  v_record record;
   v_role_rec record;
   v_table_name text;
   v_func_sig text;
@@ -120,37 +122,28 @@ BEGIN
     RAISE EXCEPTION 'verification failure: runtime/onboarding roles own functions in pg_proc';
   END IF;
 
-  -- 4. Verify baseline table ownership: all 35 tables must be owned by gg_migration_owner
-  FOREACH v_table_name IN ARRAY v_expected_tables LOOP
-    SELECT count(*) INTO v_count
-    FROM pg_class c
-    JOIN pg_namespace n ON n.oid = c.relnamespace
-    JOIN pg_roles r ON r.oid = c.relowner
-    WHERE n.nspname = 'public'
-      AND c.relname = v_table_name
-      AND r.rolname = 'gg_migration_owner';
-
-    IF v_count <> 1 THEN
-      RAISE EXCEPTION 'verification failure: baseline table public.% is not owned by gg_migration_owner', v_table_name;
+  -- Expand must preserve existing owners and baseline function ACLs.
+  v_baseline := obj_description('public.reject_locked_lookup_actual_update()'::regprocedure,'pg_proc')::jsonb;
+  IF v_baseline IS NULL OR v_baseline->>'public_temp'<>'true' THEN
+    RAISE EXCEPTION 'Expand baseline manifest missing';
+  END IF;
+  FOR v_record IN SELECT key,value FROM jsonb_each(v_baseline->'tables') LOOP
+    IF NOT EXISTS (SELECT 1 FROM pg_class WHERE oid=to_regclass('public.'||quote_ident(v_record.key)) AND relowner=(v_record.value #>> '{}')::oid) THEN
+      RAISE EXCEPTION 'Expand baseline owner changed: %',v_record.key;
     END IF;
   END LOOP;
-
-  -- Verify repository function ownership: all whitelisted functions owned by gg_migration_owner
-  FOREACH v_func_sig IN ARRAY v_expected_functions LOOP
-    IF to_regprocedure('public.' || v_func_sig) IS NOT NULL THEN
-      SELECT count(*) INTO v_count
-      FROM pg_proc p
-      JOIN pg_namespace n ON n.oid = p.pronamespace
-      JOIN pg_roles r ON r.oid = p.proowner
-      WHERE n.nspname = 'public'
-        AND p.oid = ('public.' || v_func_sig)::regprocedure
-        AND r.rolname = 'gg_migration_owner';
-
-      IF v_count <> 1 THEN
-        RAISE EXCEPTION 'verification failure: function public.% is not owned by gg_migration_owner', v_func_sig;
-      END IF;
+  FOR v_record IN SELECT key,value FROM jsonb_each(v_baseline->'functions') LOOP
+    IF NOT EXISTS (SELECT 1 FROM pg_proc WHERE oid=v_record.key::oid
+      AND proowner=(v_record.value->>'owner')::oid
+      AND coalesce(proacl,acldefault('f',proowner))::text IS NOT DISTINCT FROM v_record.value->>'acl') THEN
+      RAISE EXCEPTION 'Expand baseline function owner/ACL changed: %',v_record.key;
     END IF;
   END LOOP;
+  IF NOT EXISTS (SELECT 1 FROM pg_proc WHERE oid='public.reject_locked_lookup_actual_update()'::regprocedure
+    AND proowner=(SELECT oid FROM pg_roles WHERE rolname='gg_migration_owner') AND NOT prosecdef
+    AND proconfig @> ARRAY['search_path=pg_catalog, public']) THEN
+    RAISE EXCEPTION 'guard function owner/config mismatch';
+  END IF;
 
   -- 5. Verify function ACL: guard function has NO execute privilege for runtime, onboarding, or public
   IF has_function_privilege('gg_app_runtime', 'public.reject_locked_lookup_actual_update()', 'EXECUTE') THEN
@@ -177,12 +170,22 @@ BEGIN
     RAISE EXCEPTION 'verification failure: PUBLIC possesses CREATE on public schema';
   END IF;
 
-  -- 7. Verify database TEMP privilege: strictly revoked
-  IF has_database_privilege('gg_app_runtime', current_database(), 'TEMP') THEN
-    RAISE EXCEPTION 'verification failure: gg_app_runtime possesses TEMP privilege on database';
+  -- EXPAND known exception: TEMP only through unchanged PUBLIC baseline.
+  IF NOT EXISTS (SELECT 1 FROM pg_database d,
+    LATERAL aclexplode(coalesce(d.datacl,acldefault('d',d.datdba))) a
+    WHERE d.datname=current_database() AND a.grantee=0 AND a.privilege_type='TEMPORARY') THEN
+    RAISE EXCEPTION 'PUBLIC TEMP baseline changed';
   END IF;
-  IF has_database_privilege('gg_app_onboarding', current_database(), 'TEMP') THEN
-    RAISE EXCEPTION 'verification failure: gg_app_onboarding possesses TEMP privilege on database';
+  IF EXISTS (SELECT 1 FROM pg_database d,
+    LATERAL aclexplode(coalesce(d.datacl,acldefault('d',d.datdba))) a
+    JOIN pg_roles r ON r.oid=a.grantee
+    WHERE d.datname=current_database() AND a.privilege_type='TEMPORARY'
+      AND r.rolname IN ('gg_app_runtime','gg_app_onboarding')) THEN
+    RAISE EXCEPTION 'application role has direct TEMP grant';
+  END IF;
+  IF NOT has_database_privilege('gg_app_runtime',current_database(),'TEMP')
+     OR NOT has_database_privilege('gg_app_onboarding',current_database(),'TEMP') THEN
+    RAISE EXCEPTION 'PUBLIC inherited TEMP missing';
   END IF;
 
   -- 8. Verify ZERO DELETE and ZERO TRUNCATE privilege across all tables for gg_app_runtime
@@ -307,21 +310,47 @@ BEGIN
     SELECT count(*) INTO v_count
     FROM pg_trigger
     WHERE tgname = v_trigger_name
-      AND tgenabled = 'O';
+      AND tgenabled = 'O'
+      AND tgfoid='public.reject_locked_lookup_actual_update()'::regprocedure
+      AND tgrelid=to_regclass('public.' || CASE v_trigger_name
+        WHEN 'reject_shops_actual_update' THEN 'shops'
+        WHEN 'reject_locations_actual_update' THEN 'locations'
+        WHEN 'reject_checkout_transactions_actual_update' THEN 'checkout_transactions'
+        WHEN 'reject_owner_shop_memberships_actual_update' THEN 'owner_shop_memberships'
+        WHEN 'reject_owner_accounts_actual_update' THEN 'owner_accounts' END)
+      AND tgtype=19 AND NOT tgisinternal;
 
     IF v_count <> 1 THEN
       RAISE EXCEPTION 'verification failure: trigger % is missing or disabled', v_trigger_name;
     END IF;
   END LOOP;
 
-  -- 14. Verify default privileges established for gg_migration_owner
-  SELECT count(*) INTO v_count
-  FROM pg_default_acl d
-  JOIN pg_roles r ON r.oid = d.defaclrole
-  WHERE r.rolname = 'gg_migration_owner';
-
-  IF v_count = 0 THEN
-    RAISE EXCEPTION 'verification failure: default privileges missing for gg_migration_owner';
+  -- Reject any table-wide UPDATE and account security-field UPDATE.
+  IF EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+    WHERE n.nspname='public' AND c.relkind IN ('r','p') AND
+    (has_table_privilege('gg_app_runtime',c.oid,'UPDATE') OR has_table_privilege('gg_app_onboarding',c.oid,'UPDATE'))) THEN
+    RAISE EXCEPTION 'table-wide UPDATE forbidden';
+  END IF;
+  FOREACH v_table_name IN ARRAY ARRAY['owner_accounts','staff_accounts'] LOOP
+    FOR v_record IN SELECT attname FROM pg_attribute WHERE attrelid=to_regclass('public.'||v_table_name)
+      AND attnum>0 AND NOT attisdropped AND attname NOT IN ('last_login_at','failed_login_attempts','locked_until','updated_at') LOOP
+      IF has_column_privilege('gg_app_runtime','public.'||v_table_name,v_record.attname,'UPDATE') THEN
+        RAISE EXCEPTION 'account security column UPDATE: %.%',v_table_name,v_record.attname;
+      END IF;
+    END LOOP;
+  END LOOP;
+  -- Check actual default ACL contents, globally and per schema. Owner rights only.
+  IF NOT EXISTS (SELECT 1 FROM pg_default_acl d
+      WHERE defaclrole=(SELECT oid FROM pg_roles WHERE rolname='gg_migration_owner')
+      AND defaclnamespace=0 AND defaclobjtype='f'
+      AND defaclacl=ARRAY[format('%s=X/%s','gg_migration_owner','gg_migration_owner')::aclitem]) THEN
+    RAISE EXCEPTION 'global function default ACL mismatch';
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_default_acl d,LATERAL aclexplode(d.defaclacl) a
+      WHERE d.defaclrole=(SELECT oid FROM pg_roles WHERE rolname='gg_migration_owner')
+      AND d.defaclobjtype IN ('r','f','S')
+      AND a.grantee<>d.defaclrole) THEN
+    RAISE EXCEPTION 'excessive default ACL entry';
   END IF;
 
   RAISE NOTICE 'database role separation verification: ALL checks passed cleanly';

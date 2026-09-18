@@ -85,6 +85,12 @@ BEGIN
     END IF;
   END LOOP;
 
+  IF NOT EXISTS (SELECT 1 FROM pg_database d,
+    LATERAL aclexplode(coalesce(d.datacl,acldefault('d',d.datdba))) a
+    WHERE d.datname=current_database() AND a.grantee=0 AND a.privilege_type='TEMPORARY') THEN
+    RAISE EXCEPTION 'Expand PUBLIC TEMP baseline absent';
+  END IF;
+  RAISE NOTICE 'EXPAND known exception: PUBLIC TEMP baseline=true; Contract requires separate authorization';
   RAISE NOTICE 'database role separation preflight: baseline verified (35 tables present, role admin authority confirmed)';
 END $$;
 

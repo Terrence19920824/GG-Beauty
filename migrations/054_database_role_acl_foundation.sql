@@ -7,113 +7,70 @@ BEGIN;
 SET LOCAL lock_timeout = '5s';
 SET LOCAL statement_timeout = '30s';
 
--- 1. Create unprivileged roles without hardcoded passwords
+-- Expand only: no existing ownership or PUBLIC/legacy ACL changes.
+-- Contract requires separate authorization after Render switches successfully.
 DO $$
+DECLARE v_target record;
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'gg_migration_owner') THEN
+  FOR v_target IN SELECT * FROM pg_roles WHERE rolname IN
+    ('gg_migration_owner','gg_app_runtime','gg_app_onboarding') LOOP
+    IF v_target.rolsuper OR v_target.rolcreatedb OR v_target.rolcreaterole OR v_target.rolbypassrls
+       OR v_target.rolreplication OR v_target.rolinherit THEN
+      RAISE EXCEPTION 'contaminated target role %', v_target.rolname;
+    END IF;
+  END LOOP;
+  -- Reject every outbound membership, including indirect SET ROLE chains.
+  IF EXISTS (SELECT 1 FROM pg_auth_members m JOIN pg_roles r ON r.oid=m.member
+      WHERE r.rolname IN ('gg_migration_owner','gg_app_runtime','gg_app_onboarding')) THEN
+    RAISE EXCEPTION 'target role membership contamination';
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_class c JOIN pg_roles r ON r.oid=c.relowner
+      WHERE r.rolname IN ('gg_app_runtime','gg_app_onboarding'))
+     OR EXISTS (SELECT 1 FROM pg_proc p JOIN pg_roles r ON r.oid=p.proowner
+      WHERE r.rolname IN ('gg_app_runtime','gg_app_onboarding')) THEN
+    RAISE EXCEPTION 'application role ownership contamination';
+  END IF;
+  IF has_schema_privilege('public','public','CREATE') THEN
+    RAISE EXCEPTION 'PUBLIC CREATE baseline unsafe; Contract authorization required';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_database d,
+    LATERAL aclexplode(coalesce(d.datacl,acldefault('d',d.datdba))) a
+    WHERE d.datname=current_database() AND a.grantee=0 AND a.privilege_type='TEMPORARY') THEN
+    RAISE EXCEPTION 'PUBLIC TEMP baseline must be present for this Expand policy';
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_database d,
+    LATERAL aclexplode(coalesce(d.datacl,acldefault('d',d.datdba))) a
+    JOIN pg_roles r ON r.oid=a.grantee
+    WHERE d.datname=current_database() AND a.privilege_type='TEMPORARY'
+      AND r.rolname IN ('gg_app_runtime','gg_app_onboarding')) THEN
+    RAISE EXCEPTION 'direct TEMP contamination';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='gg_migration_owner') THEN
     CREATE ROLE gg_migration_owner WITH NOLOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOREPLICATION;
-  ELSE
-    ALTER ROLE gg_migration_owner WITH NOLOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOREPLICATION;
   END IF;
-
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'gg_app_runtime') THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='gg_app_runtime') THEN
     CREATE ROLE gg_app_runtime WITH LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOREPLICATION;
-  ELSE
-    ALTER ROLE gg_app_runtime WITH LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOREPLICATION;
   END IF;
-
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'gg_app_onboarding') THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='gg_app_onboarding') THEN
     CREATE ROLE gg_app_onboarding WITH LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOREPLICATION;
-  ELSE
-    ALTER ROLE gg_app_onboarding WITH LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS NOREPLICATION;
   END IF;
 END $$;
 
--- 2. Allow administrative sessions to SET ROLE to gg_migration_owner
--- Runtime and onboarding roles are strictly excluded from role membership
-DO $$
-BEGIN
-  EXECUTE format('GRANT gg_migration_owner TO %I;', current_user);
+-- Transaction-local baseline copied into the newly introduced guard's comment.
+SELECT set_config('gg.expand_baseline', jsonb_build_object(
+  'public_temp',true,
+  'tables',(SELECT jsonb_object_agg(c.relname,c.relowner) FROM pg_class c WHERE c.relnamespace='public'::regnamespace AND c.relkind='r'),
+  'functions',(SELECT jsonb_object_agg(p.oid::text,jsonb_build_object('owner',p.proowner,'acl',coalesce(p.proacl,acldefault('f',p.proowner))::text)) FROM pg_proc p WHERE p.pronamespace='public'::regnamespace AND p.proname<>'reject_locked_lookup_actual_update')
+)::text,true);
+
+-- No ownership transfer. Grant membership before SET ROLE/default ACL operations.
+DO $$ BEGIN
+  EXECUTE format('GRANT gg_migration_owner TO %I',current_user);
 END $$;
-
--- 3. Reassign ownership of repository baseline tables and functions to gg_migration_owner
--- Strictly uses static whitelists: never loops over pg_class or pg_proc wildcards
-DO $$
-DECLARE
-  v_table_name text;
-  v_func_sig text;
-  v_expected_tables text[] := ARRAY[
-    'shops',
-    'locations',
-    'staff',
-    'staff_working_hours',
-    'appointments',
-    'customers',
-    'services',
-    'staff_services',
-    'staff_accounts',
-    'staff_location_assignments',
-    'staff_sessions',
-    'staff_permissions',
-    'staff_location_working_hours',
-    'staff_schedule_overrides',
-    'appointment_time_change_history',
-    'appointment_items',
-    'appointment_item_staff_assignments',
-    'owner_accounts',
-    'owner_shop_memberships',
-    'owner_sessions',
-    'service_translations',
-    'service_categories',
-    'service_category_translations',
-    'shop_customer_settings',
-    'shop_member_code_counters',
-    'customer_phone_identities',
-    'customer_otp_challenges',
-    'customer_sessions',
-    'customer_identity_audit',
-    'appointment_status_history',
-    'checkout_transactions',
-    'checkout_line_items',
-    'checkout_payments',
-    'checkout_staff_attributions',
-    'checkout_financial_audit'
-  ];
-  v_expected_functions text[] := ARRAY[
-    'assignment_collision_project()',
-    'assignment_collision_sync_item_time()',
-    'assignment_collision_sync_parent_state()',
-    'assignment_collision_consistency_check()',
-    'sync_appointment_customer_parties()',
-    'provision_shop_customer_identity()',
-    'assign_customer_member_code()',
-    'reject_appointment_status_history_mutation()',
-    'reject_checkout_financial_audit_mutation()'
-  ];
-BEGIN
-  FOREACH v_table_name IN ARRAY v_expected_tables LOOP
-    IF to_regclass('public.' || quote_ident(v_table_name)) IS NOT NULL THEN
-      EXECUTE format('ALTER TABLE public.%I OWNER TO gg_migration_owner;', v_table_name);
-    END IF;
-  END LOOP;
-
-  FOREACH v_func_sig IN ARRAY v_expected_functions LOOP
-    IF to_regprocedure('public.' || v_func_sig) IS NOT NULL THEN
-      EXECUTE format('ALTER FUNCTION public.%s OWNER TO gg_migration_owner;', v_func_sig);
-    END IF;
-  END LOOP;
-END $$;
-
--- 4. Schema and Database permission boundaries
-REVOKE ALL ON SCHEMA public FROM PUBLIC, gg_app_runtime, gg_app_onboarding;
-REVOKE CREATE ON SCHEMA public FROM PUBLIC, gg_app_runtime, gg_app_onboarding;
+REVOKE ALL ON SCHEMA public FROM gg_app_runtime, gg_app_onboarding;
 GRANT USAGE ON SCHEMA public TO gg_app_runtime, gg_app_onboarding;
-GRANT ALL ON SCHEMA public TO gg_migration_owner;
-
-DO $$
-BEGIN
-  EXECUTE format('REVOKE TEMP ON DATABASE %I FROM PUBLIC, gg_app_runtime, gg_app_onboarding;', current_database());
-END $$;
+-- New owner needs CREATE before creation of the new guard under SET ROLE.
+GRANT USAGE, CREATE ON SCHEMA public TO gg_migration_owner;
 
 -- 5. Revoke privileges on repository tables and functions whitelist
 -- Strictly targets known objects without modifying extension ACLs
@@ -121,6 +78,7 @@ DO $$
 DECLARE
   v_table_name text;
   v_func_sig text;
+  v_columns text;
   v_expected_tables text[] := ARRAY[
     'shops',
     'locations',
@@ -172,13 +130,16 @@ DECLARE
 BEGIN
   FOREACH v_table_name IN ARRAY v_expected_tables LOOP
     IF to_regclass('public.' || quote_ident(v_table_name)) IS NOT NULL THEN
-      EXECUTE format('REVOKE ALL ON TABLE public.%I FROM PUBLIC, gg_app_runtime, gg_app_onboarding;', v_table_name);
+      EXECUTE format('REVOKE ALL ON TABLE public.%I FROM gg_app_runtime, gg_app_onboarding;', v_table_name);
+      SELECT string_agg(quote_ident(attname), ',') INTO v_columns FROM pg_attribute
+        WHERE attrelid=to_regclass('public.'||quote_ident(v_table_name)) AND attnum>0 AND NOT attisdropped;
+      EXECUTE format('REVOKE ALL (%s) ON TABLE public.%I FROM gg_app_runtime, gg_app_onboarding', v_columns, v_table_name);
     END IF;
   END LOOP;
 
   FOREACH v_func_sig IN ARRAY v_expected_functions LOOP
     IF to_regprocedure('public.' || v_func_sig) IS NOT NULL THEN
-      EXECUTE format('REVOKE ALL ON FUNCTION public.%s FROM PUBLIC, gg_app_runtime, gg_app_onboarding;', v_func_sig);
+      EXECUTE format('REVOKE ALL ON FUNCTION public.%s FROM gg_app_runtime, gg_app_onboarding;', v_func_sig);
     END IF;
   END LOOP;
 END $$;
@@ -201,7 +162,7 @@ GRANT SELECT, INSERT ON
 TO gg_app_runtime;
 
 -- (c) SELECT, INSERT, UPDATE: operational core domain entities
-GRANT SELECT, INSERT, UPDATE ON
+GRANT SELECT, INSERT ON
   public.staff,
   public.staff_location_assignments,
   public.staff_sessions,
@@ -220,11 +181,30 @@ GRANT SELECT, INSERT, UPDATE ON
 TO gg_app_runtime;
 
 -- (d) SELECT, UPDATE only: accounts and counters (NO INSERT)
-GRANT SELECT, UPDATE ON
+GRANT SELECT ON
   public.staff_accounts,
   public.owner_accounts,
   public.shop_member_code_counters
 TO gg_app_runtime;
+
+GRANT UPDATE (name, phone, email, staff_code, bookable, is_active, updated_at) ON public.staff TO gg_app_runtime;
+GRANT UPDATE (is_active, is_primary, updated_at) ON public.staff_location_assignments TO gg_app_runtime;
+GRANT UPDATE (revoked_at, revoke_reason) ON public.staff_sessions TO gg_app_runtime;
+GRANT UPDATE (start_time, end_time, is_active, effective_from, effective_to, updated_at) ON public.staff_location_working_hours TO gg_app_runtime;
+GRANT UPDATE (schedule_date, override_type, start_time, end_time, reason, approval_status, is_active, updated_at) ON public.staff_schedule_overrides TO gg_app_runtime;
+GRANT UPDATE (is_active) ON public.staff_services TO gg_app_runtime;
+GRANT UPDATE (start_at, end_at, status, cancelled_at, service_completed_at, updated_at) ON public.appointments TO gg_app_runtime;
+GRANT UPDATE (start_at, end_at, status, updated_at) ON public.appointment_items TO gg_app_runtime;
+GRANT UPDATE (name, email, date_of_birth, gender, phone, phone_normalized, phone_verified_at, identity_status) ON public.customers TO gg_app_runtime;
+GRANT UPDATE (is_primary, ended_at) ON public.customer_phone_identities TO gg_app_runtime;
+GRANT UPDATE (provider_message_id, consumed_at, attempts) ON public.customer_otp_challenges TO gg_app_runtime;
+GRANT UPDATE (revoked_at) ON public.customer_sessions TO gg_app_runtime;
+GRANT UPDATE (category, category_id, name, description, price, price_is_from, duration_minutes, bookable, is_active, sort_order, updated_at) ON public.services TO gg_app_runtime;
+GRANT UPDATE (canonical_name, icon_key, sort_order, is_active, updated_at) ON public.service_categories TO gg_app_runtime;
+GRANT UPDATE (revoked_at, revoke_reason) ON public.owner_sessions TO gg_app_runtime;
+GRANT UPDATE (last_login_at, failed_login_attempts, locked_until, updated_at) ON public.staff_accounts TO gg_app_runtime;
+GRANT UPDATE (last_login_at, failed_login_attempts, locked_until, updated_at) ON public.owner_accounts TO gg_app_runtime;
+GRANT UPDATE (next_value) ON public.shop_member_code_counters TO gg_app_runtime;
 
 -- (e) Immutable operational audit logs (appointment_time_change_history needs SELECT for INSERT RETURNING)
 GRANT SELECT, INSERT ON public.appointment_time_change_history TO gg_app_runtime;
@@ -257,6 +237,7 @@ GRANT SELECT, INSERT ON public.checkout_transactions TO gg_app_runtime;
 GRANT UPDATE (id) ON public.checkout_transactions TO gg_app_runtime;
 
 -- 7. Lock Guard Trigger: blocks actual mutation from runtime and onboarding roles
+SET ROLE gg_migration_owner;
 CREATE OR REPLACE FUNCTION public.reject_locked_lookup_actual_update()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -276,7 +257,10 @@ BEGIN
 END;
 $$;
 
-ALTER FUNCTION public.reject_locked_lookup_actual_update() OWNER TO gg_migration_owner;
+DO $$ BEGIN
+  EXECUTE format('COMMENT ON FUNCTION public.reject_locked_lookup_actual_update() IS %L',current_setting('gg.expand_baseline'));
+END $$;
+RESET ROLE;
 REVOKE ALL ON FUNCTION public.reject_locked_lookup_actual_update() FROM PUBLIC, gg_app_runtime, gg_app_onboarding;
 
 DROP TRIGGER IF EXISTS reject_shops_actual_update ON public.shops;
