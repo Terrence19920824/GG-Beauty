@@ -246,6 +246,11 @@
     <div><a id="memberEntry" class="member-entry" href="/member.html" data-i18n="membershipEntry">VIP / 我的会员</a></div>
   </div>
 
+  <div id="cartModuleRecovery" class="message error" hidden>
+    <div id="cartRecoveryMessage"></div>
+    <button id="cartRecoveryReloadBtn" type="button" class="customer-btn" style="margin-top:12px;min-height:44px;padding:10px 18px;width:auto;display:inline-block;"></button>
+  </div>
+
   <div id="categoryStep" class="card" hidden>
     <label data-i18n="chooseServiceCategory">选择服务分类</label>
     <div id="categoryGrid" class="category-grid"></div>
@@ -367,28 +372,93 @@
 <script src="/customer-shop-context.js"></script>
 <script src="/customer-theme.js"></script>
 <script src="/customer-category-flow.js"></script>
-<script src="/customer-multi-service-cart.js"></script>
+<script src="/customer-multi-service-cart.js?v=2.0.0"></script>
 <script src="/customer-booking-calendar.js"></script>
 <script>
 /* Legacy single-service behavior is preserved server-side. This UI sends the
    canonical multi-item request even when the cart contains one item. */
+const REQUIRED_CART_API_VERSION = '2.0.0';
+function isCartApiValid(api) {
+  return Boolean(
+    api &&
+    api.apiVersion === REQUIRED_CART_API_VERSION &&
+    typeof api.create === 'function' &&
+    typeof api.add === 'function' &&
+    typeof api.remove === 'function' &&
+    typeof api.updateStaff === 'function' &&
+    typeof api.totals === 'function' &&
+    typeof api.requestItems === 'function' &&
+    typeof api.hasService === 'function' &&
+    typeof api.reconcile === 'function' &&
+    typeof api.fingerprint === 'function'
+  );
+}
+
+const rawCartApi = globalThis.ggCustomerMultiServiceCart;
+const cartApiValid = isCartApiValid(rawCartApi);
+const cartApi = cartApiValid
+  ? rawCartApi
+  : {
+      create: () => [],
+      add: (c) => (Array.isArray(c) ? c : []),
+      remove: (c) => (Array.isArray(c) ? c : []),
+      updateStaff: (c) => (Array.isArray(c) ? c : []),
+      totals: () => ({ durationMinutes: 0, listedPrice: 0, priceIsFrom: false }),
+      requestItems: () => [],
+      hasService: () => false,
+      reconcile: (c) => (Array.isArray(c) ? c : []),
+      fingerprint: () => '',
+      apiVersion: '0.0.0'
+    };
+
+function showCartModuleRecovery() {
+  const recoveryEl = typeof document !== 'undefined' && document.getElementById ? document.getElementById('cartModuleRecovery') : null;
+  const msgEl = typeof document !== 'undefined' && document.getElementById ? document.getElementById('cartRecoveryMessage') : null;
+  const btnEl = typeof document !== 'undefined' && document.getElementById ? document.getElementById('cartRecoveryReloadBtn') : null;
+  const categoryStepEl = typeof document !== 'undefined' && document.getElementById ? document.getElementById('categoryStep') : null;
+  const bookingStepEl = typeof document !== 'undefined' && document.getElementById ? document.getElementById('bookingStep') : null;
+  const contactStepEl = typeof document !== 'undefined' && document.getElementById ? document.getElementById('contactStep') : null;
+  const submitBtnEl = typeof document !== 'undefined' && document.getElementById ? document.getElementById('submitBtn') : null;
+  if (categoryStepEl) categoryStepEl.hidden = true;
+  if (bookingStepEl) bookingStepEl.hidden = true;
+  if (contactStepEl) contactStepEl.hidden = true;
+  if (submitBtnEl) submitBtnEl.disabled = true;
+  if (recoveryEl) {
+    recoveryEl.hidden = false;
+    if (msgEl) msgEl.textContent = customerT('cartModuleOutdated');
+    if (btnEl) {
+      btnEl.textContent = customerT('reloadPage');
+      btnEl.onclick = () => {
+        btnEl.disabled = true;
+        if (typeof window !== 'undefined' && window.location) {
+          window.location.reload();
+        }
+      };
+    }
+  }
+}
+
 let selectedSlot = null;
 let availabilityIsEmpty = false;
 let availableCategories = [];
 let availableServices = [];
 let customerShopSlug = '';
 let selectedCategoryId = '';
-let cart = globalThis.ggCustomerMultiServiceCart.create();
+let cart = cartApi.create();
 let bookingFor = 'myself';
 let calendarMonth = '';
 let calendarAvailability = new Map();
+let servicesRequestId = 0;
 let availabilityRequestId = 0;
+let timesRequestId = 0;
+let staffRequestId = 0;
+let cartRenderGeneration = 0;
+let languageRequestId = 0;
 const staffByItem = new Map();
 const NO_PREFERENCE_VALUE = '__no_preference__';
 const localeApi = globalThis.ggI18n;
 const shopContextApi = globalThis.ggCustomerShopContext;
 const categoryFlowApi = globalThis.ggCustomerCategoryFlow;
-const cartApi = globalThis.ggCustomerMultiServiceCart;
 const calendarApi = globalThis.ggCustomerBookingCalendar;
 const customerT = key => localeApi.t(key, currentLocale);
 const COUNTRY_CODES = [
@@ -448,31 +518,64 @@ function renderBookingCalendar() {
 
 async function loadAvailableDates({ changed = false } = {}) {
   const requestId = ++availabilityRequestId;
+  const requestShop = customerShopSlug;
+  const requestMonth = calendarMonth || singaporeToday().slice(0, 7);
+  const requestCartFingerprint = typeof cartApi.fingerprint === 'function' ? cartApi.fingerprint(cart) : '';
+
   if (!cart.length) { calendarAvailability = new Map(); renderBookingCalendar(); return; }
-  const range = calendarApi.monthRange(calendarMonth || singaporeToday().slice(0, 7));
-  const response = await fetch('/api/booking/multi-service-available-dates', { method: 'POST', headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({ shopSlug: customerShopSlug, ...range, locale: currentLocale, items: cartApi.requestItems(cart) }) });
-  const result = await response.json();
-  if (requestId !== availabilityRequestId) return;
-  if (!response.ok || result.success === false) throw new Error(result.message || customerT('availabilityFailed'));
-  calendarAvailability = new Map((result.data || []).map(day => [day.date, day]));
-  const reconciledDate = calendarApi.reconcileSelectedDate({ selectedDate: dateInput.value,
-    monthValue: calendarMonth, availability: calendarAvailability });
-  if (dateInput.value && !reconciledDate) {
-    dateInput.value = reconciledDate; selectedSlot = null; renderSelectedDate();
-    timesBox.innerHTML = `<div>${customerT('chooseDate')}</div>`;
-    if (changed) { messageBox.className = 'message'; messageBox.textContent = customerT('availabilitySelectionCleared'); }
+  const range = calendarApi.monthRange(requestMonth);
+  try {
+    const response = await fetch('/api/booking/multi-service-available-dates', { method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ shopSlug: customerShopSlug, ...range, locale: currentLocale, items: cartApi.requestItems(cart) }) });
+    const result = await response.json();
+    if (
+      requestId !== availabilityRequestId ||
+      customerShopSlug !== requestShop ||
+      (calendarMonth || singaporeToday().slice(0, 7)) !== requestMonth ||
+      (typeof cartApi.fingerprint === 'function' ? cartApi.fingerprint(cart) : '') !== requestCartFingerprint ||
+      !cart.length
+    ) return;
+    if (!response.ok || result.success === false) throw new Error(customerT('availabilityFailed'));
+    calendarAvailability = new Map((result.data || []).map(day => [day.date, day]));
+    const reconciledDate = calendarApi.reconcileSelectedDate({ selectedDate: dateInput.value,
+      monthValue: calendarMonth, availability: calendarAvailability });
+    if (dateInput.value && !reconciledDate) {
+      dateInput.value = reconciledDate; selectedSlot = null; renderSelectedDate();
+      if (timesBox) timesBox.innerHTML = `<div>${customerT('chooseDate')}</div>`;
+      if (changed && messageBox) { messageBox.className = 'message'; messageBox.textContent = customerT('availabilitySelectionCleared'); }
+    }
+    renderBookingCalendar();
+  } catch (error) {
+    if (
+      requestId !== availabilityRequestId ||
+      customerShopSlug !== requestShop ||
+      !cart.length
+    ) return;
+    if (messageBox) {
+      messageBox.className = 'message error';
+      messageBox.textContent = customerT('availabilityFailed');
+    }
   }
-  renderBookingCalendar();
 }
 
 async function refreshAvailabilityAfterCartChange() {
   selectedSlot = null; availabilityIsEmpty = false; confirmationSummary.hidden = true;
+  if (!cart.length) {
+    calendarAvailability = new Map();
+    if (dateInput) dateInput.value = '';
+    renderSelectedDate();
+    renderBookingCalendar();
+    if (timesBox) timesBox.innerHTML = `<div>${customerT('chooseDate')}</div>`;
+    return;
+  }
   try {
     await loadAvailableDates({ changed: true });
     if (dateInput.value) await loadAvailableTimes();
   } catch (error) {
-    messageBox.className = 'message error'; messageBox.textContent = error.message;
+    if (messageBox) {
+      messageBox.className = 'message error';
+      messageBox.textContent = customerT('availabilityFailed');
+    }
   }
 }
 
@@ -528,10 +631,16 @@ function renderCategories() {
     button.type = 'button';
     button.className = `category-card${category.categoryId === selectedCategoryId ? ' selected' : ''}`;
     button.dataset.categoryId = category.categoryId;
-    button.innerHTML = `<span class="category-icon" aria-hidden="true">${categoryFlowApi.categoryIcon(category.iconKey)}</span><span class="category-name"></span>`;
-    button.querySelector('.category-name').textContent = category.name;
-    button.querySelector('.category-name').setAttribute('translate','no');
-    button.querySelector('.category-name').classList.add('notranslate');
+    const iconSpan = document.createElement('span');
+    iconSpan.className = 'category-icon';
+    iconSpan.setAttribute('aria-hidden', 'true');
+    iconSpan.textContent = categoryFlowApi.categoryIcon(category.iconKey);
+    button.appendChild(iconSpan);
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'category-name notranslate';
+    nameSpan.setAttribute('translate', 'no');
+    nameSpan.textContent = category.name;
+    button.appendChild(nameSpan);
     button.addEventListener('click', () => selectCategory(category.categoryId));
     categoryGrid.appendChild(button);
   }
@@ -581,26 +690,44 @@ function renderServices() {
     card.setAttribute('aria-pressed', isSelected ? 'true' : 'false');
     card.setAttribute('aria-label', `${service.name} · ${localeApi.formatPrice(service.price, service.priceIsFrom, currentLocale)} · ${localeApi.formatDuration(service.durationMinutes, currentLocale)}${isSelected ? ' · ' + customerT('selectedState') : ''}`);
 
-    let inner = '';
-    if (service.imageUrl) {
-      inner += `<img class="service-card-img" src="${service.imageUrl}" alt="">`;
+    const topRow = document.createElement('div');
+    topRow.className = 'service-card-top';
+
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'service-card-name notranslate';
+    nameSpan.setAttribute('translate', 'no');
+    nameSpan.textContent = service.name;
+    topRow.appendChild(nameSpan);
+
+    const priceSpan = document.createElement('span');
+    priceSpan.className = 'service-card-price';
+    priceSpan.textContent = localeApi.formatPrice(service.price, service.priceIsFrom, currentLocale);
+    topRow.appendChild(priceSpan);
+    card.appendChild(topRow);
+
+    const metaRow = document.createElement('div');
+    metaRow.className = 'service-card-meta';
+
+    const durSpan = document.createElement('span');
+    durSpan.className = 'service-card-duration';
+    durSpan.textContent = localeApi.formatDuration(service.durationMinutes, currentLocale);
+    metaRow.appendChild(durSpan);
+
+    if (isSelected) {
+      const badgeSpan = document.createElement('span');
+      badgeSpan.className = 'service-card-badge';
+      badgeSpan.textContent = customerT('selectedState');
+      metaRow.appendChild(badgeSpan);
     }
-    inner += `<div class="service-card-top">` +
-      `<span class="service-card-name notranslate" translate="no"></span>` +
-      `<span class="service-card-price">${localeApi.formatPrice(service.price, service.priceIsFrom, currentLocale)}</span>` +
-    `</div>`;
-    inner += `<div class="service-card-meta">` +
-      `<span class="service-card-duration">${localeApi.formatDuration(service.durationMinutes, currentLocale)}</span>` +
-      (isSelected ? `<span class="service-card-badge">${customerT('selectedState')}</span>` : '') +
-    `</div>`;
+    card.appendChild(metaRow);
+
     if (service.description) {
-      inner += `<div class="service-card-desc notranslate" translate="no"></div>`;
+      const descRow = document.createElement('div');
+      descRow.className = 'service-card-desc notranslate';
+      descRow.setAttribute('translate', 'no');
+      descRow.textContent = service.description;
+      card.appendChild(descRow);
     }
-    card.innerHTML = inner;
-    const nameEl = card.querySelector('.service-card-name');
-    if (nameEl) nameEl.textContent = service.name;
-    const descEl = card.querySelector('.service-card-desc');
-    if (descEl) descEl.textContent = service.description;
 
     card.addEventListener('click', async () => {
       if (cartApi.hasService(cart, service.id)) {
@@ -609,6 +736,8 @@ function renderServices() {
       }
       cart = cartApi.add(cart, service);
       clearStaleTime();
+      availabilityRequestId++;
+      timesRequestId++;
       renderServices();
       await renderCart();
       await refreshAvailabilityAfterCartChange();
@@ -620,29 +749,39 @@ function renderServices() {
 
 async function loadServices() {
   if (!customerShopSlug) return;
+  const reqId = ++servicesRequestId;
   if (servicesLoading) servicesLoading.hidden = false;
   if (servicesError) servicesError.hidden = true;
   try {
     const response = await fetch(`/api/services-db?shopSlug=${encodeURIComponent(customerShopSlug)}&locale=${encodeURIComponent(currentLocale)}`);
     const result = await response.json();
-    if (!response.ok || result.success === false) throw new Error(result.message || customerT('noCustomerServices'));
+    if (reqId !== servicesRequestId) return;
+    if (!response.ok || result.success === false) throw new Error(customerT('loadServicesFailed'));
     availableServices = result.data || [];
     const prevCartLen = cart.length;
     cart = cartApi.reconcile(cart, availableServices);
     if (prevCartLen > 0 && cart.length < prevCartLen) {
-      messageBox.className = 'message error';
-      messageBox.textContent = customerT('serviceUnavailableRetry');
+      if (messageBox) {
+        messageBox.className = 'message error';
+        messageBox.textContent = customerT('serviceUnavailableRetry');
+      }
+      clearStaleTime();
+      availabilityRequestId++;
+      timesRequestId++;
+      await refreshAvailabilityAfterCartChange();
     }
     renderServices();
     await renderCart();
   } catch (error) {
+    if (reqId !== servicesRequestId) return;
     if (servicesError) {
       servicesError.hidden = false;
       servicesError.textContent = customerT('loadServicesFailed');
     }
-    throw error;
   } finally {
-    if (servicesLoading) servicesLoading.hidden = true;
+    if (reqId === servicesRequestId && servicesLoading) {
+      servicesLoading.hidden = true;
+    }
   }
 }
 
@@ -668,30 +807,46 @@ async function loadCustomerCatalogue() {
 
 async function staffFor(item) {
   if (staffByItem.has(item.clientItemKey)) return staffByItem.get(item.clientItemKey);
-  const response = await fetch(`/api/booking/staff-options?shopSlug=${encodeURIComponent(customerShopSlug)}&serviceId=${encodeURIComponent(item.serviceId)}`);
-  const result = await response.json();
-  if (!response.ok || result.success === false) throw new Error(result.message || customerT('customerStaffNone'));
-  staffByItem.set(item.clientItemKey, result.data || []);
-  return result.data || [];
+  const reqId = ++staffRequestId;
+  try {
+    const response = await fetch(`/api/booking/staff-options?shopSlug=${encodeURIComponent(customerShopSlug)}&serviceId=${encodeURIComponent(item.serviceId)}`);
+    const result = await response.json();
+    if (!response.ok || result.success === false) return [];
+    const members = result.data || [];
+    staffByItem.set(item.clientItemKey, members);
+    return members;
+  } catch {
+    return [];
+  }
 }
 
 async function renderCart() {
-  cartPanel.hidden = cart.length === 0;
-  cartItems.innerHTML = '';
+  const currentRenderGen = ++cartRenderGeneration;
+
   if (cart.length === 0) {
+    if (cartPanel) cartPanel.hidden = true;
+    if (cartItems) cartItems.innerHTML = '';
     if (nextStepBtn) nextStepBtn.disabled = true;
     if (scheduleSection) scheduleSection.hidden = true;
-    contactStep.hidden = true;
+    if (contactStep) contactStep.hidden = true;
     return;
   }
+
+  if (cartPanel) cartPanel.hidden = false;
   if (nextStepBtn) nextStepBtn.disabled = false;
 
+  const builtCards = [];
   for (const item of cart) {
+    if (currentRenderGen !== cartRenderGeneration) return;
+    if (!cartApi.hasService(cart, item.serviceId)) continue;
     const service = serviceById(item.serviceId);
     if (!service) continue;
     const category = availableCategories.find(c => c.categoryId === (service.categoryId || item.categoryId));
     const categoryName = category ? category.name : '';
     const members = await staffFor(item);
+    if (currentRenderGen !== cartRenderGeneration) return;
+    if (!cartApi.hasService(cart, item.serviceId)) continue;
+
     const card = document.createElement('div');
     card.className = 'cart-item';
     card.dataset.itemKey = item.clientItemKey;
@@ -731,6 +886,8 @@ async function renderCart() {
     select.addEventListener('change', async () => {
       cart = cartApi.updateStaff(cart, item.clientItemKey, select.value === NO_PREFERENCE_VALUE ? 'no_preference' : 'specific', select.value);
       clearStaleTime();
+      availabilityRequestId++;
+      timesRequestId++;
       await refreshAvailabilityAfterCartChange();
     });
     card.appendChild(select);
@@ -744,30 +901,66 @@ async function renderCart() {
       cart = cartApi.remove(cart, item.clientItemKey);
       staffByItem.delete(item.clientItemKey);
       clearStaleTime();
+      availabilityRequestId++;
+      timesRequestId++;
+      if (cart.length === 0) {
+        if (scheduleSection) scheduleSection.hidden = true;
+        if (contactStep) contactStep.hidden = true;
+        if (nextStepBtn) nextStepBtn.disabled = true;
+        if (dateInput) dateInput.value = '';
+        selectedSlot = null;
+        availabilityIsEmpty = false;
+        calendarAvailability = new Map();
+        staffByItem.clear();
+        renderSelectedDate();
+        renderBookingCalendar();
+      }
       renderServices();
       await renderCart();
       await refreshAvailabilityAfterCartChange();
     });
     card.appendChild(remove);
 
-    cartItems.appendChild(card);
+    builtCards.push(card);
   }
+
+  if (currentRenderGen !== cartRenderGeneration) return;
+  if (cart.length === 0) {
+    if (cartPanel) cartPanel.hidden = true;
+    if (cartItems) cartItems.innerHTML = '';
+    if (nextStepBtn) nextStepBtn.disabled = true;
+    if (scheduleSection) scheduleSection.hidden = true;
+    if (contactStep) contactStep.hidden = true;
+    return;
+  }
+
+  if (cartItems) {
+    cartItems.innerHTML = '';
+    for (const card of builtCards) {
+      cartItems.appendChild(card);
+    }
+  }
+
   const total = cartApi.totals(cart, availableServices);
-  cartTotals.textContent = `${customerT('totalDuration')}: ${localeApi.formatDuration(total.durationMinutes, currentLocale)} · ${customerT('estimatedTotal')}: ${localeApi.formatPrice(total.listedPrice, total.priceIsFrom, currentLocale)}`;
-  if (scheduleSection) scheduleSection.hidden = false;
-  contactStep.hidden = cart.length === 0;
+  if (cartTotals) {
+    cartTotals.textContent = `${customerT('totalDuration')}: ${localeApi.formatDuration(total.durationMinutes, currentLocale)} · ${customerT('estimatedTotal')}: ${localeApi.formatPrice(total.listedPrice, total.priceIsFrom, currentLocale)}`;
+  }
+  if (scheduleSection && !scheduleSection.hidden && cart.length > 0) {
+    scheduleSection.hidden = false;
+  }
+  if (contactStep) contactStep.hidden = cart.length === 0;
 }
 
 function clearStaleTime() {
   selectedSlot = null;
   availabilityIsEmpty = false;
-  confirmationSummary.hidden = true;
-  timesBox.innerHTML = `<div>${customerT('chooseDate')}</div>`;
+  if (confirmationSummary) confirmationSummary.hidden = true;
+  if (timesBox) timesBox.innerHTML = `<div>${customerT('chooseDate')}</div>`;
 }
 
 function renderLocaleDependentBookingState() {
-  if (!dateInput.value) {
-    timesBox.innerHTML = `<div>${customerT('chooseDate')}</div>`;
+  if (!dateInput || !dateInput.value) {
+    if (timesBox) timesBox.innerHTML = `<div>${customerT('chooseDate')}</div>`;
   } else if (availabilityIsEmpty) {
     renderTimes([]);
   } else if (selectedSlot) {
@@ -776,13 +969,16 @@ function renderLocaleDependentBookingState() {
 }
 
 async function setLocale(locale) {
+  const reqId = ++languageRequestId;
   currentLocale = localeApi.setLocale(locale, localStorage);
   document.documentElement.lang = currentLocale;
   document.querySelectorAll('[data-i18n]').forEach(element => { element.textContent = customerT(element.dataset.i18n); });
   document.querySelectorAll('[data-i18n-placeholder]').forEach(element => { element.placeholder = customerT(element.dataset.i18nPlaceholder); });
-  document.getElementById('languageZh').disabled = currentLocale === 'zh-CN';
-  document.getElementById('languageEn').disabled = currentLocale === 'en';
-  document.title = `${shopBrandName.textContent} · ${customerT('onlineAppointment')}`;
+  const zhBtn = document.getElementById('languageZh');
+  if (zhBtn) zhBtn.disabled = currentLocale === 'zh-CN';
+  const enBtn = document.getElementById('languageEn');
+  if (enBtn) enBtn.disabled = currentLocale === 'en';
+  if (shopBrandName) document.title = `${shopBrandName.textContent} · ${customerT('onlineAppointment')}`;
   renderCountryOptions(bookerCountryCode);
   renderCountryOptions(recipientCountryCode);
   renderRecipientChoice();
@@ -890,42 +1086,73 @@ document.getElementById('nextMonth').addEventListener('click', async () => { cal
 
 // 获取数据库可预约时间
 async function loadAvailableTimes() {
+  const currentRequestId = ++timesRequestId;
+  const date = dateInput ? dateInput.value : '';
+  const requestShop = customerShopSlug;
+  const requestCartFingerprint = typeof cartApi.fingerprint === 'function' ? cartApi.fingerprint(cart) : '';
 
-  const date = dateInput.value;
   selectedSlot = null;
   availabilityIsEmpty = false;
-  confirmationSummary.hidden = true;
+  if (confirmationSummary) confirmationSummary.hidden = true;
 
   if (!date) {
-    timesBox.innerHTML =
-      `<div>${customerT('chooseDate')}</div>`;
+    if (timesBox) timesBox.innerHTML = `<div>${customerT('chooseDate')}</div>`;
     return;
   }
 
-  timesBox.innerHTML =
-    `<div>${customerT('checking')}</div>`;
+  if (timesBox) timesBox.innerHTML = `<div>${customerT('checking')}</div>`;
 
   try {
+    if (!cart.length) {
+      if (timesBox) timesBox.innerHTML = `<div>${customerT('chooseDate')}</div>`;
+      return;
+    }
+    const response = await fetch('/api/booking/multi-service-available-times', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        shopSlug: customerShopSlug,
+        date,
+        locale: currentLocale,
+        items: cartApi.requestItems(cart)
+      })
+    });
 
-    if (!cart.length) return;
-    const response = await fetch('/api/booking/multi-service-available-times',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({shopSlug:customerShopSlug,date,locale:currentLocale,items:cartApi.requestItems(cart)})});
+    const result = await response.json();
 
-    const result =
-      await response.json();
+    if (
+      currentRequestId !== timesRequestId ||
+      (dateInput && dateInput.value !== date) ||
+      customerShopSlug !== requestShop ||
+      (typeof cartApi.fingerprint === 'function' ? cartApi.fingerprint(cart) : '') !== requestCartFingerprint ||
+      !cart.length
+    ) {
+      return;
+    }
 
-    if (!result.success) {
-      throw new Error(
-        result.message || customerT('availabilityFailed')
-      );
+    if (!response.ok || result.success === false) {
+      throw new Error(customerT('availabilityFailed'));
     }
 
     renderTimes(result.data);
 
   } catch (error) {
+    if (
+      currentRequestId !== timesRequestId ||
+      (dateInput && dateInput.value !== date) ||
+      customerShopSlug !== requestShop ||
+      !cart.length
+    ) {
+      return;
+    }
 
-    timesBox.innerHTML =
-      `<div class="error">${error.message}</div>`;
-
+    if (timesBox) {
+      timesBox.innerHTML = '';
+      const errDiv = document.createElement('div');
+      errDiv.className = 'error';
+      errDiv.textContent = customerT('availabilityFailed');
+      timesBox.appendChild(errDiv);
+    }
   }
 }
 
@@ -1091,18 +1318,29 @@ document
           await response.json();
 
         if (!result.success) {
-          throw new Error(
-            result.message || customerT('bookingFailed')
-          );
+          throw new Error(customerT('bookingFailed'));
         }
 
         messageBox.className =
           'message success';
+        messageBox.textContent = '';
 
-        messageBox.innerHTML =
-          `✅ ${customerT('bookingSuccess')}<br>` +
-          `${localeApi.formatDate(date, currentLocale)} ${selectedSlot.time}<br>` +
-          cart.map(item=>serviceById(item.serviceId)?.name).join(' · ');
+        const titleDiv = document.createElement('div');
+        titleDiv.textContent = `✅ ${customerT('bookingSuccess')}`;
+        messageBox.appendChild(titleDiv);
+
+        const dateTimeDiv = document.createElement('div');
+        dateTimeDiv.textContent = `${localeApi.formatDate(date, currentLocale)} ${selectedSlot.time}`;
+        messageBox.appendChild(dateTimeDiv);
+
+        const servicesDiv = document.createElement('div');
+        servicesDiv.className = 'notranslate';
+        servicesDiv.setAttribute('translate', 'no');
+        const serviceNames = cart
+          .map(item => serviceById(item.serviceId)?.name)
+          .filter(Boolean);
+        servicesDiv.textContent = serviceNames.join(' · ');
+        messageBox.appendChild(servicesDiv);
 
         // 成功后重新读取时间
         await loadAvailableTimes();
@@ -1113,7 +1351,7 @@ document
           'message error';
 
         messageBox.textContent =
-          error.message;
+          customerT('bookingFailed');
 
       } finally {
 
@@ -1129,13 +1367,19 @@ document.getElementById('languageZh').addEventListener('click', () => setLocale(
 document.getElementById('languageEn').addEventListener('click', () => setLocale('en'));
 (async () => {
   try {
+    if (!cartApiValid) {
+      showCartModuleRecovery();
+      return;
+    }
     await loadCustomerShopContext();
     await setLocale(currentLocale);
     await loadCustomerCatalogue();
     renderBookingCalendar();
   } catch (error) {
-    messageBox.className = 'message error';
-    messageBox.textContent = error.message;
+    if (messageBox) {
+      messageBox.className = 'message error';
+      messageBox.textContent = customerT('loadServicesFailed');
+    }
   }
 })();
 

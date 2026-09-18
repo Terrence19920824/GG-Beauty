@@ -4,6 +4,7 @@
   if (root) root.ggCustomerMultiServiceCart = api;
 })(typeof globalThis === 'object' ? globalThis : this, function () {
   'use strict';
+  const API_VERSION = '2.0.0';
   let nextKey = 1;
   const create = () => [];
   const hasService = (cart, serviceId) => Array.isArray(cart) && cart.some(item => item.serviceId === serviceId);
@@ -38,5 +39,18 @@
     }, { durationMinutes: 0, listedPrice: 0, priceIsFrom: false });
   };
   const requestItems = cart => (Array.isArray(cart) ? cart.map(({ clientItemKey, serviceId, staffSelectionType, staffId }) => ({ clientItemKey, serviceId, staffSelectionType, ...(staffSelectionType === 'specific' ? { staffId } : {}) })) : []);
-  return { create, add, remove, updateStaff, totals, requestItems, hasService, reconcile };
+  const fingerprint = cart => (Array.isArray(cart) ? cart.map(item => `${item.clientItemKey}:${item.serviceId}:${item.staffSelectionType}:${item.staffId || ''}`).join(';') : '');
+  return Object.freeze({
+    version: API_VERSION,
+    apiVersion: API_VERSION,
+    create,
+    add,
+    remove,
+    updateStaff,
+    totals,
+    requestItems,
+    hasService,
+    reconcile,
+    fingerprint
+  });
 });
