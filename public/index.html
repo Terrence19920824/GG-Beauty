@@ -200,10 +200,28 @@
     .error {
       color: #c62828;
     }
-    .cart-item { border: 1px solid var(--theme-border, #ddd); border-radius: 12px; padding: 12px; margin-top: 10px; }
-    .cart-item h3 { margin: 0 0 6px; }
+    .service-cards-list { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+    .service-card { width: 100%; min-height: 64px; padding: 14px 16px; margin: 0; border: 1px solid var(--theme-border, #ddd); border-radius: 12px; background: var(--theme-surface, #fff); color: var(--theme-text, #222); text-align: left; cursor: pointer; display: flex; flex-direction: column; gap: 6px; box-sizing: border-box; transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease; font-family: inherit; }
+    .service-card:hover { border-color: var(--theme-primary-hover, #2b2b2b); }
+    .service-card.selected { border-color: var(--theme-primary, #111); box-shadow: inset 0 0 0 1px var(--theme-primary, #111), 0 2px 8px rgba(0,0,0,0.05); background: #fafafa; }
+    .service-card-top { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; width: 100%; }
+    .service-card-name { font-size: 16px; font-weight: 700; color: var(--theme-text, #222); flex: 1; word-break: break-word; }
+    .service-card-price { font-size: 16px; font-weight: 700; color: var(--theme-primary, #111); white-space: nowrap; }
+    .service-card-meta { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--theme-text-muted, #777); }
+    .service-card-duration { display: inline-flex; align-items: center; }
+    .service-card-badge { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; background: var(--theme-primary, #111); color: var(--theme-primary-contrast, #fff); margin-left: auto; }
+    .service-card-desc { font-size: 13px; color: var(--theme-text-muted, #666); line-height: 1.4; margin-top: 2px; }
+    .service-card-img { width: 100%; max-height: 140px; object-fit: cover; border-radius: 8px; margin-bottom: 4px; }
+    .cart-item { border: 1px solid var(--theme-border, #ddd); border-radius: 12px; padding: 14px; margin-top: 10px; background: var(--theme-surface, #fff); }
+    .cart-item-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+    .cart-item-title { font-size: 16px; font-weight: 700; margin: 0; color: var(--theme-text, #222); }
+    .cart-item-category { font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: var(--theme-surface-subtle, #eee); color: var(--theme-text-muted, #555); border: 1px solid var(--theme-border, #ddd); white-space: nowrap; }
     .cart-meta, .cart-total { color: #555; line-height: 1.6; }
-    .remove-item { background: var(--theme-surface-subtle, #eee); color: var(--theme-text, #222); margin-top: 8px; padding: 9px; }
+    .cart-total { font-size: 15px; font-weight: 600; margin-top: 12px; padding: 8px 0; border-top: 1px solid var(--theme-border, #eee); }
+    .remove-item { background: var(--theme-surface-subtle, #eee); color: var(--theme-text, #222); margin-top: 10px; padding: 11px; min-height: 44px; border-radius: 8px; font-weight: 600; }
+    .cart-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 14px; }
+    .cart-actions button { margin-top: 0; min-height: 44px; padding: 12px 14px; font-size: 15px; }
+    .cart-actions .customer-btn-secondary { background: var(--theme-surface-subtle, #eee); color: var(--theme-text, #222); }
     .recipient-options { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
     .recipient-option { margin: 0; padding: 13px 10px; background: var(--theme-surface, #fff); color: var(--theme-text, #222); border: 1px solid var(--theme-border, #ddd); font-size: 14px; }
     .recipient-option.selected { background: var(--theme-primary, #111); color: var(--theme-primary-contrast, #fff); border-color: var(--theme-primary, #111); }
@@ -236,13 +254,35 @@
   <div id="bookingStep" class="card" hidden>
 
     <label id="serviceLabel" data-i18n="serviceManagement">服务项目</label>
-    <select id="service" translate="no" class="notranslate">
+    <select id="service" translate="no" class="notranslate" hidden>
       <option value="" data-i18n="loadingCustomerServices">正在读取服务...</option>
     </select>
 
-    <button id="addServiceBtn" type="button" data-i18n="addSelectedService">添加该项目</button>
+    <button id="addServiceBtn" type="button" data-i18n="addSelectedService" hidden>添加该项目</button>
+
+    <div id="servicesLoading" class="loading-state" hidden>
+      <div class="loading-spinner" aria-hidden="true"></div>
+      <span data-i18n="loadingCustomerServices">正在读取服务...</span>
+    </div>
+    <div id="servicesEmpty" class="empty-state" hidden>
+      <div class="empty-state-icon" aria-hidden="true">◇</div>
+      <p class="empty-state-text" data-i18n="noBookableServices">暂无可预约项目</p>
+    </div>
+    <div id="servicesError" class="message error" hidden data-i18n="loadServicesFailed">无法加载服务，请重试</div>
+
+    <div id="serviceCards" class="service-cards-list" role="list"></div>
+
     <div id="cartPanel" hidden>
       <label data-i18n="selectedServices">已选项目</label>
+      <div id="cartItems" translate="no" class="notranslate"></div>
+      <div id="cartTotals" class="cart-total notranslate" translate="no"></div>
+      <div class="cart-actions">
+        <button id="addAnotherBtn" type="button" class="customer-btn-secondary" data-i18n="addAnotherService">继续添加项目</button>
+        <button id="nextStepBtn" type="button" class="customer-btn" data-i18n="nextStep">下一步</button>
+      </div>
+    </div>
+
+    <div id="scheduleSection" hidden>
       <div id="recipientChoice">
         <label data-i18n="bookingRecipient">预约给谁？</label>
         <div class="recipient-options">
@@ -262,29 +302,26 @@
         <label data-i18n="recipientEmail">服务接收人 Email（选填）</label>
         <input id="recipientEmail" type="email" placeholder="example@email.com">
       </div>
-      <div id="cartItems" translate="no" class="notranslate"></div>
-      <div id="cartTotals" class="cart-total notranslate" translate="no"></div>
-      <button id="addAnotherBtn" type="button" data-i18n="addAnotherService">＋ 继续添加项目</button>
-    </div>
 
-    <label data-i18n="appointmentDate">预约日期</label>
-    <input type="hidden" id="date">
-    <div id="dateDisplay" class="date-picker-display"></div>
-    <div id="bookingCalendar">
-      <div class="calendar-header">
-        <button id="previousMonth" type="button" aria-label="Previous month">‹</button>
-        <div id="calendarTitle" class="calendar-title"></div>
-        <button id="nextMonth" type="button" aria-label="Next month">›</button>
+      <label data-i18n="appointmentDate">预约日期</label>
+      <input type="hidden" id="date">
+      <div id="dateDisplay" class="date-picker-display"></div>
+      <div id="bookingCalendar">
+        <div class="calendar-header">
+          <button id="previousMonth" type="button" aria-label="Previous month">‹</button>
+          <div id="calendarTitle" class="calendar-title"></div>
+          <button id="nextMonth" type="button" aria-label="Next month">›</button>
+        </div>
+        <div id="calendarGrid" class="calendar-grid"></div>
+        <label data-i18n="nextAvailable">最快可预约</label>
+        <div id="nextAvailableDates" class="next-available"></div>
       </div>
-      <div id="calendarGrid" class="calendar-grid"></div>
-      <label data-i18n="nextAvailable">最快可预约</label>
-      <div id="nextAvailableDates" class="next-available"></div>
-    </div>
 
-    <label data-i18n="availableTimes">可预约时间</label>
+      <label data-i18n="availableTimes">可预约时间</label>
 
-    <div id="times" class="time-grid">
-      <div data-i18n="chooseDate">请先选择日期</div>
+      <div id="times" class="time-grid">
+        <div data-i18n="chooseDate">请先选择日期</div>
+      </div>
     </div>
 
   </div>
@@ -513,6 +550,8 @@ function serviceOptionText(service) {
 
 function renderServices() {
   serviceInput.innerHTML = '';
+  if (serviceCards) serviceCards.innerHTML = '';
+  if (servicesError) servicesError.hidden = true;
   const categoryServices = categoryFlowApi.filterServicesByCategory(availableServices, selectedCategoryId);
   for (const service of categoryServices) {
     const option = document.createElement('option');
@@ -525,17 +564,86 @@ function renderServices() {
     option.value = '';
     option.textContent = customerT('noCustomerServices');
     serviceInput.appendChild(option);
+    if (servicesEmpty) servicesEmpty.hidden = false;
+    if (serviceCards) serviceCards.hidden = true;
+    return;
+  }
+  if (servicesEmpty) servicesEmpty.hidden = true;
+  if (serviceCards) serviceCards.hidden = false;
+
+  for (const service of categoryServices) {
+    if (!serviceCards) break;
+    const isSelected = cartApi.hasService(cart, service.id);
+    const card = document.createElement('button');
+    card.type = 'button';
+    card.className = `service-card${isSelected ? ' selected' : ''}`;
+    card.dataset.serviceId = service.id;
+    card.setAttribute('aria-pressed', isSelected ? 'true' : 'false');
+    card.setAttribute('aria-label', `${service.name} · ${localeApi.formatPrice(service.price, service.priceIsFrom, currentLocale)} · ${localeApi.formatDuration(service.durationMinutes, currentLocale)}${isSelected ? ' · ' + customerT('selectedState') : ''}`);
+
+    let inner = '';
+    if (service.imageUrl) {
+      inner += `<img class="service-card-img" src="${service.imageUrl}" alt="">`;
+    }
+    inner += `<div class="service-card-top">` +
+      `<span class="service-card-name notranslate" translate="no"></span>` +
+      `<span class="service-card-price">${localeApi.formatPrice(service.price, service.priceIsFrom, currentLocale)}</span>` +
+    `</div>`;
+    inner += `<div class="service-card-meta">` +
+      `<span class="service-card-duration">${localeApi.formatDuration(service.durationMinutes, currentLocale)}</span>` +
+      (isSelected ? `<span class="service-card-badge">${customerT('selectedState')}</span>` : '') +
+    `</div>`;
+    if (service.description) {
+      inner += `<div class="service-card-desc notranslate" translate="no"></div>`;
+    }
+    card.innerHTML = inner;
+    const nameEl = card.querySelector('.service-card-name');
+    if (nameEl) nameEl.textContent = service.name;
+    const descEl = card.querySelector('.service-card-desc');
+    if (descEl) descEl.textContent = service.description;
+
+    card.addEventListener('click', async () => {
+      if (cartApi.hasService(cart, service.id)) {
+        if (cartPanel) cartPanel.scrollIntoView({ behavior: 'smooth' });
+        return;
+      }
+      cart = cartApi.add(cart, service);
+      clearStaleTime();
+      renderServices();
+      await renderCart();
+      await refreshAvailabilityAfterCartChange();
+      if (cartPanel) cartPanel.scrollIntoView({ behavior: 'smooth' });
+    });
+    serviceCards.appendChild(card);
   }
 }
 
 async function loadServices() {
   if (!customerShopSlug) return;
-  const response = await fetch(`/api/services-db?shopSlug=${encodeURIComponent(customerShopSlug)}&locale=${encodeURIComponent(currentLocale)}`);
-  const result = await response.json();
-  if (!response.ok || result.success === false) throw new Error(result.message || customerT('noCustomerServices'));
-  availableServices = result.data || [];
-  renderServices();
-  await renderCart();
+  if (servicesLoading) servicesLoading.hidden = false;
+  if (servicesError) servicesError.hidden = true;
+  try {
+    const response = await fetch(`/api/services-db?shopSlug=${encodeURIComponent(customerShopSlug)}&locale=${encodeURIComponent(currentLocale)}`);
+    const result = await response.json();
+    if (!response.ok || result.success === false) throw new Error(result.message || customerT('noCustomerServices'));
+    availableServices = result.data || [];
+    const prevCartLen = cart.length;
+    cart = cartApi.reconcile(cart, availableServices);
+    if (prevCartLen > 0 && cart.length < prevCartLen) {
+      messageBox.className = 'message error';
+      messageBox.textContent = customerT('serviceUnavailableRetry');
+    }
+    renderServices();
+    await renderCart();
+  } catch (error) {
+    if (servicesError) {
+      servicesError.hidden = false;
+      servicesError.textContent = customerT('loadServicesFailed');
+    }
+    throw error;
+  } finally {
+    if (servicesLoading) servicesLoading.hidden = true;
+  }
 }
 
 async function loadCategories() {
@@ -570,28 +678,92 @@ async function staffFor(item) {
 async function renderCart() {
   cartPanel.hidden = cart.length === 0;
   cartItems.innerHTML = '';
+  if (cart.length === 0) {
+    if (nextStepBtn) nextStepBtn.disabled = true;
+    if (scheduleSection) scheduleSection.hidden = true;
+    contactStep.hidden = true;
+    return;
+  }
+  if (nextStepBtn) nextStepBtn.disabled = false;
+
   for (const item of cart) {
-    const service = serviceById(item.serviceId); if (!service) continue;
+    const service = serviceById(item.serviceId);
+    if (!service) continue;
+    const category = availableCategories.find(c => c.categoryId === (service.categoryId || item.categoryId));
+    const categoryName = category ? category.name : '';
     const members = await staffFor(item);
-    const card = document.createElement('div'); card.className = 'cart-item'; card.dataset.itemKey = item.clientItemKey;
-    const heading = document.createElement('h3'); heading.textContent = service.name; card.appendChild(heading);
-    const meta = document.createElement('div'); meta.className = 'cart-meta'; meta.textContent = `${localeApi.formatDuration(service.durationMinutes,currentLocale)} · ${localeApi.formatPrice(service.price,service.priceIsFrom,currentLocale)}`; card.appendChild(meta);
-    const label = document.createElement('label'); label.textContent = customerT('chooseStaffCustomer'); card.appendChild(label);
-    const select = document.createElement('select'); select.setAttribute('translate','no'); select.classList.add('notranslate');
-    select.innerHTML = `<option value="${NO_PREFERENCE_VALUE}">${customerT('customerStaffNoPreference')}</option>` + members.map(member => `<option value="${member.staffId}">${member.displayName}</option>`).join('');
+    const card = document.createElement('div');
+    card.className = 'cart-item';
+    card.dataset.itemKey = item.clientItemKey;
+
+    const header = document.createElement('div');
+    header.className = 'cart-item-header';
+    const heading = document.createElement('h3');
+    heading.className = 'cart-item-title notranslate';
+    heading.setAttribute('translate', 'no');
+    heading.textContent = service.name;
+    header.appendChild(heading);
+
+    if (categoryName) {
+      const catBadge = document.createElement('span');
+      catBadge.className = 'cart-item-category notranslate';
+      catBadge.setAttribute('translate', 'no');
+      catBadge.textContent = categoryName;
+      header.appendChild(catBadge);
+    }
+    card.appendChild(header);
+
+    const meta = document.createElement('div');
+    meta.className = 'cart-meta';
+    meta.textContent = `${localeApi.formatDuration(service.durationMinutes, currentLocale)} · ${localeApi.formatPrice(service.price, service.priceIsFrom, currentLocale)}`;
+    card.appendChild(meta);
+
+    const label = document.createElement('label');
+    label.textContent = customerT('chooseStaffCustomer');
+    card.appendChild(label);
+
+    const select = document.createElement('select');
+    select.setAttribute('translate', 'no');
+    select.classList.add('notranslate');
+    select.innerHTML = `<option value="${NO_PREFERENCE_VALUE}">${customerT('customerStaffNoPreference')}</option>` +
+      members.map(member => `<option value="${member.staffId}">${member.displayName}</option>`).join('');
     select.value = item.staffSelectionType === 'specific' ? item.staffId : NO_PREFERENCE_VALUE;
-    select.addEventListener('change', async () => { cart = cartApi.updateStaff(cart,item.clientItemKey,select.value===NO_PREFERENCE_VALUE?'no_preference':'specific',select.value); clearStaleTime(); await refreshAvailabilityAfterCartChange(); });
+    select.addEventListener('change', async () => {
+      cart = cartApi.updateStaff(cart, item.clientItemKey, select.value === NO_PREFERENCE_VALUE ? 'no_preference' : 'specific', select.value);
+      clearStaleTime();
+      await refreshAvailabilityAfterCartChange();
+    });
     card.appendChild(select);
-    const remove = document.createElement('button'); remove.type='button'; remove.className='remove-item'; remove.textContent=customerT('removeService');
-    remove.addEventListener('click', async()=>{cart=cartApi.remove(cart,item.clientItemKey);staffByItem.delete(item.clientItemKey);clearStaleTime();await renderCart();await refreshAvailabilityAfterCartChange();}); card.appendChild(remove);
+
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'remove-item';
+    remove.textContent = customerT('removeService');
+    remove.setAttribute('aria-label', `${customerT('removeService')} ${service.name}`);
+    remove.addEventListener('click', async () => {
+      cart = cartApi.remove(cart, item.clientItemKey);
+      staffByItem.delete(item.clientItemKey);
+      clearStaleTime();
+      renderServices();
+      await renderCart();
+      await refreshAvailabilityAfterCartChange();
+    });
+    card.appendChild(remove);
+
     cartItems.appendChild(card);
   }
-  const total=cartApi.totals(cart,availableServices);
-  cartTotals.textContent=`${customerT('totalDuration')}: ${localeApi.formatDuration(total.durationMinutes,currentLocale)} · ${customerT('estimatedTotal')}: ${localeApi.formatPrice(total.listedPrice,total.priceIsFrom,currentLocale)}`;
+  const total = cartApi.totals(cart, availableServices);
+  cartTotals.textContent = `${customerT('totalDuration')}: ${localeApi.formatDuration(total.durationMinutes, currentLocale)} · ${customerT('estimatedTotal')}: ${localeApi.formatPrice(total.listedPrice, total.priceIsFrom, currentLocale)}`;
+  if (scheduleSection) scheduleSection.hidden = false;
   contactStep.hidden = cart.length === 0;
 }
 
-function clearStaleTime(){selectedSlot=null;availabilityIsEmpty=false;confirmationSummary.hidden=true;timesBox.innerHTML=`<div>${customerT('chooseDate')}</div>`;}
+function clearStaleTime() {
+  selectedSlot = null;
+  availabilityIsEmpty = false;
+  confirmationSummary.hidden = true;
+  timesBox.innerHTML = `<div>${customerT('chooseDate')}</div>`;
+}
 
 function renderLocaleDependentBookingState() {
   if (!dateInput.value) {
@@ -616,6 +788,8 @@ async function setLocale(locale) {
   renderRecipientChoice();
   renderSelectedDate();
   renderBookingCalendar();
+  renderCategories();
+  renderServices();
   renderLocaleDependentBookingState();
   await renderCart();
   renderLocaleDependentBookingState();
@@ -640,7 +814,15 @@ const categoryGrid = document.getElementById('categoryGrid');
 const shopBrandName = document.getElementById('shopBrandName');
 const bookingStep = document.getElementById('bookingStep');
 const contactStep = document.getElementById('contactStep');
-const cartPanel=document.getElementById('cartPanel'),cartItems=document.getElementById('cartItems'),cartTotals=document.getElementById('cartTotals');
+const cartPanel = document.getElementById('cartPanel');
+const cartItems = document.getElementById('cartItems');
+const cartTotals = document.getElementById('cartTotals');
+const serviceCards = document.getElementById('serviceCards');
+const servicesLoading = document.getElementById('servicesLoading');
+const servicesEmpty = document.getElementById('servicesEmpty');
+const servicesError = document.getElementById('servicesError');
+const nextStepBtn = document.getElementById('nextStepBtn');
+const scheduleSection = document.getElementById('scheduleSection');
 
 const timesBox =
   document.getElementById('times');
@@ -667,8 +849,39 @@ serviceInput.addEventListener(
   clearStaleTime
 );
 
-document.getElementById('addServiceBtn').addEventListener('click',async()=>{const service=selectedService();if(!service)return;cart=cartApi.add(cart,service);clearStaleTime();await renderCart();await refreshAvailabilityAfterCartChange();});
-document.getElementById('addAnotherBtn').addEventListener('click',()=>{selectedCategoryId='';categoryStep.hidden=false;categoryStep.scrollIntoView({behavior:'smooth'});});
+const addServiceBtn = document.getElementById('addServiceBtn');
+if (addServiceBtn) {
+  addServiceBtn.addEventListener('click', async () => {
+    const service = selectedService();
+    if (!service) return;
+    cart = cartApi.add(cart, service);
+    clearStaleTime();
+    renderServices();
+    await renderCart();
+    await refreshAvailabilityAfterCartChange();
+  });
+}
+
+const addAnotherBtn = document.getElementById('addAnotherBtn');
+if (addAnotherBtn) {
+  addAnotherBtn.addEventListener('click', () => {
+    selectedCategoryId = '';
+    categoryStep.hidden = false;
+    renderCategories();
+    categoryStep.scrollIntoView({ behavior: 'smooth' });
+  });
+}
+
+if (nextStepBtn) {
+  nextStepBtn.addEventListener('click', () => {
+    if (!cart.length) return;
+    if (scheduleSection) {
+      scheduleSection.hidden = false;
+      scheduleSection.scrollIntoView({ behavior: 'smooth' });
+    }
+  });
+}
+
 bookForMyself.addEventListener('click', () => { bookingFor = 'myself'; renderRecipientChoice(); });
 bookForSomeoneElse.addEventListener('click', () => { bookingFor = 'someone_else'; renderRecipientChoice(); });
 document.getElementById('previousMonth').addEventListener('click', async () => { calendarMonth = calendarApi.shiftMonth(calendarMonth, -1); await loadAvailableDates(); });
