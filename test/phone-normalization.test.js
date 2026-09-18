@@ -602,12 +602,11 @@ test('customer identity: accepts valid iso3166 phones and strictly rejects non-g
   assert.equal(isEligibleForCustomerIdentity('+6591234567'), true);
   assert.equal(isEligibleForOtp('+6591234567'), true);
 
-  const myObj = normalizeNationalPhone({ countryIso2: 'MY', nationalNumber: '0123456789' });
-  const myValid = validateCustomerIdentityPhone(myObj);
+  const myValid = validateCustomerIdentityPhone('0123456789', 'MY');
   assert.equal(myValid.countryIso2, 'MY');
   assert.equal(myValid.regionKind, 'iso3166');
   assert.equal(myValid.eligibleForCustomerIdentity, true);
-  assert.equal(isEligibleForCustomerIdentity(myObj), true);
+  assert.equal(isEligibleForCustomerIdentity('0123456789', 'MY'), true);
 
   // Negative 1: countryIso2 === null (e.g. +800 non-geographic)
   assert.throws(
@@ -641,41 +640,35 @@ test('customer identity: accepts valid iso3166 phones and strictly rejects non-g
   assert.equal(isEligibleForCustomerIdentity('+870773123456'), false);
 
   // Negative 4: AC (Ascension Island - exceptional reservation)
-  const acObj = normalizeNationalPhone({ countryIso2: 'AC', nationalNumber: '40123' });
   assert.throws(
-    () => validateCustomerIdentityPhone(acObj),
+    () => validateCustomerIdentityPhone('+24740123'),
     {
       name: 'PhoneValidationError',
       code: PHONE_ERROR_CODES.PHONE_CUSTOMER_IDENTITY_INELIGIBLE
     }
   );
-  assert.equal(isEligibleForCustomerIdentity(acObj), false);
   assert.equal(isEligibleForCustomerIdentity('+24740123'), false);
 
   // Negative 5: TA (Tristan da Cunha - exceptional reservation)
-  const taObj = normalizeNationalPhone({ countryIso2: 'TA', nationalNumber: '8999' });
   assert.throws(
-    () => validateCustomerIdentityPhone(taObj),
+    () => validateCustomerIdentityPhone('+2908999'),
     {
       name: 'PhoneValidationError',
       code: PHONE_ERROR_CODES.PHONE_CUSTOMER_IDENTITY_INELIGIBLE
     }
   );
-  assert.equal(isEligibleForCustomerIdentity(taObj), false);
   assert.equal(isEligibleForCustomerIdentity('+2908999'), false);
 
   // Negative 6: XK (Kosovo - user_assigned reservation)
-  const xkObj = normalizeNationalPhone({ countryIso2: 'XK', nationalNumber: '43201234' });
   assert.throws(
-    () => validateCustomerIdentityPhone(xkObj),
+    () => validateCustomerIdentityPhone('+38343201234'),
     {
       name: 'PhoneValidationError',
       code: PHONE_ERROR_CODES.PHONE_CUSTOMER_IDENTITY_INELIGIBLE
     }
   );
-  assert.equal(isEligibleForCustomerIdentity(xkObj), false);
   assert.equal(isEligibleForCustomerIdentity('+38343201234'), false);
-  assert.equal(isEligibleForOtp(xkObj), false);
+  assert.equal(isEligibleForOtp('+38343201234'), false);
 });
 
 // ==========================================
@@ -764,97 +757,236 @@ test('fail-closed: missing countryIso2 fails closed and never assumes SG', () =>
 });
 
 // ==========================================
-// 10. Customer Identity & OTP Canonical Validation and Anti-Spoofing (Regression 9-30)
 // ==========================================
-test('identity & OTP: regression tests 9-30 for object forgery, prototypes, proxies, and immutability', () => {
-  // 9. { e164: "not-e164", regionKind: "iso3166" } rejected
-  assert.throws(
-    () => validateCustomerIdentityPhone({ e164: 'not-e164', regionKind: 'iso3166' }),
-    { name: 'PhoneValidationError' }
-  );
-  assert.equal(isEligibleForCustomerIdentity({ e164: 'not-e164', regionKind: 'iso3166' }), false);
+// 10. String-Only Identity & OTP Input Contract and Static Error Privacy (Regression 1-45)
+// ==========================================
+test('identity & OTP: regression tests 1-45 for string-only contract, anti-coercion, and static error privacy', () => {
+  // 1. primitive E.164 string passes legitimately
+  const sgRes = validateCustomerIdentityPhone('+6591234567');
+  assert.equal(sgRes.e164, '+6591234567');
+  assert.equal(sgRes.countryIso2, 'SG');
+  assert.equal(sgRes.callingCode, '+65');
+  assert.equal(sgRes.nationalNumber, '91234567');
+  assert.equal(sgRes.regionKind, 'iso3166');
+  assert.equal(sgRes.eligibleForCustomerIdentity, true);
+  assert.equal(isEligibleForCustomerIdentity('+6591234567'), true);
 
-  // 10. Spoofed countryIso2 rejected
-  assert.throws(
-    () => validateCustomerIdentityPhone({ e164: '+6591234567', countryIso2: 'MY' }),
-    { name: 'PhoneValidationError', code: PHONE_ERROR_CODES.PHONE_CUSTOMER_IDENTITY_INELIGIBLE }
-  );
-  assert.equal(isEligibleForCustomerIdentity({ e164: '+6591234567', countryIso2: 'MY' }), false);
+  // 2. valid national string with explicit countryIso2 passes
+  const myRes = validateCustomerIdentityPhone('0123456789', 'MY');
+  assert.equal(myRes.e164, '+60123456789');
+  assert.equal(myRes.countryIso2, 'MY');
+  assert.equal(myRes.regionKind, 'iso3166');
+  assert.equal(myRes.eligibleForCustomerIdentity, true);
+  assert.equal(isEligibleForCustomerIdentity('0123456789', 'MY'), true);
 
-  // 11. Spoofed callingCode rejected
+  // 3. national string missing countryIso2 rejected
   assert.throws(
-    () => validateCustomerIdentityPhone({ e164: '+6591234567', callingCode: '+60' }),
-    { name: 'PhoneValidationError', code: PHONE_ERROR_CODES.PHONE_CUSTOMER_IDENTITY_INELIGIBLE }
+    () => validateCustomerIdentityPhone('0123456789'),
+    { name: 'PhoneValidationError', code: PHONE_ERROR_CODES.PHONE_COUNTRY_REQUIRED }
   );
-  assert.equal(isEligibleForCustomerIdentity({ e164: '+6591234567', callingCode: '+60' }), false);
+  assert.equal(isEligibleForCustomerIdentity('0123456789'), false);
 
-  // 12. Spoofed nationalNumber rejected
+  // 4. missing countryIso2 never defaults to SG
   assert.throws(
-    () => validateCustomerIdentityPhone({ e164: '+6591234567', nationalNumber: '88888888' }),
-    { name: 'PhoneValidationError', code: PHONE_ERROR_CODES.PHONE_CUSTOMER_IDENTITY_INELIGIBLE }
+    () => validateCustomerIdentityPhone('91234567'),
+    { name: 'PhoneValidationError', code: PHONE_ERROR_CODES.PHONE_COUNTRY_REQUIRED }
   );
-  assert.equal(isEligibleForCustomerIdentity({ e164: '+6591234567', nationalNumber: '88888888' }), false);
-
-  // 13. Spoofed regionKind rejected
   assert.throws(
-    () => validateCustomerIdentityPhone({ e164: '+6591234567', regionKind: 'exceptional' }),
-    { name: 'PhoneValidationError', code: PHONE_ERROR_CODES.PHONE_CUSTOMER_IDENTITY_INELIGIBLE }
+    () => validateCustomerIdentityPhone('91234567', null),
+    { name: 'PhoneValidationError', code: PHONE_ERROR_CODES.PHONE_COUNTRY_REQUIRED }
   );
-  assert.equal(isEligibleForCustomerIdentity({ e164: '+6591234567', regionKind: 'exceptional' }), false);
-
-  // 14. Spoofed +800 as iso3166 rejected
   assert.throws(
-    () => validateCustomerIdentityPhone({ e164: '+80012345678', countryIso2: 'SG', regionKind: 'iso3166' }),
-    { name: 'PhoneValidationError', code: PHONE_ERROR_CODES.PHONE_CUSTOMER_IDENTITY_INELIGIBLE }
+    () => validateCustomerIdentityPhone('91234567', undefined),
+    { name: 'PhoneValidationError', code: PHONE_ERROR_CODES.PHONE_COUNTRY_REQUIRED }
   );
-  assert.equal(isEligibleForCustomerIdentity({ e164: '+80012345678', countryIso2: 'SG', regionKind: 'iso3166' }), false);
-
-  // 15. Spoofed AC phone as iso3166 rejected
   assert.throws(
-    () => validateCustomerIdentityPhone({ e164: '+24740123', countryIso2: 'AC', regionKind: 'iso3166' }),
-    { name: 'PhoneValidationError', code: PHONE_ERROR_CODES.PHONE_CUSTOMER_IDENTITY_INELIGIBLE }
+    () => validateCustomerIdentityPhone('91234567', ''),
+    { name: 'PhoneValidationError', code: PHONE_ERROR_CODES.PHONE_COUNTRY_REQUIRED }
   );
-  assert.equal(isEligibleForCustomerIdentity({ e164: '+24740123', countryIso2: 'AC', regionKind: 'iso3166' }), false);
-
-  // 16. Spoofed TA phone as iso3166 rejected
   assert.throws(
-    () => validateCustomerIdentityPhone({ e164: '+2908999', countryIso2: 'TA', regionKind: 'iso3166' }),
-    { name: 'PhoneValidationError', code: PHONE_ERROR_CODES.PHONE_CUSTOMER_IDENTITY_INELIGIBLE }
+    () => validateCustomerIdentityPhone('91234567', '   '),
+    { name: 'PhoneValidationError', code: PHONE_ERROR_CODES.PHONE_COUNTRY_REQUIRED }
   );
-  assert.equal(isEligibleForCustomerIdentity({ e164: '+2908999', countryIso2: 'TA', regionKind: 'iso3166' }), false);
 
-  // 17. Spoofed XK phone as iso3166 rejected
+  // 5. legitimate normalized object returned by normalizeE164Phone passed to Identity is strictly rejected
+  const legitObj = normalizeE164Phone('+6591234567');
   assert.throws(
-    () => validateCustomerIdentityPhone({ e164: '+38343201234', countryIso2: 'XK', regionKind: 'iso3166' }),
-    { name: 'PhoneValidationError', code: PHONE_ERROR_CODES.PHONE_CUSTOMER_IDENTITY_INELIGIBLE }
-  );
-  assert.equal(isEligibleForCustomerIdentity({ e164: '+38343201234', countryIso2: 'XK', regionKind: 'iso3166' }), false);
-
-  // 18. Prototype-inherited e164 rejected
-  const protoObj = Object.create({ e164: '+6591234567' });
-  assert.throws(
-    () => validateCustomerIdentityPhone(protoObj),
+    () => validateCustomerIdentityPhone(legitObj),
     { name: 'PhoneValidationError', code: PHONE_ERROR_CODES.PHONE_INPUT_REQUIRED }
   );
-  assert.equal(isEligibleForCustomerIdentity(protoObj), false);
+  assert.equal(isEligibleForCustomerIdentity(legitObj), false);
 
-  // 19. Getter form e164 rejected
-  const getterObj = { get e164() { return '+6591234567'; } };
+  // 6. legitimate normalized object returned by normalizeE164Phone passed to OTP is strictly rejected
   assert.throws(
-    () => validateCustomerIdentityPhone(getterObj),
+    () => validateOtpPhone(legitObj),
     { name: 'PhoneValidationError', code: PHONE_ERROR_CODES.PHONE_INPUT_REQUIRED }
   );
-  assert.equal(isEligibleForCustomerIdentity(getterObj), false);
+  assert.equal(isEligibleForOtp(legitObj), false);
 
-  // 20. Throwing getter / Proxy fails closed safely without crashing
-  const throwingGetter = {
-    get e164() {
-      throw new Error('Exploit: throwing getter');
+  // 7. plain forged object rejected
+  assert.throws(
+    () => validateCustomerIdentityPhone({ fake: 'phone' }),
+    { name: 'PhoneValidationError', code: PHONE_ERROR_CODES.PHONE_INPUT_REQUIRED }
+  );
+  assert.equal(isEligibleForCustomerIdentity({ fake: 'phone' }), false);
+
+  // 8. {e164:"+6591234567"} rejected
+  assert.throws(
+    () => validateCustomerIdentityPhone({ e164: '+6591234567' }),
+    { name: 'PhoneValidationError', code: PHONE_ERROR_CODES.PHONE_INPUT_REQUIRED }
+  );
+  assert.equal(isEligibleForCustomerIdentity({ e164: '+6591234567' }), false);
+
+  // 9. countryIso2:null object rejected
+  assert.throws(
+    () => validateCustomerIdentityPhone({ e164: '+6591234567', countryIso2: null }),
+    { name: 'PhoneValidationError', code: PHONE_ERROR_CODES.PHONE_INPUT_REQUIRED }
+  );
+  assert.equal(isEligibleForCustomerIdentity({ e164: '+6591234567', countryIso2: null }), false);
+
+  // 10. countryIso2:undefined object rejected
+  assert.throws(
+    () => validateCustomerIdentityPhone({ e164: '+6591234567', countryIso2: undefined }),
+    { name: 'PhoneValidationError', code: PHONE_ERROR_CODES.PHONE_INPUT_REQUIRED }
+  );
+  assert.equal(isEligibleForCustomerIdentity({ e164: '+6591234567', countryIso2: undefined }), false);
+
+  // 11. callingCode:null object rejected
+  assert.throws(
+    () => validateCustomerIdentityPhone({ e164: '+6591234567', callingCode: null }),
+    { name: 'PhoneValidationError', code: PHONE_ERROR_CODES.PHONE_INPUT_REQUIRED }
+  );
+  assert.equal(isEligibleForCustomerIdentity({ e164: '+6591234567', callingCode: null }), false);
+
+  // 12. nationalNumber:null object rejected
+  assert.throws(
+    () => validateCustomerIdentityPhone({ e164: '+6591234567', nationalNumber: null }),
+    { name: 'PhoneValidationError', code: PHONE_ERROR_CODES.PHONE_INPUT_REQUIRED }
+  );
+  assert.equal(isEligibleForCustomerIdentity({ e164: '+6591234567', nationalNumber: null }), false);
+
+  // 13. regionKind:null object rejected
+  assert.throws(
+    () => validateCustomerIdentityPhone({ e164: '+6591234567', regionKind: null }),
+    { name: 'PhoneValidationError', code: PHONE_ERROR_CODES.PHONE_INPUT_REQUIRED }
+  );
+  assert.equal(isEligibleForCustomerIdentity({ e164: '+6591234567', regionKind: null }), false);
+
+  // 14. Array rejected
+  assert.throws(
+    () => validateCustomerIdentityPhone(['+6591234567']),
+    { name: 'PhoneValidationError', code: PHONE_ERROR_CODES.PHONE_INPUT_REQUIRED }
+  );
+  assert.equal(isEligibleForCustomerIdentity(['+6591234567']), false);
+
+  // 15. Date rejected
+  assert.throws(
+    () => validateCustomerIdentityPhone(new Date()),
+    { name: 'PhoneValidationError', code: PHONE_ERROR_CODES.PHONE_INPUT_REQUIRED }
+  );
+  assert.equal(isEligibleForCustomerIdentity(new Date()), false);
+
+  // 16. Map rejected
+  assert.throws(
+    () => validateCustomerIdentityPhone(new Map()),
+    { name: 'PhoneValidationError', code: PHONE_ERROR_CODES.PHONE_INPUT_REQUIRED }
+  );
+  assert.equal(isEligibleForCustomerIdentity(new Map()), false);
+
+  // 17. Set rejected
+  assert.throws(
+    () => validateCustomerIdentityPhone(new Set(['+6591234567'])),
+    { name: 'PhoneValidationError', code: PHONE_ERROR_CODES.PHONE_INPUT_REQUIRED }
+  );
+  assert.equal(isEligibleForCustomerIdentity(new Set(['+6591234567'])), false);
+
+  // 18. class instance rejected
+  class UserPhone {
+    constructor() {
+      this.phone = '+6591234567';
+      this.e164 = '+6591234567';
     }
-  };
-  assert.throws(() => validateCustomerIdentityPhone(throwingGetter), { name: 'PhoneValidationError' });
-  assert.equal(isEligibleForCustomerIdentity(throwingGetter), false);
+  }
+  assert.throws(
+    () => validateCustomerIdentityPhone(new UserPhone()),
+    { name: 'PhoneValidationError', code: PHONE_ERROR_CODES.PHONE_INPUT_REQUIRED }
+  );
+  assert.equal(isEligibleForCustomerIdentity(new UserPhone()), false);
 
+  // 19. String object rejected (only primitive string accepted)
+  const strObj = new String('+6591234567');
+  assert.throws(
+    () => validateCustomerIdentityPhone(strObj),
+    { name: 'PhoneValidationError', code: PHONE_ERROR_CODES.PHONE_INPUT_REQUIRED }
+  );
+  assert.equal(isEligibleForCustomerIdentity(strObj), false);
+
+  // 20. function rejected
+  assert.throws(
+    () => validateCustomerIdentityPhone(() => '+6591234567'),
+    { name: 'PhoneValidationError', code: PHONE_ERROR_CODES.PHONE_INPUT_REQUIRED }
+  );
+  assert.equal(isEligibleForCustomerIdentity(() => '+6591234567'), false);
+
+  // 21. callable Proxy rejected without invoking trap
+  let callableTrapCalled = false;
+  const callableProxy = new Proxy(() => '+6591234567', {
+    apply() { callableTrapCalled = true; return '+6591234567'; },
+    get() { callableTrapCalled = true; return '+6591234567'; }
+  });
+  assert.throws(
+    () => validateCustomerIdentityPhone(callableProxy),
+    { name: 'PhoneValidationError', code: PHONE_ERROR_CODES.PHONE_INPUT_REQUIRED }
+  );
+  assert.equal(callableTrapCalled, false, 'Callable proxy trap must not be called');
+  assert.equal(isEligibleForCustomerIdentity(callableProxy), false);
+
+  // 22. normal Proxy rejected without invoking trap
+  let normalTrapCalled = false;
+  const normalProxy = new Proxy({ e164: '+6591234567' }, {
+    get() { normalTrapCalled = true; return '+6591234567'; }
+  });
+  assert.throws(
+    () => validateCustomerIdentityPhone(normalProxy),
+    { name: 'PhoneValidationError', code: PHONE_ERROR_CODES.PHONE_INPUT_REQUIRED }
+  );
+  assert.equal(normalTrapCalled, false, 'Proxy get trap must not be called');
+  assert.equal(isEligibleForCustomerIdentity(normalProxy), false);
+
+  // 23. spoofed getPrototypeOf Proxy rejected without invoking trap
+  let protoTrapCalled = false;
+  const protoProxy = new Proxy({}, {
+    getPrototypeOf() { protoTrapCalled = true; return String.prototype; }
+  });
+  assert.throws(
+    () => validateCustomerIdentityPhone(protoProxy),
+    { name: 'PhoneValidationError', code: PHONE_ERROR_CODES.PHONE_INPUT_REQUIRED }
+  );
+  assert.equal(protoTrapCalled, false, 'Proxy getPrototypeOf trap must not be called');
+
+  // 24. hiding ownKeys Proxy rejected without invoking trap
+  let ownKeysTrapCalled = false;
+  const hideKeysProxy = new Proxy({ e164: '+6591234567' }, {
+    ownKeys() { ownKeysTrapCalled = true; return []; }
+  });
+  assert.throws(
+    () => validateCustomerIdentityPhone(hideKeysProxy),
+    { name: 'PhoneValidationError', code: PHONE_ERROR_CODES.PHONE_INPUT_REQUIRED }
+  );
+  assert.equal(ownKeysTrapCalled, false, 'Proxy ownKeys trap must not be called');
+
+  // 25. hiding descriptor Proxy rejected without invoking trap
+  let descTrapCalled = false;
+  const descProxy = new Proxy({ e164: '+6591234567' }, {
+    getOwnPropertyDescriptor() { descTrapCalled = true; return undefined; }
+  });
+  assert.throws(
+    () => validateCustomerIdentityPhone(descProxy),
+    { name: 'PhoneValidationError', code: PHONE_ERROR_CODES.PHONE_INPUT_REQUIRED }
+  );
+  assert.equal(descTrapCalled, false, 'Proxy getOwnPropertyDescriptor trap must not be called');
+
+  // 26. throwing Proxy fails closed safely without process crash
   const throwingProxy = new Proxy({}, {
     get() { throw new Error('Proxy get exploit'); },
     getOwnPropertyDescriptor() { throw new Error('Proxy desc exploit'); },
@@ -862,153 +994,194 @@ test('identity & OTP: regression tests 9-30 for object forgery, prototypes, prox
     has() { throw new Error('Proxy has exploit'); },
     ownKeys() { throw new Error('Proxy ownKeys exploit'); }
   });
-  assert.throws(() => validateCustomerIdentityPhone(throwingProxy), { name: 'PhoneValidationError' });
+  assert.throws(
+    () => validateCustomerIdentityPhone(throwingProxy),
+    { name: 'PhoneValidationError', code: PHONE_ERROR_CODES.PHONE_INPUT_REQUIRED }
+  );
   assert.equal(isEligibleForCustomerIdentity(throwingProxy), false);
 
-  // 21. Array / Date / Map / Set rejected
+  // 27. e164 getter is never invoked
+  let e164GetterCalled = false;
+  const e164GetterObj = {
+    get e164() {
+      e164GetterCalled = true;
+      return '+6591234567';
+    }
+  };
   assert.throws(
-    () => validateCustomerIdentityPhone(['+6591234567']),
+    () => validateCustomerIdentityPhone(e164GetterObj),
     { name: 'PhoneValidationError', code: PHONE_ERROR_CODES.PHONE_INPUT_REQUIRED }
   );
-  assert.equal(isEligibleForCustomerIdentity(['+6591234567']), false);
+  assert.equal(e164GetterCalled, false, 'e164 getter must not be invoked');
 
+  // 28. arbitrary property getters are never invoked
+  let anyGetterCalled = false;
+  const anyGetterObj = {
+    get countryIso2() { anyGetterCalled = true; return 'SG'; },
+    get callingCode() { anyGetterCalled = true; return '+65'; },
+    get nationalNumber() { anyGetterCalled = true; return '91234567'; },
+    get regionKind() { anyGetterCalled = true; return 'iso3166'; },
+    get dummy() { anyGetterCalled = true; return '123'; }
+  };
   assert.throws(
-    () => validateCustomerIdentityPhone(new Date()),
+    () => validateCustomerIdentityPhone(anyGetterObj),
     { name: 'PhoneValidationError', code: PHONE_ERROR_CODES.PHONE_INPUT_REQUIRED }
   );
-  assert.equal(isEligibleForCustomerIdentity(new Date()), false);
+  assert.equal(anyGetterCalled, false, 'Arbitrary property getter must not be invoked');
 
+  // 29. Symbol.toPrimitive is never invoked
+  let primCalled = false;
+  const primObj = {
+    [Symbol.toPrimitive]() {
+      primCalled = true;
+      return '+6591234567';
+    }
+  };
   assert.throws(
-    () => validateCustomerIdentityPhone(new Map()),
+    () => validateCustomerIdentityPhone(primObj),
     { name: 'PhoneValidationError', code: PHONE_ERROR_CODES.PHONE_INPUT_REQUIRED }
   );
-  assert.equal(isEligibleForCustomerIdentity(new Map()), false);
+  assert.equal(primCalled, false, 'Symbol.toPrimitive must not be invoked');
 
+  // 30. toString is never invoked
+  let toStringCalled = false;
+  const toStringObj = {
+    toString() {
+      toStringCalled = true;
+      return '+6591234567';
+    }
+  };
   assert.throws(
-    () => validateCustomerIdentityPhone(new Set(['+6591234567'])),
+    () => validateCustomerIdentityPhone(toStringObj),
     { name: 'PhoneValidationError', code: PHONE_ERROR_CODES.PHONE_INPUT_REQUIRED }
   );
-  assert.equal(isEligibleForCustomerIdentity(new Set(['+6591234567'])), false);
+  assert.equal(toStringCalled, false, 'toString must not be invoked');
 
-  // 22. Legitimate real normalized object passes Customer Identity
-  const legitimate = normalizeNationalPhone({ countryIso2: 'SG', nationalNumber: '91234567' });
-  const legResult = validateCustomerIdentityPhone(legitimate);
-  assert.equal(legResult.e164, '+6591234567');
-  assert.equal(legResult.countryIso2, 'SG');
-  assert.equal(legResult.callingCode, '+65');
-  assert.equal(legResult.nationalNumber, '91234567');
-  assert.equal(legResult.regionKind, 'iso3166');
-  assert.equal(legResult.eligibleForCustomerIdentity, true);
-  assert.equal(isEligibleForCustomerIdentity(legitimate), true);
+  // 31. valueOf is never invoked
+  let valueOfCalled = false;
+  const valueOfObj = {
+    valueOf() {
+      valueOfCalled = true;
+      return '+6591234567';
+    }
+  };
+  assert.throws(
+    () => validateCustomerIdentityPhone(valueOfObj),
+    { name: 'PhoneValidationError', code: PHONE_ERROR_CODES.PHONE_INPUT_REQUIRED }
+  );
+  assert.equal(valueOfCalled, false, 'valueOf must not be invoked');
 
-  // 23. Any modified field on legitimate object is rejected
+  // 32. object with full phone number as property key is rejected
+  const phoneNamedObj = { '+6591234567': 'secret', '91234567': true };
   assert.throws(
-    () => validateCustomerIdentityPhone({ ...legitimate, countryIso2: 'MY' }),
-    { name: 'PhoneValidationError', code: PHONE_ERROR_CODES.PHONE_CUSTOMER_IDENTITY_INELIGIBLE }
-  );
-  assert.throws(
-    () => validateCustomerIdentityPhone({ ...legitimate, callingCode: '+60' }),
-    { name: 'PhoneValidationError', code: PHONE_ERROR_CODES.PHONE_CUSTOMER_IDENTITY_INELIGIBLE }
-  );
-  assert.throws(
-    () => validateCustomerIdentityPhone({ ...legitimate, nationalNumber: '88888888' }),
-    { name: 'PhoneValidationError', code: PHONE_ERROR_CODES.PHONE_CUSTOMER_IDENTITY_INELIGIBLE }
-  );
-  assert.throws(
-    () => validateCustomerIdentityPhone({ ...legitimate, regionKind: 'exceptional' }),
-    { name: 'PhoneValidationError', code: PHONE_ERROR_CODES.PHONE_CUSTOMER_IDENTITY_INELIGIBLE }
-  );
-  assert.throws(
-    () => validateCustomerIdentityPhone({ ...legitimate, e164: '+60123456789' }),
-    { name: 'PhoneValidationError', code: PHONE_ERROR_CODES.PHONE_CUSTOMER_IDENTITY_INELIGIBLE }
+    () => validateCustomerIdentityPhone(phoneNamedObj),
+    { name: 'PhoneValidationError', code: PHONE_ERROR_CODES.PHONE_INPUT_REQUIRED }
   );
 
-  // 24. validateOtpPhone cannot be bypassed
-  assert.throws(
-    () => validateOtpPhone({ e164: '+80012345678', countryIso2: 'SG', regionKind: 'iso3166' }),
-    { name: 'PhoneValidationError' }
-  );
-  assert.throws(
-    () => validateOtpPhone({ e164: '+24740123', regionKind: 'iso3166' }),
-    { name: 'PhoneValidationError' }
-  );
-  assert.throws(
-    () => validateOtpPhone({ ...legitimate, countryIso2: 'MY' }),
-    { name: 'PhoneValidationError' }
-  );
-
-  // 25. isEligibleForOtp returns false on forged objects
-  assert.equal(isEligibleForOtp({ e164: '+80012345678', countryIso2: 'SG', regionKind: 'iso3166' }), false);
-  assert.equal(isEligibleForOtp({ e164: '+24740123', regionKind: 'iso3166' }), false);
-  assert.equal(isEligibleForOtp({ ...legitimate, countryIso2: 'MY' }), false);
-
-  // 26. Error messages do not leak PII
+  // 33. malicious property key never appears in error message
+  let msgErr;
   try {
-    validateCustomerIdentityPhone('+659123456789999');
-  } catch (err) {
-    assert.equal(err.message.includes('659123456789999'), false);
+    validateCustomerIdentityPhone(phoneNamedObj);
+  } catch (e) {
+    msgErr = e;
   }
+  assert.ok(msgErr);
+  assert.equal(msgErr.message.includes('+6591234567'), false);
+  assert.equal(msgErr.message.includes('91234567'), false);
+
+  // 34. malicious property key never appears in JSON-serialized error
+  const jsonErr = JSON.stringify({ name: msgErr.name, code: msgErr.code, message: msgErr.message });
+  assert.equal(jsonErr.includes('+6591234567'), false);
+  assert.equal(jsonErr.includes('91234567'), false);
+
+  // 35. caller input object is never mutated
+  const unmodifiableCandidate = Object.freeze({ e164: '+6591234567', testProp: 'val' });
+  const beforeSnap = JSON.stringify(unmodifiableCandidate);
   try {
-    validateCustomerIdentityPhone({ e164: '+6591234567', countryIso2: 'MY' });
+    validateCustomerIdentityPhone(unmodifiableCandidate);
+  } catch (_) {}
+  assert.equal(JSON.stringify(unmodifiableCandidate), beforeSnap);
+
+  // 36. error object never retains reference to input
+  try {
+    validateCustomerIdentityPhone(unmodifiableCandidate);
   } catch (err) {
-    assert.equal(err.message.includes('+6591234567'), false);
-    assert.equal(err.message.includes('91234567'), false);
+    assert.equal(Object.values(err).includes(unmodifiableCandidate), false);
+    assert.equal(err.input, undefined);
+    assert.equal(err.rawInput, undefined);
   }
 
-  // 27. Caller object is not modified
-  const callerInput = { ...legitimate };
-  const callerSnapshot = JSON.stringify(callerInput);
-  validateCustomerIdentityPhone(callerInput);
-  assert.equal(JSON.stringify(callerInput), callerSnapshot);
+  // 37. validateOtpPhone likewise only accepts primitive strings
+  assert.throws(
+    () => validateOtpPhone(legitObj),
+    { name: 'PhoneValidationError', code: PHONE_ERROR_CODES.PHONE_INPUT_REQUIRED }
+  );
+  assert.throws(
+    () => validateOtpPhone({ e164: '+6591234567' }),
+    { name: 'PhoneValidationError', code: PHONE_ERROR_CODES.PHONE_INPUT_REQUIRED }
+  );
+  const otpPass = validateOtpPhone('+6591234567');
+  assert.equal(otpPass.e164, '+6591234567');
 
-  // 28. Return object is not caller's object
-  const output = validateCustomerIdentityPhone(legitimate);
-  assert.notEqual(output, legitimate);
+  // 38. isEligibleForOtp likewise only accepts primitive strings
+  assert.equal(isEligibleForOtp(legitObj), false);
+  assert.equal(isEligibleForOtp({ e164: '+6591234567' }), false);
+  assert.equal(isEligibleForOtp('+6591234567'), true);
 
-  // 29. String inputs (SG/MY/ID/CN, shared codes, leading zero) continue to pass
-  const sg = validateCustomerIdentityPhone('+6591234567');
-  assert.equal(sg.countryIso2, 'SG');
-  const my = validateCustomerIdentityPhone('+60123456789');
-  assert.equal(my.countryIso2, 'MY');
-  const id = validateCustomerIdentityPhone('+628123456789');
-  assert.equal(id.countryIso2, 'ID');
-  const cn = validateCustomerIdentityPhone('+8613800138000');
-  assert.equal(cn.countryIso2, 'CN');
+  // 39. +800 can be parsed by general normalizeE164Phone
+  const nonGeoRes = normalizeE164Phone('+80012345678');
+  assert.equal(nonGeoRes.regionKind, 'non_geographic');
+  assert.equal(nonGeoRes.countryIso2, null);
 
-  // Shared calling code +1 (US / CA)
-  const us = validateCustomerIdentityPhone('+14155552671');
-  assert.equal(us.countryIso2, 'US');
-  const ca = validateCustomerIdentityPhone('+14165552671');
-  assert.equal(ca.countryIso2, 'CA');
-
-  // Leading zero national input normalized then validated
-  const idWithZero = normalizeNationalPhone({ countryIso2: 'ID', nationalNumber: '08123456789' });
-  const idValidated = validateCustomerIdentityPhone(idWithZero);
-  assert.equal(idValidated.e164, '+628123456789');
-  assert.equal(idValidated.countryIso2, 'ID');
-
-  // 30. General normalizeE164Phone parses valid non-geographic numbers, but Identity/OTP rejects them
-  const parsedNonGeo = normalizeE164Phone('+80012345678');
-  assert.equal(parsedNonGeo.regionKind, 'non_geographic');
-  assert.equal(parsedNonGeo.countryIso2, null);
+  // 40. +800 Identity rejected
   assert.throws(
     () => validateCustomerIdentityPhone('+80012345678'),
     { name: 'PhoneValidationError', code: PHONE_ERROR_CODES.PHONE_CUSTOMER_IDENTITY_INELIGIBLE }
   );
-  assert.throws(
-    () => validateCustomerIdentityPhone(parsedNonGeo),
-    { name: 'PhoneValidationError', code: PHONE_ERROR_CODES.PHONE_CUSTOMER_IDENTITY_INELIGIBLE }
-  );
   assert.equal(isEligibleForCustomerIdentity('+80012345678'), false);
-  assert.equal(isEligibleForCustomerIdentity(parsedNonGeo), false);
+
+  // 41. +800 OTP rejected
   assert.throws(
     () => validateOtpPhone('+80012345678'),
     { name: 'PhoneValidationError', code: PHONE_ERROR_CODES.PHONE_CUSTOMER_IDENTITY_INELIGIBLE }
   );
+  assert.equal(isEligibleForOtp('+80012345678'), false);
+
+  // 42. AC, TA, XK rejected by Identity and OTP
   assert.throws(
-    () => validateOtpPhone(parsedNonGeo),
+    () => validateCustomerIdentityPhone('+24740123'),
     { name: 'PhoneValidationError', code: PHONE_ERROR_CODES.PHONE_CUSTOMER_IDENTITY_INELIGIBLE }
   );
-  assert.equal(isEligibleForOtp('+80012345678'), false);
-  assert.equal(isEligibleForOtp(parsedNonGeo), false);
+  assert.equal(isEligibleForCustomerIdentity('+24740123'), false);
+
+  assert.throws(
+    () => validateCustomerIdentityPhone('+2908999'),
+    { name: 'PhoneValidationError', code: PHONE_ERROR_CODES.PHONE_CUSTOMER_IDENTITY_INELIGIBLE }
+  );
+  assert.equal(isEligibleForCustomerIdentity('+2908999'), false);
+
+  assert.throws(
+    () => validateCustomerIdentityPhone('+38343201234'),
+    { name: 'PhoneValidationError', code: PHONE_ERROR_CODES.PHONE_CUSTOMER_IDENTITY_INELIGIBLE }
+  );
+  assert.equal(isEligibleForCustomerIdentity('+38343201234'), false);
+
+  // 43. SG, MY, ID, CN regular strings continue to pass
+  assert.equal(validateCustomerIdentityPhone('+6591234567').countryIso2, 'SG');
+  assert.equal(validateCustomerIdentityPhone('+60123456789').countryIso2, 'MY');
+  assert.equal(validateCustomerIdentityPhone('+628123456789').countryIso2, 'ID');
+  assert.equal(validateCustomerIdentityPhone('+8613800138000').countryIso2, 'CN');
+
+  // 44. +1, +7, +39 shared calling code disambiguation continues to pass
+  assert.equal(validateCustomerIdentityPhone('+14155552671').countryIso2, 'US');
+  assert.equal(validateCustomerIdentityPhone('+14165552671').countryIso2, 'CA');
+  assert.equal(validateCustomerIdentityPhone('+79161234567').countryIso2, 'RU');
+  assert.equal(validateCustomerIdentityPhone('+77172123456').countryIso2, 'KZ');
+  assert.equal(validateCustomerIdentityPhone('+390669812345').countryIso2, 'VA');
+
+  // 45. Italy / Vatican leading zero handling continues to pass
+  assert.equal(validateCustomerIdentityPhone('+390612345678').countryIso2, 'IT');
+  const itNational = validateCustomerIdentityPhone('0612345678', 'IT');
+  assert.equal(itNational.countryIso2, 'IT');
+  assert.equal(itNational.e164, '+390612345678');
 });
