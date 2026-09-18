@@ -20,7 +20,11 @@ Phone metadata classifies territory and dialing codes into 4 distinct categories
 ### Customer Identity & OTP vs. General Parsing Boundary
 - **General Parsing**: `normalizeE164Phone` preserves the ability to parse valid non-geographic numbers (returning `countryIso2: null` and `regionKind: 'non_geographic'`).
 - **Customer Identity & Member OTP Restriction**:
-  - Pure validation (`validateCustomerIdentityPhone` / `isEligibleForCustomerIdentity`) strictly rejects any phone where `countryIso2 === null` or `regionKind !== 'iso3166'`.
+  - Pure validation (`validateCustomerIdentityPhone` / `isEligibleForCustomerIdentity`, aliased by `validateOtpPhone` / `isEligibleForOtp`) strictly accepts **only primitive string inputs**.
+  - **No Object Input**: Previously normalized objects, plain objects, or caller-constructed objects are NOT trusted and are strictly rejected. General formatting results cannot serve directly as proof of identity authorization.
+  - **Internal Authoritative Re-parsing**: Every phone number must be re-parsed internally within the secure validator via authoritative `normalizeE164Phone` / `normalizeNationalPhone` pipelines.
+  - **No Automatic Coercion**: String objects, Numbers, Objects, Arrays, Dates, Maps, Sets, functions, and Proxies fail closed immediately without property access or type coercion (`toString`, `valueOf`, and `Symbol.toPrimitive` are never invoked).
+  - Pure validation strictly rejects any phone where `countryIso2 === null` or `regionKind !== 'iso3166'`.
   - Non-geographic numbers, `AC`, `TA`, and `XK` are STRICTLY PROHIBITED for Customer Identity, Member OTP challenges, or authoritative member phone matching.
   - There is NO feature to "save non-geographic numbers to owner notes".
 - **Global Selector vs. Global OTP**:
@@ -65,8 +69,11 @@ Phone metadata classifies territory and dialing codes into 4 distinct categories
   - Extensions (e.g. `ext`, `x`, `#`) are strictly prohibited for primary customer identification.
   - Multiple phone numbers, concatenated numbers, or delimiters (e.g. `/`, `,`, `;`, `or`) are rejected.
   - Letters, HTML/script tags, control characters, and newlines are rejected.
-- **PII Protection**: Error messages and logs must never interpolate or display full customer phone numbers.
-- **Input Immutability**: Functions must never mutate caller-provided input objects.
+- **Static Error Privacy & Zero PII**:
+  - All errors use static, immutable constant error codes and messages.
+  - Error messages and serialization never interpolate or contain phone numbers, e164, national numbers, caller property keys, object constructor names, proxy traps, or user input fragments.
+  - Error instances do not retain references to caller input.
+- **Input Immutability**: Functions must never mutate caller-provided input objects or arguments.
 
 ## 5. Trust Boundaries: Guest Booking vs. Verified Member
 - **Guest Appointment Booking**:
