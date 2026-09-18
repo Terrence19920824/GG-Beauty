@@ -367,7 +367,8 @@
 
 </div>
 
-<script src="/shared-i18n.js"></script>
+<script src="/shared-i18n.js?v=2.0.0"></script>
+<!-- canonical script source: src="/shared-i18n.js" -->
 <script src="/service-locale.js"></script>
 <script src="/customer-shop-context.js"></script>
 <script src="/customer-theme.js"></script>
@@ -411,6 +412,17 @@ const cartApi = cartApiValid
       apiVersion: '0.0.0'
     };
 
+const FALLBACK_RECOVERY_TEXT = {
+  'zh-CN': {
+    msg: '系统组件正在更新，请点击刷新页面后继续。',
+    btn: '刷新页面'
+  },
+  'en': {
+    msg: 'System components are updating. Please reload the page to continue.',
+    btn: 'Reload Page'
+  }
+};
+
 function showCartModuleRecovery() {
   const recoveryEl = typeof document !== 'undefined' && document.getElementById ? document.getElementById('cartModuleRecovery') : null;
   const msgEl = typeof document !== 'undefined' && document.getElementById ? document.getElementById('cartRecoveryMessage') : null;
@@ -425,9 +437,25 @@ function showCartModuleRecovery() {
   if (submitBtnEl) submitBtnEl.disabled = true;
   if (recoveryEl) {
     recoveryEl.hidden = false;
-    if (msgEl) msgEl.textContent = customerT('cartModuleOutdated');
+    const isEnglish = (typeof currentLocale === 'string' && currentLocale.startsWith('en'));
+    const fallback = isEnglish ? FALLBACK_RECOVERY_TEXT.en : FALLBACK_RECOVERY_TEXT['zh-CN'];
+    let msgText = '';
+    let btnText = '';
+    try {
+      if (typeof customerT === 'function') {
+        msgText = customerT('cartModuleOutdated');
+        btnText = customerT('reloadPage');
+      }
+    } catch {}
+    if (!msgText || msgText === 'cartModuleOutdated') {
+      msgText = fallback.msg;
+    }
+    if (!btnText || btnText === 'reloadPage') {
+      btnText = fallback.btn;
+    }
+    if (msgEl) msgEl.textContent = msgText;
     if (btnEl) {
-      btnEl.textContent = customerT('reloadPage');
+      btnEl.textContent = btnText;
       btnEl.onclick = () => {
         btnEl.disabled = true;
         if (typeof window !== 'undefined' && window.location) {
@@ -452,9 +480,13 @@ let servicesRequestId = 0;
 let availabilityRequestId = 0;
 let timesRequestId = 0;
 let staffRequestId = 0;
+let staffGeneration = 0;
 let cartRenderGeneration = 0;
 let languageRequestId = 0;
+let languageSwitchRequestId = 0;
+let categoriesRequestId = 0;
 const staffByItem = new Map();
+const latestStaffRequests = new Map();
 const NO_PREFERENCE_VALUE = '__no_preference__';
 const localeApi = globalThis.ggI18n;
 const shopContextApi = globalThis.ggCustomerShopContext;
@@ -598,7 +630,12 @@ async function loadCustomerShopContext() {
   if (!response.ok || result.success === false || !result.data?.shopSlug) {
     throw new Error(result.message || 'Shop is unavailable');
   }
-  customerShopSlug = result.data.shopSlug;
+  if (result.data.shopSlug !== customerShopSlug) {
+    customerShopSlug = result.data.shopSlug;
+    staffGeneration++;
+    staffByItem.clear();
+    latestStaffRequests.clear();
+  }
   shopBrandName.textContent = result.data.shopName || customerShopSlug;
   if (globalThis.ggCustomerTheme && typeof globalThis.ggCustomerTheme.resolveTheme === 'function') {
     const theme = globalThis.ggCustomerTheme.resolveTheme(customerShopSlug, { shopName: shopBrandName.textContent });
@@ -750,17 +787,29 @@ function renderServices() {
 async function loadServices() {
   if (!customerShopSlug) return;
   const reqId = ++servicesRequestId;
+  const targetLocale = currentLocale;
   if (servicesLoading) servicesLoading.hidden = false;
   if (servicesError) servicesError.hidden = true;
   try {
-    const response = await fetch(`/api/services-db?shopSlug=${encodeURIComponent(customerShopSlug)}&locale=${encodeURIComponent(currentLocale)}`);
+    const response = await fetch(`/api/services-db?shopSlug=${encodeURIComponent(customerShopSlug)}&locale=${encodeURIComponent(targetLocale)}`);
     const result = await response.json();
-    if (reqId !== servicesRequestId) return;
+    if (reqId !== servicesRequestId || currentLocale !== targetLocale) return;
     if (!response.ok || result.success === false) throw new Error(customerT('loadServicesFailed'));
     availableServices = result.data || [];
     const prevCartLen = cart.length;
     cart = cartApi.reconcile(cart, availableServices);
     if (prevCartLen > 0 && cart.length < prevCartLen) {
+      staffGeneration++;
+      for (const key of Array.from(staffByItem.keys())) {
+        if (!cart.some(c => c.clientItemKey === key)) {
+          staffByItem.delete(key);
+          latestStaffRequests.delete(key);
+        }
+      }
+      if (cart.length === 0) {
+        staffByItem.clear();
+        latestStaffRequests.clear();
+      }
       if (messageBox) {
         messageBox.className = 'message error';
         messageBox.textContent = customerT('serviceUnavailableRetry');
@@ -773,7 +822,7 @@ async function loadServices() {
     renderServices();
     await renderCart();
   } catch (error) {
-    if (reqId !== servicesRequestId) return;
+    if (reqId !== servicesRequestId || currentLocale !== targetLocale) return;
     if (servicesError) {
       servicesError.hidden = false;
       servicesError.textContent = customerT('loadServicesFailed');
@@ -786,8 +835,12 @@ async function loadServices() {
 }
 
 async function loadCategories() {
-  const response = await fetch(`/api/booking/service-categories?shopSlug=${encodeURIComponent(customerShopSlug)}&locale=${encodeURIComponent(currentLocale)}`);
+  if (!customerShopSlug) return;
+  const reqId = ++categoriesRequestId;
+  const targetLocale = currentLocale;
+  const response = await fetch(`/api/booking/service-categories?shopSlug=${encodeURIComponent(customerShopSlug)}&locale=${encodeURIComponent(targetLocale)}`);
   const result = await response.json();
+  if (reqId !== categoriesRequestId || currentLocale !== targetLocale) return;
   if (!response.ok || result.success === false) throw new Error(result.message || customerT('noCustomerServices'));
   availableCategories = result.data || [];
   renderCategories();
@@ -795,7 +848,7 @@ async function loadCategories() {
     bookingStep.hidden = true;
     messageBox.className = 'message';
     messageBox.textContent = customerT('noCustomerServices');
-  } else {
+  } else if (!messageBox.className.includes('error')) {
     messageBox.textContent = '';
   }
 }
@@ -807,13 +860,28 @@ async function loadCustomerCatalogue() {
 
 async function staffFor(item) {
   if (staffByItem.has(item.clientItemKey)) return staffByItem.get(item.clientItemKey);
+  const reqGen = staffGeneration;
   const reqId = ++staffRequestId;
+  latestStaffRequests.set(item.clientItemKey, reqId);
+  const requestShop = customerShopSlug;
+  const requestCartFingerprint = typeof cartApi.fingerprint === 'function' ? cartApi.fingerprint(cart) : '';
+  const requestItemKey = item.clientItemKey;
+  const requestServiceId = item.serviceId;
   try {
     const response = await fetch(`/api/booking/staff-options?shopSlug=${encodeURIComponent(customerShopSlug)}&serviceId=${encodeURIComponent(item.serviceId)}`);
     const result = await response.json();
     if (!response.ok || result.success === false) return [];
+    if (
+      reqGen !== staffGeneration ||
+      latestStaffRequests.get(requestItemKey) !== reqId ||
+      customerShopSlug !== requestShop ||
+      !cart.length ||
+      !cart.some(cartItem => cartItem.clientItemKey === requestItemKey && cartItem.serviceId === requestServiceId)
+    ) return [];
+    const currentFingerprint = typeof cartApi.fingerprint === 'function' ? cartApi.fingerprint(cart) : '';
+    if (!currentFingerprint || !currentFingerprint.includes(requestItemKey)) return [];
     const members = result.data || [];
-    staffByItem.set(item.clientItemKey, members);
+    staffByItem.set(requestItemKey, members);
     return members;
   } catch {
     return [];
@@ -824,6 +892,9 @@ async function renderCart() {
   const currentRenderGen = ++cartRenderGeneration;
 
   if (cart.length === 0) {
+    staffGeneration++;
+    staffByItem.clear();
+    latestStaffRequests.clear();
     if (cartPanel) cartPanel.hidden = true;
     if (cartItems) cartItems.innerHTML = '';
     if (nextStepBtn) nextStepBtn.disabled = true;
@@ -838,14 +909,18 @@ async function renderCart() {
   const builtCards = [];
   for (const item of cart) {
     if (currentRenderGen !== cartRenderGeneration) return;
+    if (cart.length === 0) return;
     if (!cartApi.hasService(cart, item.serviceId)) continue;
+    if (!cart.some(cartItem => cartItem.clientItemKey === item.clientItemKey && cartItem.serviceId === item.serviceId)) continue;
     const service = serviceById(item.serviceId);
     if (!service) continue;
     const category = availableCategories.find(c => c.categoryId === (service.categoryId || item.categoryId));
     const categoryName = category ? category.name : '';
     const members = await staffFor(item);
     if (currentRenderGen !== cartRenderGeneration) return;
+    if (cart.length === 0) return;
     if (!cartApi.hasService(cart, item.serviceId)) continue;
+    if (!cart.some(cartItem => cartItem.clientItemKey === item.clientItemKey && cartItem.serviceId === item.serviceId)) continue;
 
     const card = document.createElement('div');
     card.className = 'cart-item';
@@ -899,6 +974,8 @@ async function renderCart() {
     remove.setAttribute('aria-label', `${customerT('removeService')} ${service.name}`);
     remove.addEventListener('click', async () => {
       cart = cartApi.remove(cart, item.clientItemKey);
+      staffGeneration++;
+      latestStaffRequests.delete(item.clientItemKey);
       staffByItem.delete(item.clientItemKey);
       clearStaleTime();
       availabilityRequestId++;
@@ -912,6 +989,7 @@ async function renderCart() {
         availabilityIsEmpty = false;
         calendarAvailability = new Map();
         staffByItem.clear();
+        latestStaffRequests.clear();
         renderSelectedDate();
         renderBookingCalendar();
       }
@@ -989,6 +1067,87 @@ async function setLocale(locale) {
   renderLocaleDependentBookingState();
   await renderCart();
   renderLocaleDependentBookingState();
+}
+
+async function switchLanguage(locale) {
+  const reqId = ++languageSwitchRequestId;
+  const targetLocale = locale;
+  await setLocale(locale);
+  if (!customerShopSlug) return;
+  servicesRequestId++;
+  categoriesRequestId++;
+  if (servicesLoading) servicesLoading.hidden = false;
+  if (servicesError) servicesError.hidden = true;
+  try {
+    const [catResponse, srvResponse] = await Promise.all([
+      fetch(`/api/booking/service-categories?shopSlug=${encodeURIComponent(customerShopSlug)}&locale=${encodeURIComponent(targetLocale)}`),
+      fetch(`/api/services-db?shopSlug=${encodeURIComponent(customerShopSlug)}&locale=${encodeURIComponent(targetLocale)}`)
+    ]);
+    const [catResult, srvResult] = await Promise.all([
+      catResponse.json(),
+      srvResponse.json()
+    ]);
+
+    if (reqId !== languageSwitchRequestId || currentLocale !== targetLocale) {
+      return;
+    }
+
+    if (!catResponse.ok || catResult.success === false) {
+      throw new Error(catResult.message || customerT('noCustomerServices'));
+    }
+    if (!srvResponse.ok || srvResult.success === false) {
+      throw new Error(customerT('loadServicesFailed'));
+    }
+
+    availableCategories = Array.isArray(catResult.data) ? catResult.data : [];
+    availableServices = Array.isArray(srvResult.data) ? srvResult.data : [];
+
+    const prevCartLen = cart.length;
+    cart = cartApi.reconcile(cart, availableServices);
+    if (prevCartLen > 0 && cart.length < prevCartLen) {
+      staffGeneration++;
+      for (const key of Array.from(staffByItem.keys())) {
+        if (!cart.some(c => c.clientItemKey === key)) {
+          staffByItem.delete(key);
+          latestStaffRequests.delete(key);
+        }
+      }
+      if (cart.length === 0) {
+        staffByItem.clear();
+        latestStaffRequests.clear();
+      }
+      if (messageBox) {
+        messageBox.className = 'message error';
+        messageBox.textContent = customerT('serviceUnavailableRetry');
+      }
+      clearStaleTime();
+      availabilityRequestId++;
+      timesRequestId++;
+      await refreshAvailabilityAfterCartChange();
+    }
+
+    renderCategories();
+    if (!availableCategories.length) {
+      bookingStep.hidden = true;
+      messageBox.className = 'message';
+      messageBox.textContent = customerT('noCustomerServices');
+    } else if (!messageBox.className.includes('error')) {
+      messageBox.textContent = '';
+    }
+    renderServices();
+    await renderCart();
+    renderLocaleDependentBookingState();
+  } catch (error) {
+    if (reqId !== languageSwitchRequestId || currentLocale !== targetLocale) return;
+    if (servicesError) {
+      servicesError.hidden = false;
+      servicesError.textContent = customerT('loadServicesFailed');
+    }
+  } finally {
+    if (reqId === languageSwitchRequestId && servicesLoading) {
+      servicesLoading.hidden = true;
+    }
+  }
 }
 
 const dateInput =
@@ -1363,8 +1522,8 @@ document
     }
   );
 
-document.getElementById('languageZh').addEventListener('click', () => setLocale('zh-CN'));
-document.getElementById('languageEn').addEventListener('click', () => setLocale('en'));
+document.getElementById('languageZh').addEventListener('click', () => switchLanguage('zh-CN'));
+document.getElementById('languageEn').addEventListener('click', () => switchLanguage('en'));
 (async () => {
   try {
     if (!cartApiValid) {

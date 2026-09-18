@@ -38,10 +38,15 @@ const MOCK_SERVICES = [
 const createCustomerContext = (customConfig = {}) => {
   const elements = new Map();
   const makeElement = (tag = 'div') => {
+    let _innerHTML = '';
     const el = {
       tagName: tag.toUpperCase(),
       value: '',
-      innerHTML: '',
+      get innerHTML() { return _innerHTML; },
+      set innerHTML(v) {
+        _innerHTML = String(v);
+        if (!_innerHTML) el.children = [];
+      },
       textContent: '',
       disabled: false,
       lang: '',
@@ -119,6 +124,8 @@ const createCustomerContext = (customConfig = {}) => {
 
   const hasExplicitCartApi = 'cartApi' in customConfig;
   const effectiveCartApi = hasExplicitCartApi ? customConfig.cartApi : cartApi;
+  const effectiveI18n = customConfig.i18n || i18n;
+  const initialLoc = customConfig.locale || 'zh-CN';
 
   const sandbox = {
     console,
@@ -137,7 +144,7 @@ const createCustomerContext = (customConfig = {}) => {
       return { ok: true, json: async () => ({ success: true, data: [] }) };
     },
     globalThis: {
-      ggI18n: i18n,
+      ggI18n: effectiveI18n,
       ggCustomerShopContext: shopContext,
       ggCustomerCategoryFlow: categoryFlowApi,
       ...(effectiveCartApi !== undefined ? { ggCustomerMultiServiceCart: effectiveCartApi } : {}),
@@ -146,11 +153,11 @@ const createCustomerContext = (customConfig = {}) => {
     },
     location: mockLocation,
     window: { location: mockLocation },
-    localStorage: { getItem: () => 'zh-CN', setItem() {} },
-    navigator: { languages: ['zh-CN'] },
+    localStorage: { getItem: () => initialLoc, setItem() {} },
+    navigator: { languages: [initialLoc] },
     document: {
       title: '',
-      documentElement: { lang: 'zh-CN' },
+      documentElement: { lang: initialLoc },
       getElementById: id => {
         if (!elements.has(id)) elements.set(id, makeElement());
         return elements.get(id);
@@ -181,6 +188,7 @@ const createCustomerContext = (customConfig = {}) => {
 };
 
 test('1. 静态资源版本：index.html 中 script 引用带版本 query（?v=2.0.0）', () => {
+  assert.match(customerHtml, /<script\s+src="\/shared-i18n\.js\?v=2\.0\.0"><\/script>/);
   assert.match(customerHtml, /<script\s+src="\/customer-multi-service-cart\.js\?v=2\.0\.0"><\/script>/);
 });
 
@@ -430,6 +438,7 @@ test('9. 清空后员工响应不复活幽灵项目：项目被移除后到达�
   const cartItems = page.elements.get('cartItems');
   assert.equal(cartItems.children.length, 0);
   assert.equal(page.elements.get('cartPanel').hidden, true);
+  assert.equal(vm.runInContext('staffByItem.size', page.context), 0);
 });
 
 test('10. 清空后排期区完全隐藏：全部删除后 scheduleSection 必须 hidden，下一步按钮禁用', async () => {
@@ -840,4 +849,314 @@ test('30. 不写入数据库：测试为纯只读与逻辑核验，无写库 sid
   assert.doesNotMatch(cartJs, /fetch\s*\(|INSERT\s+INTO|UPDATE\s+\w+\s+SET|DELETE\s+FROM/i);
   const cart = cartApi.create();
   assert.ok(Array.isArray(cart));
+});
+
+test('31. 旧 shared-i18n 缓存 / 缺少 key 时展示内置固定双语提示，不显示原始 key 且不自动循环刷新', async () => {
+  const outdatedI18n = {
+    ...i18n,
+    t: key => key
+  };
+
+  const pageZh = createCustomerContext({
+    cartApi: undefined,
+    i18n: outdatedI18n,
+    locale: 'zh-CN'
+  });
+  await new Promise(r => setTimeout(r, 20));
+  const recoveryZh = pageZh.elements.get('cartModuleRecovery');
+  const msgZh = pageZh.elements.get('cartRecoveryMessage');
+  const btnZh = pageZh.elements.get('cartRecoveryReloadBtn');
+
+  assert.equal(recoveryZh.hidden, false);
+  assert.equal(msgZh.textContent, '系统组件正在更新，请点击刷新页面后继续。');
+  assert.equal(btnZh.textContent, '刷新页面');
+  assert.doesNotMatch(msgZh.textContent, /cartModuleOutdated/);
+  assert.doesNotMatch(btnZh.textContent, /reloadPage/);
+  assert.equal(pageZh.getReloadCalled(), 0);
+
+  const pageEn = createCustomerContext({
+    cartApi: undefined,
+    i18n: outdatedI18n,
+    locale: 'en'
+  });
+  await new Promise(r => setTimeout(r, 20));
+  const recoveryEn = pageEn.elements.get('cartModuleRecovery');
+  const msgEn = pageEn.elements.get('cartRecoveryMessage');
+  const btnEn = pageEn.elements.get('cartRecoveryReloadBtn');
+
+  assert.equal(recoveryEn.hidden, false);
+  assert.equal(msgEn.textContent, 'System components are updating. Please reload the page to continue.');
+  assert.equal(btnEn.textContent, 'Reload Page');
+  assert.doesNotMatch(msgEn.textContent, /cartModuleOutdated/);
+  assert.doesNotMatch(btnEn.textContent, /reloadPage/);
+  assert.equal(pageEn.getReloadCalled(), 0);
+});
+
+test('32. 购物车清空后延迟员工响应不写入 staffByItem 且 staffByItem.size 保持为 0', async () => {
+  let resolveStaff;
+  const pStaff = new Promise(r => { resolveStaff = r; });
+  const customFetch = async url => {
+    if (url.includes('staff-options')) return pStaff;
+    return undefined;
+  };
+
+  const page = createCustomerContext({ fetch: customFetch });
+  await new Promise(r => setTimeout(r, 20));
+  vm.runInContext("customerShopSlug = 'test-shop';", page.context);
+  vm.runInContext(`availableServices = ${JSON.stringify(MOCK_SERVICES)};`, page.context);
+  vm.runInContext(`cart = cartApi.add(cart, ${JSON.stringify(MOCK_SERVICES[0])});`, page.context);
+  assert.equal(vm.runInContext('cart.length', page.context), 1);
+
+  const staffPromise = vm.runInContext('renderCart()', page.context);
+
+  const itemKey = vm.runInContext('cart[0].clientItemKey', page.context);
+  vm.runInContext(`
+    cart = cartApi.remove(cart, '${itemKey}');
+    staffGeneration++;
+    staffByItem.delete('${itemKey}');
+    if (cart.length === 0) staffByItem.clear();
+    renderCart();
+  `, page.context);
+
+  assert.equal(vm.runInContext('cart.length', page.context), 0);
+  assert.equal(vm.runInContext('staffByItem.size', page.context), 0);
+
+  resolveStaff({
+    ok: true,
+    json: async () => ({ success: true, data: [{ staffId: 'staff-1', displayName: 'Amy' }] })
+  });
+
+  await staffPromise;
+  await new Promise(r => setTimeout(r, 20));
+
+  assert.equal(vm.runInContext('staffByItem.size', page.context), 0);
+  assert.equal(page.elements.get('cartItems').children.length, 0);
+});
+
+test('33. 目录 reconcile 清空购物车后延迟员工响应不写入 staffByItem 且 staffByItem.size 为 0', async () => {
+  let resolveStaff;
+  const pStaff = new Promise(r => { resolveStaff = r; });
+  const customFetch = async url => {
+    if (url.includes('staff-options')) return pStaff;
+    if (url.includes('/api/services-db')) {
+      return { ok: true, json: async () => ({ success: true, data: [] }) };
+    }
+    return undefined;
+  };
+
+  const page = createCustomerContext({ fetch: customFetch });
+  await new Promise(r => setTimeout(r, 20));
+  vm.runInContext("customerShopSlug = 'test-shop';", page.context);
+  vm.runInContext(`availableServices = ${JSON.stringify(MOCK_SERVICES)};`, page.context);
+  vm.runInContext(`cart = cartApi.add(cart, ${JSON.stringify(MOCK_SERVICES[0])});`, page.context);
+  assert.equal(vm.runInContext('cart.length', page.context), 1);
+
+  const staffPromise = vm.runInContext('renderCart()', page.context);
+
+  await vm.runInContext('loadServices()', page.context);
+  assert.equal(vm.runInContext('cart.length', page.context), 0);
+  assert.equal(vm.runInContext('staffByItem.size', page.context), 0);
+
+  resolveStaff({
+    ok: true,
+    json: async () => ({ success: true, data: [{ staffId: 'staff-1', displayName: 'Amy' }] })
+  });
+
+  await staffPromise;
+  await new Promise(r => setTimeout(r, 20));
+
+  assert.equal(vm.runInContext('staffByItem.size', page.context), 0);
+  assert.equal(page.elements.get('cartItems').children.length, 0);
+});
+
+test('34. 点击语言切换按钮自动重新请求分类与服务翻译，无需手动调用 loadServices', async () => {
+  const requestedUrls = [];
+  const customFetch = async url => {
+    requestedUrls.push(url);
+    if (url.includes('/api/booking/service-categories')) {
+      const parsed = new URL(url, 'http://localhost');
+      const loc = parsed.searchParams.get('locale');
+      return {
+        ok: true,
+        json: async () => ({
+          success: true,
+          data: [{
+            categoryId: 'cat-1',
+            name: loc === 'en' ? 'Facial Care' : '面部护理'
+          }]
+        })
+      };
+    }
+    if (url.includes('/api/services-db')) {
+      const parsed = new URL(url, 'http://localhost');
+      const loc = parsed.searchParams.get('locale');
+      return {
+        ok: true,
+        json: async () => ({
+          success: true,
+          data: [{
+            ...MOCK_SERVICES[0],
+            name: loc === 'en' ? 'Signature Hydration Facial' : '招牌补水护理'
+          }]
+        })
+      };
+    }
+    return undefined;
+  };
+
+  const page = createCustomerContext({ fetch: customFetch });
+  await new Promise(r => setTimeout(r, 20));
+  vm.runInContext("customerShopSlug = 'demo-shop';", page.context);
+  vm.runInContext(`cart = cartApi.add(cart, ${JSON.stringify(MOCK_SERVICES[0])});`, page.context);
+  assert.equal(vm.runInContext('cart.length', page.context), 1);
+
+  requestedUrls.length = 0;
+
+  const enBtn = page.elements.get('languageEn');
+  await enBtn.trigger('click');
+
+  assert.equal(vm.runInContext('currentLocale', page.context), 'en');
+  assert.ok(requestedUrls.some(u => u.includes('/api/booking/service-categories') && u.includes('locale=en')));
+  assert.ok(requestedUrls.some(u => u.includes('/api/services-db') && u.includes('locale=en')));
+
+  assert.equal(vm.runInContext('cart.length', page.context), 1);
+  assert.equal(vm.runInContext('cart[0].serviceId', page.context), MOCK_SERVICES[0].id);
+
+  const availServices = vm.runInContext('availableServices', page.context);
+  assert.equal(availServices[0].name, 'Signature Hydration Facial');
+  const availCategories = vm.runInContext('availableCategories', page.context);
+  assert.equal(availCategories[0].name, 'Facial Care');
+});
+
+test('35. 乱序语言响应防竞态丢弃：较早发出的慢响应不得覆盖较晚发出的快响应', async () => {
+  let resolveEnServices;
+  const pEnServices = new Promise(r => { resolveEnServices = r; });
+
+  const customFetch = async url => {
+    if (url.includes('/api/services-db')) {
+      const parsed = new URL(url, 'http://localhost');
+      const loc = parsed.searchParams.get('locale');
+      if (loc === 'en') {
+        return pEnServices;
+      }
+      if (loc === 'zh-CN') {
+        return {
+          ok: true,
+          json: async () => ({
+            success: true,
+            data: [{ ...MOCK_SERVICES[0], name: '中文服务名' }]
+          })
+        };
+      }
+    }
+    if (url.includes('/api/booking/service-categories')) {
+      const parsed = new URL(url, 'http://localhost');
+      const loc = parsed.searchParams.get('locale');
+      return {
+        ok: true,
+        json: async () => ({
+          success: true,
+          data: [{ categoryId: 'cat-1', name: loc === 'en' ? 'English Category' : '中文分类' }]
+        })
+      };
+    }
+    return undefined;
+  };
+
+  const page = createCustomerContext({ fetch: customFetch });
+  await new Promise(r => setTimeout(r, 20));
+  vm.runInContext("customerShopSlug = 'demo-shop';", page.context);
+
+  const enClickPromise = page.elements.get('languageEn').trigger('click');
+  await page.elements.get('languageZh').trigger('click');
+
+  assert.equal(vm.runInContext('currentLocale', page.context), 'zh-CN');
+  assert.equal(vm.runInContext('availableServices[0].name', page.context), '中文服务名');
+  assert.equal(vm.runInContext('availableCategories[0].name', page.context), '中文分类');
+
+  resolveEnServices({
+    ok: true,
+    json: async () => ({
+      success: true,
+      data: [{ ...MOCK_SERVICES[0], name: 'English Service Name' }]
+    })
+  });
+  await enClickPromise;
+  await new Promise(r => setTimeout(r, 20));
+
+  assert.equal(vm.runInContext('currentLocale', page.context), 'zh-CN');
+  assert.equal(vm.runInContext('availableServices[0].name', page.context), '中文服务名');
+  assert.equal(vm.runInContext('availableCategories[0].name', page.context), '中文分类');
+});
+
+test('36. 语言切换保留有效服务ID且不产生重复项目或中英混杂', async () => {
+  const customFetch = async url => {
+    if (url.includes('/api/booking/service-categories')) {
+      const parsed = new URL(url, 'http://localhost');
+      const loc = parsed.searchParams.get('locale');
+      return {
+        ok: true,
+        json: async () => ({
+          success: true,
+          data: [
+            { categoryId: 'cat-1', name: loc === 'en' ? 'Category 1' : '分类1' },
+            { categoryId: 'cat-2', name: loc === 'en' ? 'Category 2' : '分类2' }
+          ]
+        })
+      };
+    }
+    if (url.includes('/api/services-db')) {
+      const parsed = new URL(url, 'http://localhost');
+      const loc = parsed.searchParams.get('locale');
+      return {
+        ok: true,
+        json: async () => ({
+          success: true,
+          data: [
+            { ...MOCK_SERVICES[0], id: 'svc-1', categoryId: 'cat-1', name: loc === 'en' ? 'Service One' : '服务一' },
+            { ...MOCK_SERVICES[0], id: 'svc-2', categoryId: 'cat-2', name: loc === 'en' ? 'Service Two' : '服务二' }
+          ]
+        })
+      };
+    }
+    return undefined;
+  };
+
+  const page = createCustomerContext({ fetch: customFetch });
+  await new Promise(r => setTimeout(r, 20));
+  vm.runInContext("customerShopSlug = 'demo-shop';", page.context);
+  vm.runInContext(`
+    cart = cartApi.add(cart, { id: 'svc-1', categoryId: 'cat-1', durationMinutes: 60, price: 88 });
+    cart = cartApi.add(cart, { id: 'svc-2', categoryId: 'cat-2', durationMinutes: 45, price: 68 });
+  `, page.context);
+
+  assert.equal(vm.runInContext('cart.length', page.context), 2);
+
+  await page.elements.get('languageEn').trigger('click');
+
+  assert.equal(vm.runInContext('currentLocale', page.context), 'en');
+  assert.equal(vm.runInContext('cart.length', page.context), 2);
+  assert.equal(vm.runInContext('cart[0].serviceId', page.context), 'svc-1');
+  assert.equal(vm.runInContext('cart[1].serviceId', page.context), 'svc-2');
+
+  const cartItemElements = page.elements.get('cartItems').children;
+  assert.equal(cartItemElements.length, 2);
+  const title0 = cartItemElements[0].children[0].children[0].textContent;
+  const title1 = cartItemElements[1].children[0].children[0].textContent;
+  assert.equal(title0, 'Service One');
+  assert.equal(title1, 'Service Two');
+
+  await page.elements.get('languageZh').trigger('click');
+
+  assert.equal(vm.runInContext('currentLocale', page.context), 'zh-CN');
+  assert.equal(vm.runInContext('cart.length', page.context), 2);
+  assert.equal(vm.runInContext('cart[0].serviceId', page.context), 'svc-1');
+  assert.equal(vm.runInContext('cart[1].serviceId', page.context), 'svc-2');
+
+  const cartItemElementsZh = page.elements.get('cartItems').children;
+  assert.equal(cartItemElementsZh.length, 2);
+  const zhTitle0 = cartItemElementsZh[0].children[0].children[0].textContent;
+  const zhTitle1 = cartItemElementsZh[1].children[0].children[0].textContent;
+  assert.equal(zhTitle0, '服务一');
+  assert.equal(zhTitle1, '服务二');
 });
