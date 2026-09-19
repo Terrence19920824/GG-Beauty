@@ -329,3 +329,98 @@ test('startAt-only legacy assignment collision returns safe 409 and rolls back',
   await withServer(async url => { const response = await post(url, { ...base, serviceId: ID.serviceA, staffSelectionType: 'specific', staffId: ID.staffA }); assert.equal(response.status, 409); assert.equal((await response.json()).code, 'BOOKING_NOT_AVAILABLE'); });
   assert.equal(fixture.state.queries.at(-1).sql, 'ROLLBACK');
 });
+
+test('regression: current and future dates are never blocked by hardcoded expiry guard', async () => {
+  delete process.env.BOOKING_WRITE_MAINTENANCE;
+
+  const now = new Date();
+  const testDates = [
+    now.toISOString(),
+    new Date(Date.now() + 86400000).toISOString(),
+    '2026-09-19T10:00:00.000Z',
+    '2026-12-31T10:00:00.000Z',
+    '2027-01-01T10:00:00.000Z',
+    '2030-06-15T10:00:00.000Z',
+    '2035-01-01T10:00:00.000Z'
+  ];
+
+  for (const dateStr of testDates) {
+    // 1. Multi-service booking enters real business processing
+    const multiFixture = makeFixture();
+    app.locals.bookingPool = multiFixture.pool;
+    app.locals.bookingValidator = async () => {};
+
+    const multiBody = { ...requestBody, startAt: dateStr };
+    await withServer(async url => {
+      const response = await post(url, multiBody);
+      const text = await response.text();
+      assert.doesNotMatch(text, /服务已过期/);
+      assert.equal(response.status, 200);
+      const json = JSON.parse(text);
+      assert.equal(json.success, true);
+    });
+    assert.ok(multiFixture.state.queries.some(q => /^INSERT INTO appointments/.test(q.sql)));
+
+    // 2. Single-service booking enters real business processing
+    const singleFixture = makeFixture();
+    app.locals.bookingPool = singleFixture.pool;
+    app.locals.bookingValidator = async () => {};
+
+    const { items: _items, ...singleBase } = requestBody;
+    const singleBody = { ...singleBase, serviceId: ID.serviceA, staffSelectionType: 'specific', staffId: ID.staffA, startAt: dateStr };
+    await withServer(async url => {
+      const response = await post(url, singleBody);
+      const text = await response.text();
+      assert.doesNotMatch(text, /服务已过期/);
+      assert.equal(response.status, 200);
+      const json = JSON.parse(text);
+      assert.equal(json.success, true);
+    });
+    assert.ok(singleFixture.state.queries.some(q => /^INSERT INTO appointments/.test(q.sql)));
+  }
+});
+
+test('regression: failure responses must not disguise as HTTP 200 success with expiry error', async () => {
+  delete process.env.BOOKING_WRITE_MAINTENANCE;
+
+  const failureCases = [
+    { name: 'missing required customerName', body: { ...requestBody, customerName: '' }, expectedStatus: 400 },
+    { name: 'cross-tenant service', body: { ...requestBody, items: [{ ...requestBody.items[0], serviceId: '99999999-9999-4999-8999-999999999999' }] }, expectedStatus: 400 },
+    { name: 'forged client shopId', body: { ...requestBody, shopId: ID.shop }, expectedStatus: 400 }
+  ];
+
+  for (const { name, body, expectedStatus } of failureCases) {
+    const fixture = makeFixture();
+    app.locals.bookingPool = fixture.pool;
+    app.locals.bookingValidator = async () => {};
+
+    await withServer(async url => {
+      const response = await post(url, body);
+      const text = await response.text();
+      assert.doesNotMatch(text, /服务已过期/);
+      assert.notEqual(response.status, 200, `${name} returned HTTP 200 on failure`);
+      assert.equal(response.status, expectedStatus);
+    });
+  }
+
+  const conflictFixture = makeFixture();
+  app.locals.bookingPool = conflictFixture.pool;
+  app.locals.bookingValidator = async () => { throw new StaffBookabilityError('OUTSIDE_WORKING_HOURS'); };
+  await withServer(async url => {
+    const response = await post(url, requestBody);
+    const text = await response.text();
+    assert.doesNotMatch(text, /服务已过期/);
+    assert.notEqual(response.status, 200, 'conflict returned HTTP 200');
+    assert.equal(response.status, 409);
+  });
+});
+
+test('regression: /api/config does not expose hardcoded validUntil', async () => {
+  await withServer(async url => {
+    const res = await fetch(`${url}/api/config`);
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.success, true);
+    assert.equal(body.data.validUntil, undefined);
+  });
+});

@@ -1910,7 +1910,6 @@ app.get(
 const CONFIG = {
   shopName: 'GG-Beauty',
   currency: 'S$',
-  validUntil: '2026-09-19',
 
   services: [
     // 面部护理
@@ -2087,27 +2086,6 @@ let bookingIdCounter = 1000;
 // ==================================================
 
 let adminSession = {};
-
-
-// ==================================================
-// 检查服务有效期
-// ==================================================
-
-const checkAuth = (req, res, next) => {
-  if (
-    new Date() > new Date(CONFIG.validUntil) &&
-    req.path.startsWith('/api/new')
-  ) {
-    return res.json({
-      success: false,
-      message: '服务已过期，请联系商家续费。'
-    });
-  }
-
-  next();
-};
-
-app.use(checkAuth);
 
 
 // ==================================================
