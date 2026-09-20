@@ -3189,6 +3189,103 @@ app.get('/api/booking/staff-options', async (req, res) => {
   }
 });
 
+app.post('/api/booking/multi-service-eligible-staff', async (req, res) => {
+  if (req.body.shopId !== undefined || req.body.shop_id !== undefined) {
+    return res.status(400).json({ success: false, message: 'Invalid shop context' });
+  }
+  const { shopSlug, date, time } = req.body;
+  if (!shopSlug || typeof shopSlug !== 'string' || !isValidCalendarDate(date) || !time || typeof time !== 'string') {
+    return res.status(400).json({ success: false, message: '预约选项无效' });
+  }
+  let client;
+  try {
+    const rawItems = Array.isArray(req.body.items) ? req.body.items : [];
+    const normalizedBody = {
+      ...req.body,
+      items: rawItems.map(item => ({
+        staffSelectionType: 'no_preference',
+        ...item
+      }))
+    };
+    const items = normalizeBookingItems(normalizedBody, isUuid);
+    client = await req.app.locals.bookingPool.connect();
+    const locale = normalizeLocale(req.body.locale);
+    const context = await loadMultiServiceContext(client, { shopSlug, items, locale });
+    const { scope } = context;
+
+    const instantResult = await client.query(
+      `SELECT TO_CHAR((($1::DATE + $2::TIME) AT TIME ZONE location.timezone) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS start_at
+       FROM locations location
+       WHERE location.shop_id = $3 AND location.id = $4 AND location.is_active = TRUE`,
+      [date, time, scope.shop_id, scope.location_id]
+    );
+    if (!instantResult.rows.length) {
+      return res.status(400).json({ success: false, message: '找不到门店' });
+    }
+    const startAt = instantResult.rows[0].start_at;
+    const timeline = buildSequentialTimeline(context.services, startAt);
+
+    const validator = req.app.locals.bookingValidator || validateStaffBookability;
+    const resultData = [];
+
+    for (let i = 0; i < timeline.length; i++) {
+      const item = timeline[i];
+      const candidates = await loadEligibleBookingStaff(client, {
+        shopId: scope.shop_id,
+        locationId: scope.location_id,
+        serviceId: item.serviceId,
+        date
+      });
+
+      const eligibleStaff = [];
+      for (const candidate of candidates) {
+        try {
+          await validator({
+            dbClient: client,
+            shopId: scope.shop_id,
+            locationId: scope.location_id,
+            staffId: candidate.staff_id,
+            serviceId: item.serviceId,
+            requestedStartAt: item.startAt,
+            requestedEndAt: item.endAt
+          });
+          eligibleStaff.push({
+            staffId: candidate.staff_id,
+            displayName: candidate.display_name
+          });
+        } catch (err) {
+          // Staff not available for this time slot
+        }
+      }
+
+      const startObj = new Date(item.startAt);
+      const endObj = new Date(item.endAt);
+      const timeDisplay = `${startObj.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: scope.timezone || 'Asia/Singapore' })}–${endObj.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: scope.timezone || 'Asia/Singapore' })}`;
+
+      resultData.push({
+        clientItemKey: item.clientItemKey,
+        serviceId: item.serviceId,
+        serviceName: item.localizedName || item.name,
+        durationMinutes: item.durationMinutes,
+        startAt: item.startAt,
+        endAt: item.endAt,
+        timeDisplay,
+        eligibleStaff
+      });
+    }
+
+    return res.json({ success: true, data: resultData });
+  } catch (error) {
+    console.error('Multi-service eligible staff error:', safeStaffAuthErrorCode(error));
+    if (error instanceof AppointmentMutationError || error instanceof MultiServicePlanningError) {
+      return res.status(error.status || 400).json({ success: false, message: error.publicMessage || '预约选项无效' });
+    }
+    return res.status(500).json({ success: false, message: '获取员工选项失败' });
+  } finally {
+    if (client) client.release();
+  }
+});
+
 app.get(
   '/api/available-times-db',
   async (req, res) => {

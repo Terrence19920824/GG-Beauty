@@ -34,5 +34,19 @@
     return CATEGORY_ICONS[iconKey] || '◇';
   }
 
-  return { deriveEntryState, filterServicesByCategory, categoryIcon };
+  function deriveTabsState(categories, currentCategoryId) {
+    const rows = Array.isArray(categories) ? categories : [];
+    const currentIsValid = rows.some(category => category.categoryId === currentCategoryId);
+    const selectedCategoryId = currentIsValid
+      ? currentCategoryId
+      : rows.length > 0 ? rows[0].categoryId : '';
+    return {
+      selectedCategoryId,
+      showTabs: rows.length >= 2,
+      showBookingStep: rows.length > 0,
+      isEmpty: rows.length === 0
+    };
+  }
+
+  return { deriveEntryState, deriveTabsState, filterServicesByCategory, categoryIcon };
 });

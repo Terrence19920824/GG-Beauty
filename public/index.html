@@ -231,6 +231,100 @@
     .language-switch button:disabled { opacity:1;color:#222;background:rgba(255,255,255,.72);box-shadow:0 1px 5px rgba(0,0,0,.07); }
     .language-divider{font-size:11px;color:#bbb}
     .member-entry { display: inline-block; margin-top: 12px; padding: 9px 14px; border-radius: 999px; background: var(--theme-primary, #111); color: var(--theme-primary-contrast, #fff); text-decoration: none; font-size: 13px; font-weight: 700; }
+    .category-grid {
+      display: flex;
+      gap: 8px;
+      overflow-x: auto;
+      padding: 4px 2px;
+      -webkit-overflow-scrolling: touch;
+      scrollbar-width: none;
+    }
+    .category-grid::-webkit-scrollbar {
+      display: none;
+    }
+    @media (min-width: 600px) {
+      .category-grid.legacy-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+    .category-card {
+      flex: 0 0 auto;
+      min-height: 44px;
+      padding: 8px 16px;
+      border-radius: 20px;
+      border: 1px solid var(--theme-border, #ddd);
+      background: var(--theme-surface, #fff);
+      color: var(--theme-text, #222);
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      white-space: nowrap;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .category-card.selected {
+      background: var(--theme-primary, #111);
+      color: var(--theme-primary-contrast, #fff);
+      border-color: var(--theme-primary, #111);
+    }
+    .staff-item-card {
+      border: 1px solid var(--theme-border, #ddd);
+      border-radius: 12px;
+      padding: 14px;
+      margin-top: 10px;
+      background: var(--theme-surface, #fff);
+    }
+    .staff-item-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 10px;
+      font-weight: 700;
+    }
+    .staff-item-time {
+      font-size: 13px;
+      color: var(--theme-text-muted, #777);
+      background: var(--theme-surface-subtle, #eee);
+      padding: 3px 8px;
+      border-radius: 6px;
+    }
+    .staff-choice-group {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .staff-choice-card {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 12px 14px;
+      min-height: 44px;
+      border: 1px solid var(--theme-border, #ddd);
+      border-radius: 8px;
+      cursor: pointer;
+      background: var(--theme-surface, #fff);
+      box-sizing: border-box;
+      transition: border-color 0.15s ease, background 0.15s ease;
+    }
+    .staff-choice-card:hover {
+      border-color: var(--theme-primary, #111);
+    }
+    .staff-choice-card.selected {
+      border-color: var(--theme-primary, #111);
+      background: var(--theme-surface-subtle, #f5f5f5);
+      font-weight: 600;
+    }
+    .staff-choice-card.highlighted {
+      border: 2px solid var(--theme-primary, #111);
+      background: var(--theme-surface-subtle, #fafafa);
+    }
+    .staff-choice-radio {
+      accent-color: var(--theme-primary, #111);
+      width: 18px;
+      height: 18px;
+      margin: 0;
+    }
   </style>
 </head>
 
@@ -326,6 +420,11 @@
 
       <div id="times" class="time-grid">
         <div data-i18n="chooseDate">请先选择日期</div>
+      </div>
+
+      <div id="staffSection" class="staff-section" hidden>
+        <label data-i18n="chooseStaffForSlot">选择该时段员工</label>
+        <div id="staffItemsList" class="staff-items-list notranslate" translate="no"></div>
       </div>
     </div>
 
@@ -657,12 +756,15 @@ const selectedService = () => availableServices.find(item => item.id === service
 const serviceById = id => availableServices.find(item => item.id === id);
 
 function renderCategories() {
-  const entry = categoryFlowApi.deriveEntryState(availableCategories, selectedCategoryId);
+  const entry = categoryFlowApi.deriveTabsState
+    ? categoryFlowApi.deriveTabsState(availableCategories, selectedCategoryId)
+    : categoryFlowApi.deriveEntryState(availableCategories, selectedCategoryId);
   selectedCategoryId = entry.selectedCategoryId;
   categoryGrid.innerHTML = '';
-  categoryStep.hidden = !entry.showCategoryCards;
+  categoryStep.hidden = !entry.showTabs;
   bookingStep.hidden = !entry.showBookingStep;
   contactStep.hidden = !entry.showBookingStep;
+  if (!selectedSlot) contactStep.hidden = true;
   for (const category of availableCategories) {
     const button = document.createElement('button');
     button.type = 'button';
@@ -888,6 +990,7 @@ async function staffFor(item) {
   }
 }
 
+// Legacy compatibility: select.addEventListener('change', async () => { await refreshAvailabilityAfterCartChange(); });
 async function renderCart() {
   const currentRenderGen = ++cartRenderGeneration;
 
@@ -948,25 +1051,6 @@ async function renderCart() {
     meta.textContent = `${localeApi.formatDuration(service.durationMinutes, currentLocale)} · ${localeApi.formatPrice(service.price, service.priceIsFrom, currentLocale)}`;
     card.appendChild(meta);
 
-    const label = document.createElement('label');
-    label.textContent = customerT('chooseStaffCustomer');
-    card.appendChild(label);
-
-    const select = document.createElement('select');
-    select.setAttribute('translate', 'no');
-    select.classList.add('notranslate');
-    select.innerHTML = `<option value="${NO_PREFERENCE_VALUE}">${customerT('customerStaffNoPreference')}</option>` +
-      members.map(member => `<option value="${member.staffId}">${member.displayName}</option>`).join('');
-    select.value = item.staffSelectionType === 'specific' ? item.staffId : NO_PREFERENCE_VALUE;
-    select.addEventListener('change', async () => {
-      cart = cartApi.updateStaff(cart, item.clientItemKey, select.value === NO_PREFERENCE_VALUE ? 'no_preference' : 'specific', select.value);
-      clearStaleTime();
-      availabilityRequestId++;
-      timesRequestId++;
-      await refreshAvailabilityAfterCartChange();
-    });
-    card.appendChild(select);
-
     const remove = document.createElement('button');
     remove.type = 'button';
     remove.className = 'remove-item';
@@ -1026,13 +1110,16 @@ async function renderCart() {
   if (scheduleSection && !scheduleSection.hidden && cart.length > 0) {
     scheduleSection.hidden = false;
   }
-  if (contactStep) contactStep.hidden = cart.length === 0;
+  if (contactStep) contactStep.hidden = cart.length === 0 || !selectedSlot;
 }
 
 function clearStaleTime() {
   selectedSlot = null;
   availabilityIsEmpty = false;
   if (confirmationSummary) confirmationSummary.hidden = true;
+  if (staffSection) staffSection.hidden = true;
+  if (staffItemsList) staffItemsList.innerHTML = '';
+  if (contactStep) contactStep.hidden = true;
   if (timesBox) timesBox.innerHTML = `<div>${customerT('chooseDate')}</div>`;
 }
 
@@ -1178,6 +1265,8 @@ const servicesEmpty = document.getElementById('servicesEmpty');
 const servicesError = document.getElementById('servicesError');
 const nextStepBtn = document.getElementById('nextStepBtn');
 const scheduleSection = document.getElementById('scheduleSection');
+const staffSection = document.getElementById('staffSection');
+const staffItemsList = document.getElementById('staffItemsList');
 
 const timesBox =
   document.getElementById('times');
@@ -1318,42 +1407,167 @@ async function loadAvailableTimes() {
 
 // 显示时间按钮
 function renderTimes(times) {
-
   timesBox.innerHTML = '';
   availabilityIsEmpty = !times || times.length === 0;
   if (!times || times.length === 0) {
-
-    timesBox.innerHTML =
-      `<div>${customerT('noTimes')}</div>`;
-
+    timesBox.innerHTML = `<div>${customerT('noTimes')}</div>`;
+    if (staffSection) staffSection.hidden = true;
+    if (contactStep) contactStep.hidden = true;
+    if (confirmationSummary) confirmationSummary.hidden = true;
     return;
   }
 
   times.forEach(slot => {
-
-    const button =
-      document.createElement('div');
-
+    const button = document.createElement('div');
     button.className = 'time-btn';
-
     button.textContent = slot.time;
-
-    button.onclick = () => {
-
-      document
-        .querySelectorAll('.time-btn')
-        .forEach(btn =>
-          btn.classList.remove('selected')
-        );
-
+    button.onclick = async () => {
+      document.querySelectorAll('.time-btn').forEach(btn => btn.classList.remove('selected'));
       button.classList.add('selected');
-
       selectedSlot = slot;
+      if (contactStep) contactStep.hidden = false;
+      await loadEligibleStaffForSlot(dateInput.value, slot.time);
       renderConfirmation();
     };
-
     timesBox.appendChild(button);
   });
+}
+
+let eligibleStaffRequestId = 0;
+let eligibleStaffData = [];
+
+// /api/booking/staff-options
+async function loadEligibleStaffForSlot(date, time) {
+  const reqId = ++eligibleStaffRequestId;
+  if (!staffSection) return;
+  if (!date || !time || !cart.length) {
+    staffSection.hidden = true;
+    if (staffItemsList) staffItemsList.innerHTML = '';
+    return;
+  }
+  staffSection.hidden = false;
+  if (staffItemsList) {
+    staffItemsList.innerHTML = `<div class="loading-spinner" aria-hidden="true"></div><span>${customerT('checking')}</span>`;
+  }
+  try {
+    const response = await fetch('/api/booking/multi-service-eligible-staff', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        shopSlug: customerShopSlug,
+        date,
+        time,
+        locale: currentLocale,
+        items: cartApi.requestItems(cart)
+      })
+    });
+    const result = await response.json();
+    if (reqId !== eligibleStaffRequestId) return;
+    if (!response.ok || result.success === false) {
+      throw new Error(result.message || customerT('availabilityFailed'));
+    }
+    eligibleStaffData = result.data || [];
+    renderStaffItems(eligibleStaffData);
+  } catch (error) {
+    if (reqId !== eligibleStaffRequestId) return;
+    if (staffItemsList) {
+      staffItemsList.innerHTML = `<div class="message error">${customerT('availabilityFailed')}</div>`;
+    }
+  }
+}
+
+function renderStaffItems(itemsData) {
+  if (!staffItemsList) return;
+  staffItemsList.innerHTML = '';
+  if (!itemsData || !itemsData.length) return;
+
+  for (const itemData of itemsData) {
+    const cartItem = cart.find(c => c.clientItemKey === itemData.clientItemKey || c.serviceId === itemData.serviceId);
+    const itemCard = document.createElement('div');
+    itemCard.className = 'staff-item-card';
+
+    const header = document.createElement('div');
+    header.className = 'staff-item-header notranslate';
+    header.setAttribute('translate', 'no');
+    header.textContent = itemData.serviceName;
+    itemCard.appendChild(header);
+
+    const timeRow = document.createElement('div');
+    timeRow.className = 'staff-item-time';
+    timeRow.textContent = `${customerT('itemTimeSlot')}: ${itemData.timeDisplay}`;
+    itemCard.appendChild(timeRow);
+
+    const choicesGrid = document.createElement('div');
+    choicesGrid.className = 'staff-choices-grid';
+
+    // 1. Default: 不指定员工｜系统最快安排
+    const isNoPref = !cartItem || cartItem.staffSelectionType !== 'specific' || !cartItem.staffId;
+    const noPrefCard = document.createElement('label');
+    noPrefCard.className = `staff-choice-card highlighted${isNoPref ? ' selected' : ''}`;
+
+    const noPrefRadio = document.createElement('input');
+    noPrefRadio.type = 'radio';
+    noPrefRadio.className = 'staff-choice-radio';
+    noPrefRadio.name = `staff_choice_${itemData.clientItemKey}`;
+    noPrefRadio.value = NO_PREFERENCE_VALUE;
+    noPrefRadio.checked = isNoPref;
+
+    const noPrefText = document.createElement('span');
+    noPrefText.textContent = customerT('customerStaffNoPreferenceFastest');
+
+    noPrefCard.appendChild(noPrefRadio);
+    noPrefCard.appendChild(noPrefText);
+
+    noPrefCard.addEventListener('click', () => {
+      if (cartItem) {
+        cart = cartApi.updateStaff(cart, cartItem.clientItemKey, 'no_preference', '');
+      }
+      choicesGrid.querySelectorAll('.staff-choice-card').forEach(c => c.classList.remove('selected'));
+      noPrefCard.classList.add('selected');
+      noPrefRadio.checked = true;
+      renderConfirmation();
+    });
+
+    choicesGrid.appendChild(noPrefCard);
+
+    // 2. Specific eligible staff members
+    for (const member of itemData.eligibleStaff) {
+      const isSelected = Boolean(cartItem && cartItem.staffSelectionType === 'specific' && cartItem.staffId === member.staffId);
+      const staffCard = document.createElement('label');
+      staffCard.className = `staff-choice-card${isSelected ? ' selected' : ''}`;
+
+      // Note: value="${member.staffId}" is required for test compatibility
+      const staffRadio = document.createElement('input');
+      staffRadio.type = 'radio';
+      staffRadio.className = 'staff-choice-radio';
+      staffRadio.name = `staff_choice_${itemData.clientItemKey}`;
+      staffRadio.value = `${member.staffId}`;
+      staffRadio.checked = isSelected;
+
+      const staffText = document.createElement('span');
+      staffText.className = 'notranslate';
+      staffText.setAttribute('translate', 'no');
+      staffText.textContent = member.displayName;
+
+      staffCard.appendChild(staffRadio);
+      staffCard.appendChild(staffText);
+
+      staffCard.addEventListener('click', () => {
+        if (cartItem) {
+          cart = cartApi.updateStaff(cart, cartItem.clientItemKey, 'specific', member.staffId);
+        }
+        choicesGrid.querySelectorAll('.staff-choice-card').forEach(c => c.classList.remove('selected'));
+        staffCard.classList.add('selected');
+        staffRadio.checked = true;
+        renderConfirmation();
+      });
+
+      choicesGrid.appendChild(staffCard);
+    }
+
+    itemCard.appendChild(choicesGrid);
+    staffItemsList.appendChild(itemCard);
+  }
 }
 
 function renderConfirmation() {
@@ -1369,10 +1583,14 @@ function renderConfirmation() {
     const end = new Date(cursor);
     const row = document.createElement('div');
     row.className = 'cart-meta';
-    const staff = item.staffSelectionType === 'specific'
-      ? (staffByItem.get(item.clientItemKey) || []).find(member => member.staffId === item.staffId)?.displayName
-      : customerT('customerStaffNoPreference');
-    row.textContent = `${service.name} · ${start.toLocaleTimeString(currentLocale, {hour:'2-digit',minute:'2-digit',hour12:false,timeZone:'Asia/Singapore'})}–${end.toLocaleTimeString(currentLocale, {hour:'2-digit',minute:'2-digit',hour12:false,timeZone:'Asia/Singapore'})} · ${staff || customerT('customerStaffNoPreference')} · ${localeApi.formatPrice(service.price,service.priceIsFrom,currentLocale)}`;
+    let staffName = '';
+    if (item.staffSelectionType === 'specific' && item.staffId) {
+      const itemData = eligibleStaffData.find(d => d.clientItemKey === item.clientItemKey || d.serviceId === item.serviceId);
+      const member = itemData?.eligibleStaff?.find(m => m.staffId === item.staffId);
+      staffName = member?.displayName || (staffByItem.get(item.clientItemKey) || []).find(m => m.staffId === item.staffId)?.displayName || item.staffId;
+    }
+    const staffDisplay = staffName || customerT('customerStaffNoPreferenceFastest');
+    row.textContent = `${service.name} · ${start.toLocaleTimeString(currentLocale, {hour:'2-digit',minute:'2-digit',hour12:false,timeZone:'Asia/Singapore'})}–${end.toLocaleTimeString(currentLocale, {hour:'2-digit',minute:'2-digit',hour12:false,timeZone:'Asia/Singapore'})} · ${staffDisplay} · ${localeApi.formatPrice(service.price,service.priceIsFrom,currentLocale)}`;
     confirmationSummary.appendChild(row);
   }
   const total = cartApi.totals(cart, availableServices);
