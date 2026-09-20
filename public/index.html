@@ -367,7 +367,10 @@
       <div class="empty-state-icon" aria-hidden="true">◇</div>
       <p class="empty-state-text" data-i18n="noBookableServices">暂无可预约项目</p>
     </div>
-    <div id="servicesError" class="message error" hidden data-i18n="loadServicesFailed">无法加载服务，请重试</div>
+    <div id="servicesError" class="message error" hidden>无法加载服务，请重试</div>
+    <div id="servicesRetryContainer" style="margin-top:10px;text-align:center;" hidden>
+      <button id="servicesRetryBtn" type="button" class="customer-btn" style="min-height:44px;padding:8px 18px;width:auto;display:inline-block;" data-i18n="reloadServices">重新加载</button>
+    </div>
 
     <div id="serviceCards" class="service-cards-list" role="list"></div>
 
@@ -757,15 +760,16 @@ const serviceById = id => availableServices.find(item => item.id === id);
 
 function renderCategories() {
   const entry = categoryFlowApi.deriveTabsState
-    ? categoryFlowApi.deriveTabsState(availableCategories, selectedCategoryId)
+    ? categoryFlowApi.deriveTabsState(availableCategories, selectedCategoryId, availableServices, { locale: currentLocale })
     : categoryFlowApi.deriveEntryState(availableCategories, selectedCategoryId);
   selectedCategoryId = entry.selectedCategoryId;
+  const displayCategories = entry.categories || availableCategories;
   categoryGrid.innerHTML = '';
   categoryStep.hidden = !entry.showTabs;
-  bookingStep.hidden = !entry.showBookingStep;
+  bookingStep.hidden = false;
   contactStep.hidden = !entry.showBookingStep;
   if (!selectedSlot) contactStep.hidden = true;
-  for (const category of availableCategories) {
+  for (const category of displayCategories) {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = `category-card${category.categoryId === selectedCategoryId ? ' selected' : ''}`;
@@ -786,7 +790,6 @@ function renderCategories() {
 }
 
 async function selectCategory(categoryId) {
-  if (!availableCategories.some(category => category.categoryId === categoryId)) return;
   selectedCategoryId = categoryId;
   renderCategories();
   renderServices();
@@ -890,8 +893,14 @@ async function loadServices() {
   if (!customerShopSlug) return;
   const reqId = ++servicesRequestId;
   const targetLocale = currentLocale;
+
   if (servicesLoading) servicesLoading.hidden = false;
   if (servicesError) servicesError.hidden = true;
+  if (servicesRetryContainer) servicesRetryContainer.hidden = true;
+  if (servicesEmpty) servicesEmpty.hidden = true;
+  if (serviceCards) serviceCards.hidden = true;
+  if (bookingStep) bookingStep.hidden = false;
+
   try {
     const response = await fetch(`/api/services-db?shopSlug=${encodeURIComponent(customerShopSlug)}&locale=${encodeURIComponent(targetLocale)}`);
     const result = await response.json();
@@ -921,14 +930,23 @@ async function loadServices() {
       timesRequestId++;
       await refreshAvailabilityAfterCartChange();
     }
+    if (servicesLoading) servicesLoading.hidden = true;
+    if (servicesError) servicesError.hidden = true;
+    if (servicesRetryContainer) servicesRetryContainer.hidden = true;
+    renderCategories();
     renderServices();
     await renderCart();
   } catch (error) {
     if (reqId !== servicesRequestId || currentLocale !== targetLocale) return;
+    if (servicesLoading) servicesLoading.hidden = true;
+    if (servicesEmpty) servicesEmpty.hidden = true;
+    if (serviceCards) serviceCards.hidden = true;
+    if (bookingStep) bookingStep.hidden = false;
     if (servicesError) {
       servicesError.hidden = false;
       servicesError.textContent = customerT('loadServicesFailed');
     }
+    if (servicesRetryContainer) servicesRetryContainer.hidden = false;
   } finally {
     if (reqId === servicesRequestId && servicesLoading) {
       servicesLoading.hidden = true;
@@ -940,19 +958,20 @@ async function loadCategories() {
   if (!customerShopSlug) return;
   const reqId = ++categoriesRequestId;
   const targetLocale = currentLocale;
-  const response = await fetch(`/api/booking/service-categories?shopSlug=${encodeURIComponent(customerShopSlug)}&locale=${encodeURIComponent(targetLocale)}`);
-  const result = await response.json();
-  if (reqId !== categoriesRequestId || currentLocale !== targetLocale) return;
-  if (!response.ok || result.success === false) throw new Error(result.message || customerT('noCustomerServices'));
-  availableCategories = result.data || [];
-  renderCategories();
-  if (!availableCategories.length) {
-    bookingStep.hidden = true;
-    messageBox.className = 'message';
-    messageBox.textContent = customerT('noCustomerServices');
-  } else if (!messageBox.className.includes('error')) {
-    messageBox.textContent = '';
+  try {
+    const response = await fetch(`/api/booking/service-categories?shopSlug=${encodeURIComponent(customerShopSlug)}&locale=${encodeURIComponent(targetLocale)}`);
+    const result = await response.json();
+    if (reqId !== categoriesRequestId || currentLocale !== targetLocale) return;
+    if (response.ok && result.success !== false) {
+      availableCategories = Array.isArray(result.data) ? result.data : [];
+    } else {
+      availableCategories = [];
+    }
+  } catch (_err) {
+    if (reqId !== categoriesRequestId || currentLocale !== targetLocale) return;
+    availableCategories = [];
   }
+  renderCategories();
 }
 
 async function loadCustomerCatalogue() {
@@ -1166,28 +1185,23 @@ async function switchLanguage(locale) {
   if (servicesLoading) servicesLoading.hidden = false;
   if (servicesError) servicesError.hidden = true;
   try {
-    const [catResponse, srvResponse] = await Promise.all([
-      fetch(`/api/booking/service-categories?shopSlug=${encodeURIComponent(customerShopSlug)}&locale=${encodeURIComponent(targetLocale)}`),
-      fetch(`/api/services-db?shopSlug=${encodeURIComponent(customerShopSlug)}&locale=${encodeURIComponent(targetLocale)}`)
-    ]);
-    const [catResult, srvResult] = await Promise.all([
-      catResponse.json(),
-      srvResponse.json()
-    ]);
+    const catPromise = fetch(`/api/booking/service-categories?shopSlug=${encodeURIComponent(customerShopSlug)}&locale=${encodeURIComponent(targetLocale)}`)
+      .then(r => r.json()).catch(() => ({ success: false, data: [] }));
+    const srvPromise = fetch(`/api/services-db?shopSlug=${encodeURIComponent(customerShopSlug)}&locale=${encodeURIComponent(targetLocale)}`)
+      .then(r => r.json());
+
+    const [catResult, srvResult] = await Promise.all([catPromise, srvPromise]);
 
     if (reqId !== languageSwitchRequestId || currentLocale !== targetLocale) {
       return;
     }
 
-    if (!catResponse.ok || catResult.success === false) {
-      throw new Error(catResult.message || customerT('noCustomerServices'));
-    }
-    if (!srvResponse.ok || srvResult.success === false) {
+    if (!srvResult || srvResult.success === false) {
       throw new Error(customerT('loadServicesFailed'));
     }
 
-    availableCategories = Array.isArray(catResult.data) ? catResult.data : [];
-    availableServices = Array.isArray(srvResult.data) ? srvResult.data : [];
+    availableCategories = Array.isArray(catResult?.data) ? catResult.data : [];
+    availableServices = Array.isArray(srvResult?.data) ? srvResult.data : [];
 
     const prevCartLen = cart.length;
     cart = cartApi.reconcile(cart, availableServices);
@@ -1214,13 +1228,6 @@ async function switchLanguage(locale) {
     }
 
     renderCategories();
-    if (!availableCategories.length) {
-      bookingStep.hidden = true;
-      messageBox.className = 'message';
-      messageBox.textContent = customerT('noCustomerServices');
-    } else if (!messageBox.className.includes('error')) {
-      messageBox.textContent = '';
-    }
     renderServices();
     await renderCart();
     renderLocaleDependentBookingState();
@@ -1230,6 +1237,7 @@ async function switchLanguage(locale) {
       servicesError.hidden = false;
       servicesError.textContent = customerT('loadServicesFailed');
     }
+    if (servicesRetryContainer) servicesRetryContainer.hidden = false;
   } finally {
     if (reqId === languageSwitchRequestId && servicesLoading) {
       servicesLoading.hidden = true;
@@ -1263,6 +1271,7 @@ const serviceCards = document.getElementById('serviceCards');
 const servicesLoading = document.getElementById('servicesLoading');
 const servicesEmpty = document.getElementById('servicesEmpty');
 const servicesError = document.getElementById('servicesError');
+const servicesRetryContainer = document.getElementById('servicesRetryContainer');
 const nextStepBtn = document.getElementById('nextStepBtn');
 const scheduleSection = document.getElementById('scheduleSection');
 const staffSection = document.getElementById('staffSection');
@@ -1313,6 +1322,16 @@ if (addAnotherBtn) {
     categoryStep.hidden = false;
     renderCategories();
     categoryStep.scrollIntoView({ behavior: 'smooth' });
+  });
+}
+
+const servicesRetryBtn = document.getElementById('servicesRetryBtn');
+if (servicesRetryBtn) {
+  servicesRetryBtn.addEventListener('click', async () => {
+    if (servicesError) servicesError.hidden = true;
+    if (servicesRetryContainer) servicesRetryContainer.hidden = true;
+    if (servicesLoading) servicesLoading.hidden = false;
+    await loadCustomerCatalogue();
   });
 }
 

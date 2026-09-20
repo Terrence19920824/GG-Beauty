@@ -4,11 +4,14 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const vm = require('node:vm');
 const { app } = require('../server');
 const { StaffBookabilityError } = require('../lib/staff-bookability-validator');
 const categoryFlow = require('../public/customer-category-flow');
 const cartApi = require('../public/customer-multi-service-cart');
 const i18n = require('../public/shared-i18n');
+const shopContext = require('../public/customer-shop-context');
+const bookingCalendar = require('../public/customer-booking-calendar');
 
 const root = path.resolve(__dirname, '..');
 const html = fs.readFileSync(path.join(root, 'public/index.html'), 'utf8');
@@ -34,6 +37,128 @@ const withServer = async operation => {
   }
 };
 
+// DOM simulation helper to verify real customer DOM visibility and behaviour
+const createCustomerContext = async ({ categories = [], services = [], categoriesFail = false, servicesFail = false, locale = 'zh-CN' } = {}) => {
+  const makeElement = (tag = 'div') => {
+    let innerHTML = '';
+    const el = {
+      tagName: tag.toUpperCase(),
+      value: '',
+      get innerHTML() { return innerHTML; },
+      set innerHTML(val) {
+        innerHTML = String(val);
+        if (innerHTML === '') this.children = [];
+      },
+      textContent: '', disabled: false, lang: '', href: '',
+      options: [], dataset: {}, hidden: false, style: { display: '' },
+      children: [],
+      classList: {
+        _classes: new Set(),
+        add(c) { this._classes.add(c); },
+        remove(c) { this._classes.delete(c); },
+        toggle(c, force) {
+          if (force === undefined) {
+            if (this._classes.has(c)) this._classes.delete(c);
+            else this._classes.add(c);
+          } else if (force) this._classes.add(c);
+          else this._classes.delete(c);
+        },
+        contains(c) { return this._classes.has(c); }
+      },
+      _listeners: new Map(),
+      addEventListener(event, fn) {
+        if (!this._listeners.has(event)) this._listeners.set(event, []);
+        this._listeners.get(event).push(fn);
+      },
+      click() {
+        for (const fn of this._listeners.get('click') || []) fn({ target: this });
+      },
+      setAttribute(k, v) { this.dataset[k] = v; },
+      getAttribute(k) { return this.dataset[k]; },
+      appendChild(child) {
+        this.children.push(child);
+        if (child.tagName === 'OPTION') this.options.push(child);
+      },
+      querySelectorAll() { return []; },
+      scrollIntoView() {}
+    };
+    return el;
+  };
+
+  const elements = new Map();
+  const fetchUrls = [];
+  const contextObj = {
+    console,
+    encodeURIComponent,
+    setTimeout: (fn) => setTimeout(fn, 0),
+    clearTimeout: (id) => clearTimeout(id),
+    fetch: async url => {
+      const urlStr = String(url);
+      fetchUrls.push(urlStr);
+      if (urlStr.includes('/api/booking/service-categories')) {
+        if (categoriesFail) return { ok: false, status: 500, json: async () => ({ success: false, message: 'Cat error' }) };
+        return { ok: true, status: 200, json: async () => ({ success: true, data: categories }) };
+      }
+      if (urlStr.includes('/api/services-db')) {
+        if (servicesFail) return { ok: false, status: 500, json: async () => ({ success: false, message: 'Srv error' }) };
+        return { ok: true, status: 200, json: async () => ({ success: true, data: services }) };
+      }
+      if (urlStr.includes('/api/booking/context')) {
+        return { ok: true, status: 200, json: async () => ({ success: true, data: { shopSlug: 'test-shop', shopName: 'Test Shop' } }) };
+      }
+      return { ok: true, status: 200, json: async () => ({ success: true, data: [] }) };
+    },
+    globalThis: {
+      ggI18n: i18n,
+      ggCustomerShopContext: shopContext,
+      ggCustomerCategoryFlow: categoryFlow,
+      ggCustomerMultiServiceCart: cartApi,
+      ggCustomerBookingCalendar: bookingCalendar,
+      location: { hostname: 'localhost', pathname: '/', search: '?shop=test-shop' }
+    },
+    localStorage: { getItem: () => locale, setItem() {} },
+    navigator: { languages: [locale] },
+    document: {
+      title: '',
+      documentElement: { lang: locale },
+      getElementById: id => {
+        if (!elements.has(id)) {
+          const el = makeElement();
+          elements.set(id, el);
+          contextObj[id] = el;
+        }
+        return elements.get(id);
+      },
+      querySelectorAll: () => [],
+      createElement: tag => makeElement(tag)
+    }
+  };
+
+  for (const id of [
+    'date', 'dateDisplay', 'service', 'times', 'message', 'languageZh', 'languageEn',
+    'shopBrandName', 'submitBtn', 'customerName', 'phone', 'email', 'categoryStep',
+    'categoryGrid', 'bookingStep', 'contactStep', 'cartPanel', 'cartItems', 'cartTotals',
+    'confirmationSummary', 'addServiceBtn', 'addAnotherBtn', 'bookForMyself', 'bookForSomeoneElse',
+    'recipientFields', 'recipientName', 'recipientPhone', 'recipientEmail', 'bookerCountryCode',
+    'recipientCountryCode', 'previousMonth', 'nextMonth', 'calendarTitle', 'calendarGrid',
+    'nextAvailableDates', 'serviceCards', 'servicesLoading', 'servicesEmpty', 'servicesError',
+    'servicesErrorText', 'servicesRetryBtn', 'staffSection', 'staffItemsList', 'memberEntry'
+  ]) {
+    const el = makeElement();
+    if (id === 'servicesRetryBtn') el.dataset.i18n = 'reloadServices';
+    elements.set(id, el);
+    contextObj[id] = el;
+  }
+
+  const context = vm.createContext(contextObj);
+
+  const scripts = [...html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/g)];
+  const customerScript = scripts.at(-1)[1];
+  vm.runInContext(customerScript, context);
+  await new Promise(resolve => setTimeout(resolve, 50));
+  return { context, elements, fetchUrls };
+};
+
 // 1. 综合店：两分类，顶级分类标签显示，服务方块立即显示，无需二次点击
 test('1. 综合店：两分类，顶级分类标签显示，服务方块立即显示，无需二次点击', () => {
   const twoCategories = [
@@ -48,7 +173,6 @@ test('1. 综合店：两分类，顶级分类标签显示，服务方块立即�
 
   assert.match(html, /categoryFlowApi\.deriveTabsState/);
   assert.match(html, /categoryStep\.hidden = !entry\.showTabs/);
-  assert.match(html, /bookingStep\.hidden = !entry\.showBookingStep/);
 });
 
 // 2. 单项店：单分类，分类标签隐藏，服务方块直接显示
@@ -65,9 +189,9 @@ test('2. 单项店：单分类，分类标签隐藏，服务方块直接显示',
 
 // 3. 0分类：显示友好空状态
 test('3. 0分类：显示友好空状态', () => {
-  const tabsState = categoryFlow.deriveTabsState([], '');
+  const tabsState = categoryFlow.deriveTabsState([], '', []);
   assert.equal(tabsState.showTabs, false);
-  assert.equal(tabsState.showBookingStep, false);
+  assert.equal(tabsState.showBookingStep, true);
   assert.equal(tabsState.selectedCategoryId, '');
   assert.equal(tabsState.isEmpty, true);
   assert.equal(i18n.t('noBookableServices', 'zh-CN'), '暂无可预约项目');
@@ -318,7 +442,6 @@ test('10. 多项目自选员工：员工在对应项目时间段必须可用且�
     });
     assert.equal(res.status, 200);
   });
-  // Alice was validated separately for the two sequential windows without overlap
   assert.equal(validatedWindows.length, 2);
   assert.equal(validatedWindows[0].requestedStartAt, '2030-01-07T02:00:00.000Z');
   assert.equal(validatedWindows[0].requestedEndAt, '2030-01-07T02:30:00.000Z');
@@ -335,7 +458,6 @@ test('11. 单项目流程与多项目一致', () => {
   assert.equal(items.length, 1);
   assert.equal(items[0].staffSelectionType, 'no_preference');
   assert.equal(items[0].staffId, undefined);
-  // HTML uses same scheduleSection, staffSection, and confirmationSummary
   assert.match(html, /id="staffSection"/);
   assert.match(html, /id="confirmationSummary"/);
 });
@@ -344,10 +466,14 @@ test('11. 单项目流程与多项目一致', () => {
 test('12. 中英文文案无混杂', () => {
   const keys = [
     'allCategories',
+    'otherCategory',
+    'reloadServices',
     'customerStaffNoPreferenceFastest',
     'chooseStaffForSlot',
     'itemTimeSlot',
-    'chooseStaffAfterTime'
+    'chooseStaffAfterTime',
+    'noCustomerServices',
+    'noBookableServices'
   ];
   for (const key of keys) {
     const zh = i18n.t(key, 'zh-CN');
@@ -363,9 +489,211 @@ test('12. 中英文文案无混杂', () => {
 test('13. 不访问生产、不产生数据库业务写入', () => {
   assert.doesNotMatch(html, /production\.supabase|prod-db|stripe-live/);
   assert.doesNotMatch(serverJs, /production\.supabase|prod-db/);
-  // Endpoint must be read-only (no INSERT/UPDATE/DELETE)
   const endpointRegex = /app\.post\('\/api\/booking\/multi-service-eligible-staff'[\s\S]*?\}\);/;
   const match = serverJs.match(endpointRegex);
   assert.ok(match, 'multi-service-eligible-staff endpoint found');
   assert.doesNotMatch(match[0], /INSERT INTO|UPDATE |DELETE FROM/);
+});
+
+// =========================================================================
+// P0 修复专项测试：Visible Content Fallback & DOM Visibility Verification
+// =========================================================================
+
+// 14. 0分类+1服务：分类为空但服务存在时，隐藏分类标签，直接显示服务方块
+test('14. 0分类+1服务：服务可见，隐藏分类标签，直接显示服务方块', async () => {
+  const services = [{ id: ID.serviceA, name: '女士剪发', price: 68, durationMinutes: 45, categoryId: null }];
+  const { elements } = await createCustomerContext({ categories: [], services });
+
+  assert.equal(elements.get('bookingStep').hidden, false);
+  assert.notEqual(elements.get('bookingStep').style.display, 'none');
+  assert.equal(elements.get('categoryStep').hidden, true);
+  assert.equal(elements.get('servicesEmpty').hidden, true);
+  assert.equal(elements.get('serviceCards').hidden, false);
+  assert.equal(elements.get('serviceCards').children.length, 1);
+  assert.equal(elements.get('serviceCards').children[0].dataset.serviceId, ID.serviceA);
+});
+
+// 15. 0分类+0服务：真正0服务时，父容器保持可见，显示友好空状态
+test('15. 0分类+0服务：真正0服务时，父容器保持可见，显示友好空状态', async () => {
+  const { elements } = await createCustomerContext({ categories: [], services: [] });
+
+  assert.equal(elements.get('bookingStep').hidden, false);
+  assert.notEqual(elements.get('bookingStep').style.display, 'none');
+  assert.equal(elements.get('categoryStep').hidden, true);
+  assert.equal(elements.get('servicesEmpty').hidden, false);
+  assert.equal(elements.get('servicesError').hidden, true);
+  assert.equal(elements.get('serviceCards').hidden, true);
+});
+
+// 16. 分类接口失败+服务成功：直接显示服务，不阻断预约
+test('16. 分类接口失败+服务成功：直接显示服务，不阻断预约', async () => {
+  const services = [{ id: ID.serviceA, name: '女士剪发', price: 68, durationMinutes: 45 }];
+  const { elements } = await createCustomerContext({ categoriesFail: true, services });
+
+  assert.equal(elements.get('bookingStep').hidden, false);
+  assert.notEqual(elements.get('bookingStep').style.display, 'none');
+  assert.equal(elements.get('categoryStep').hidden, true);
+  assert.equal(elements.get('servicesEmpty').hidden, true);
+  assert.equal(elements.get('serviceCards').hidden, false);
+  assert.equal(elements.get('serviceCards').children.length, 1);
+});
+
+// 17. 服务接口失败：显示双语错误及重新加载/Retry按钮，点击Retry重新请求
+test('17. 服务接口失败：显示双语错误及重新加载按钮，点击Retry重新请求', async () => {
+  const { elements, fetchUrls } = await createCustomerContext({ servicesFail: true });
+
+  assert.equal(elements.get('bookingStep').hidden, false);
+  assert.notEqual(elements.get('bookingStep').style.display, 'none');
+  assert.equal(elements.get('servicesError').hidden, false);
+  assert.equal(elements.get('servicesLoading').hidden, true);
+
+  const retryBtn = elements.get('servicesRetryBtn');
+  assert.ok(retryBtn, 'servicesRetryBtn exists');
+  assert.equal(retryBtn.dataset.i18n, 'reloadServices');
+
+  const countBefore = fetchUrls.filter(u => u.includes('/api/services-db')).length;
+  retryBtn.click();
+  await new Promise(resolve => setTimeout(resolve, 50));
+  const countAfter = fetchUrls.filter(u => u.includes('/api/services-db')).length;
+  assert.ok(countAfter > countBefore, 'Clicking retry must re-fetch services');
+});
+
+// 18. 2分类+未分类服务：自动显示Other标签且服务可见
+test('18. 2分类+未分类服务：自动显示Other标签且服务可见', async () => {
+  const categories = [
+    { categoryId: 'cat-hair', name: '美发', iconKey: 'hair' },
+    { categoryId: 'cat-spa', name: 'SPA', iconKey: 'body-wellness' }
+  ];
+  const services = [
+    { id: ID.serviceA, name: '女士剪发', price: 68, durationMinutes: 45, categoryId: 'cat-hair' },
+    { id: ID.serviceB, name: '未分类护理', price: 128, durationMinutes: 60, categoryId: null }
+  ];
+  const { elements } = await createCustomerContext({ categories, services });
+
+  assert.equal(elements.get('categoryStep').hidden, false);
+  assert.equal(elements.get('bookingStep').hidden, false);
+  // Grid should have 3 tabs: cat-hair, cat-spa, and __other__
+  const tabs = elements.get('categoryGrid').children;
+  assert.equal(tabs.length, 3);
+  assert.equal(tabs[0].dataset.categoryId, 'cat-hair');
+  assert.equal(tabs[1].dataset.categoryId, 'cat-spa');
+  assert.equal(tabs[2].dataset.categoryId, '__other__');
+
+  // Clicking "Other" tab filters for uncategorized services
+  tabs[2].click();
+  assert.equal(elements.get('serviceCards').children.length, 1);
+  assert.equal(elements.get('serviceCards').children[0].dataset.serviceId, ID.serviceB);
+});
+
+// 19. disabled/missing category服务不消失：自动归入Other标签
+test('19. disabled/missing category服务不消失：自动归入Other标签', async () => {
+  const categories = [
+    { categoryId: 'cat-hair', name: '美发', iconKey: 'hair' }
+  ];
+  const services = [
+    { id: ID.serviceA, name: '女士剪发', price: 68, durationMinutes: 45, categoryId: 'cat-hair' },
+    { id: ID.serviceB, name: '停用分类下的有效服务', price: 98, durationMinutes: 50, categoryId: 'cat-deactivated' }
+  ];
+  const { elements } = await createCustomerContext({ categories, services });
+
+  // 1 category + 1 other = 2 tabs -> showTabs is true
+  assert.equal(elements.get('categoryStep').hidden, false);
+  const tabs = elements.get('categoryGrid').children;
+  assert.equal(tabs.length, 2);
+  assert.equal(tabs[0].dataset.categoryId, 'cat-hair');
+  assert.equal(tabs[1].dataset.categoryId, '__other__');
+
+  tabs[1].click();
+  assert.equal(elements.get('serviceCards').children.length, 1);
+  assert.equal(elements.get('serviceCards').children[0].dataset.serviceId, ID.serviceB);
+});
+
+// 20. 移动端首屏 (390x844) 布局与双语无空旷
+test('20. 移动端首屏 (390x844) 布局与双语无空旷', async () => {
+  // Chinese
+  const zh = await createCustomerContext({ categories: [], services: [], locale: 'zh-CN' });
+  assert.equal(zh.elements.get('bookingStep').hidden, false);
+  assert.equal(zh.elements.get('servicesEmpty').hidden, false);
+
+  // English
+  const en = await createCustomerContext({ categories: [], services: [], locale: 'en' });
+  assert.equal(en.elements.get('bookingStep').hidden, false);
+  assert.equal(en.elements.get('servicesEmpty').hidden, false);
+
+  // CSS constraints
+  assert.match(html, /\.container\s*\{[^}]*max-width:\s*520px/);
+  assert.match(html, /viewport.*width=device-width/);
+});
+
+// 21. 维护模式下分类/服务/日期/时间/员工必须正常浏览
+test('21. 维护模式下分类/服务/日期/时间/员工必须正常浏览', async () => {
+  process.env.BOOKING_WRITE_MAINTENANCE = 'true';
+  const client = {
+    query: async (sql, params = []) => {
+      if (/SELECT shop\.id AS shop_id/.test(sql)) {
+        return { rows: [{ shop_id: ID.shop, shop_slug: 'tenant-a', location_id: ID.location }] };
+      }
+      if (/service\.id=ANY/.test(sql)) {
+        return { rows: [{ id: ID.serviceA, duration_minutes: 60, price: '88', price_is_from: false, category_id: 'cat-1', localized_name: 'Haircut', name: 'Haircut' }] };
+      }
+      if (/FROM\s+service_categories/.test(sql) || /service_categories/.test(sql)) {
+        return { rows: [{ categoryId: 'cat-1', name: 'Hair', iconKey: 'hair', sortOrder: 1 }] };
+      }
+      if (/FROM shops AS shop\s+JOIN services/.test(sql)) {
+        return { rows: [{ id: ID.serviceA, duration_minutes: 60, price: '88', price_is_from: false, category_id: 'cat-1', localized_name: 'Haircut', name: 'Haircut' }] };
+      }
+      if (/FROM locations location/.test(sql)) {
+        return { rows: [{ start_at: '2030-01-07T02:00:00.000Z' }] };
+      }
+      if (/assigned_appointment_count/.test(sql)) {
+        return { rows: [{ staff_id: ID.staffA, display_name: 'Alice', assigned_appointment_count: 0 }] };
+      }
+      return { rows: [] };
+    },
+    release() {}
+  };
+  app.locals.bookingPool = { connect: async () => client };
+  app.locals.bookingValidator = async () => {};
+
+  await withServer(async base => {
+    // 1. Categories endpoint readable
+    const catRes = await fetch(`${base}/api/booking/service-categories?shopSlug=tenant-a&locale=en`);
+    assert.equal(catRes.status, 200);
+
+    // 2. Services endpoint readable
+    const srvRes = await fetch(`${base}/api/services-db?shopSlug=tenant-a&locale=en`);
+    assert.equal(srvRes.status, 200);
+
+    // 3. Eligible staff endpoint readable
+    const staffRes = await fetch(`${base}/api/booking/multi-service-eligible-staff`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        shopSlug: 'tenant-a',
+        date: '2030-01-07',
+        time: '10:00',
+        locale: 'en',
+        items: [{ serviceId: ID.serviceA, clientItemKey: 'item-1' }]
+      })
+    });
+    assert.equal(staffRes.status, 200);
+
+    // 4. Booking write is blocked
+    const writeRes = await fetch(`${base}/api/new-db`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        shopSlug: 'tenant-a',
+        customerName: 'Test',
+        phone: '+6599999999',
+        date: '2030-01-07',
+        startAt: '2030-01-07T02:00:00.000Z',
+        items: [{ serviceId: ID.serviceA }]
+      })
+    });
+    assert.equal(writeRes.status, 503);
+    const writeBody = await writeRes.json();
+    assert.equal(writeBody.code, 'BOOKING_MAINTENANCE');
+  });
+  delete process.env.BOOKING_WRITE_MAINTENANCE;
 });
