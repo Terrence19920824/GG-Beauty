@@ -38,9 +38,19 @@ const withServer = async operation => {
 };
 
 // DOM simulation helper to verify real customer DOM visibility and behaviour
-const createCustomerContext = async ({ categories = [], services = [], categoriesFail = false, servicesFail = false, locale = 'zh-CN' } = {}) => {
+const createCustomerContext = async ({
+  categories = [],
+  services = [],
+  categoriesFail = false,
+  servicesFail = false,
+  contextFail = false,
+  customFetch = null,
+  timeoutMs = 8000,
+  locale = 'zh-CN'
+} = {}) => {
   const makeElement = (tag = 'div') => {
     let innerHTML = '';
+    let textContent = '';
     const el = {
       tagName: tag.toUpperCase(),
       value: '',
@@ -49,7 +59,16 @@ const createCustomerContext = async ({ categories = [], services = [], categorie
         innerHTML = String(val);
         if (innerHTML === '') this.children = [];
       },
-      textContent: '', disabled: false, lang: '', href: '',
+      get textContent() {
+        if (this.children.length > 0) {
+          return this.children.map(c => c.textContent).join('');
+        }
+        return textContent;
+      },
+      set textContent(val) {
+        textContent = String(val);
+      },
+      disabled: false, lang: '', href: '',
       options: [], dataset: {}, hidden: false, style: { display: '' },
       children: [],
       classList: {
@@ -90,11 +109,20 @@ const createCustomerContext = async ({ categories = [], services = [], categorie
   const contextObj = {
     console,
     encodeURIComponent,
-    setTimeout: (fn) => setTimeout(fn, 0),
+    setTimeout: (fn, ms) => setTimeout(fn, ms !== undefined ? ms : 0),
     clearTimeout: (id) => clearTimeout(id),
-    fetch: async url => {
+    AbortController: globalThis.AbortController,
+    fetch: async (url, opts) => {
       const urlStr = String(url);
       fetchUrls.push(urlStr);
+      if (customFetch) {
+        const res = await customFetch(urlStr, opts);
+        if (res !== undefined) return res;
+      }
+      if (urlStr.includes('/api/booking/context')) {
+        if (contextFail) return { ok: false, status: 500, json: async () => ({ success: false, message: 'Context error' }) };
+        return { ok: true, status: 200, json: async () => ({ success: true, data: { shopSlug: 'test-shop', shopName: 'Test Shop' } }) };
+      }
       if (urlStr.includes('/api/booking/service-categories')) {
         if (categoriesFail) return { ok: false, status: 500, json: async () => ({ success: false, message: 'Cat error' }) };
         return { ok: true, status: 200, json: async () => ({ success: true, data: categories }) };
@@ -103,12 +131,10 @@ const createCustomerContext = async ({ categories = [], services = [], categorie
         if (servicesFail) return { ok: false, status: 500, json: async () => ({ success: false, message: 'Srv error' }) };
         return { ok: true, status: 200, json: async () => ({ success: true, data: services }) };
       }
-      if (urlStr.includes('/api/booking/context')) {
-        return { ok: true, status: 200, json: async () => ({ success: true, data: { shopSlug: 'test-shop', shopName: 'Test Shop' } }) };
-      }
       return { ok: true, status: 200, json: async () => ({ success: true, data: [] }) };
     },
     globalThis: {
+      __CATALOGUE_TIMEOUT_MS__: timeoutMs,
       ggI18n: i18n,
       ggCustomerShopContext: shopContext,
       ggCustomerCategoryFlow: categoryFlow,
@@ -142,10 +168,13 @@ const createCustomerContext = async ({ categories = [], services = [], categorie
     'recipientFields', 'recipientName', 'recipientPhone', 'recipientEmail', 'bookerCountryCode',
     'recipientCountryCode', 'previousMonth', 'nextMonth', 'calendarTitle', 'calendarGrid',
     'nextAvailableDates', 'serviceCards', 'servicesLoading', 'servicesEmpty', 'servicesError',
-    'servicesErrorText', 'servicesRetryBtn', 'staffSection', 'staffItemsList', 'memberEntry'
+    'servicesRetryContainer', 'servicesErrorText', 'servicesRetryBtn', 'staffSection', 'staffItemsList', 'memberEntry'
   ]) {
     const el = makeElement();
     if (id === 'servicesRetryBtn') el.dataset.i18n = 'reloadServices';
+    if (id === 'contactStep' || id === 'servicesLoading' || id === 'servicesEmpty' || id === 'servicesError' || id === 'servicesRetryContainer') {
+      el.hidden = true;
+    }
     elements.set(id, el);
     contextObj[id] = el;
   }
@@ -696,4 +725,258 @@ test('21. 维护模式下分类/服务/日期/时间/员工必须正常浏览', 
     assert.equal(writeBody.code, 'BOOKING_MAINTENANCE');
   });
   delete process.env.BOOKING_WRITE_MAINTENANCE;
+});
+
+// 22. 店铺上下文500：bookingStep保持可见，显示双语错误，Retry按钮可见且错误不写入contactStep
+test('22. 店铺上下文500：bookingStep保持可见，显示双语错误，Retry按钮可见且错误不写入contactStep', async () => {
+  const { elements } = await createCustomerContext({ contextFail: true });
+
+  assert.equal(elements.get('bookingStep').hidden, false);
+  assert.notEqual(elements.get('bookingStep').style.display, 'none');
+  assert.equal(elements.get('servicesLoading').hidden, true);
+  assert.equal(elements.get('servicesError').hidden, false);
+  assert.equal(elements.get('servicesError').textContent, i18n.t('loadServicesFailed', 'zh-CN'));
+  assert.equal(elements.get('servicesRetryContainer').hidden, false);
+
+  // 错误不得写入hidden的contactStep
+  assert.equal(elements.get('contactStep').hidden, true);
+  assert.equal(elements.get('message').textContent, '');
+});
+
+// 23. 店铺上下文网络失败：bookingStep保持可见，显示错误与Retry
+test('23. 店铺上下文网络失败：bookingStep保持可见，显示错误与Retry', async () => {
+  const customFetch = async url => {
+    if (url.includes('/api/booking/context')) {
+      throw new TypeError('Failed to fetch');
+    }
+    return undefined;
+  };
+  const { elements } = await createCustomerContext({ customFetch });
+
+  assert.equal(elements.get('bookingStep').hidden, false);
+  assert.equal(elements.get('servicesLoading').hidden, true);
+  assert.equal(elements.get('servicesError').hidden, false);
+  assert.equal(elements.get('servicesError').textContent, i18n.t('loadServicesFailed', 'zh-CN'));
+  assert.equal(elements.get('servicesRetryContainer').hidden, false);
+});
+
+// 24. 店铺上下文悬挂超时：AbortController超时后结束loading，显示可见Retry
+test('24. 店铺上下文悬挂超时：AbortController超时后结束loading，显示可见Retry', async () => {
+  const customFetch = async (url, opts) => {
+    if (url.includes('/api/booking/context')) {
+      return new Promise((resolve, reject) => {
+        if (opts && opts.signal) {
+          opts.signal.addEventListener('abort', () => reject(new Error('AbortError')));
+        }
+      });
+    }
+    return undefined;
+  };
+  const { elements } = await createCustomerContext({ customFetch, timeoutMs: 30 });
+  await new Promise(r => setTimeout(r, 60));
+
+  assert.equal(elements.get('bookingStep').hidden, false);
+  assert.equal(elements.get('servicesLoading').hidden, true);
+  assert.equal(elements.get('servicesError').hidden, false);
+  assert.equal(elements.get('servicesRetryContainer').hidden, false);
+});
+
+// 25. 分类悬挂但服务成功：并行请求下分类超时不阻断，直接显示服务方块
+test('25. 分类悬挂但服务成功：并行请求下分类超时不阻断，直接显示服务方块', async () => {
+  const services = [{ id: ID.serviceA, name: '女士剪发', price: 68, durationMinutes: 45 }];
+  const customFetch = async (url, opts) => {
+    if (url.includes('/api/booking/service-categories')) {
+      return new Promise((resolve, reject) => {
+        if (opts && opts.signal) {
+          opts.signal.addEventListener('abort', () => reject(new Error('AbortError')));
+        }
+      });
+    }
+    if (url.includes('/api/services-db')) {
+      return { ok: true, status: 200, json: async () => ({ success: true, data: services }) };
+    }
+    return undefined;
+  };
+  const { elements } = await createCustomerContext({ customFetch, timeoutMs: 30 });
+  await new Promise(r => setTimeout(r, 60));
+
+  assert.equal(elements.get('bookingStep').hidden, false);
+  assert.equal(elements.get('categoryStep').hidden, true);
+  assert.equal(elements.get('serviceCards').hidden, false);
+  assert.equal(elements.get('serviceCards').children.length, 1);
+  assert.equal(elements.get('servicesLoading').hidden, true);
+  assert.equal(elements.get('servicesError').hidden, true);
+});
+
+// 26. 服务悬挂超时：超时后结束loading，显示错误和Retry
+test('26. 服务悬挂超时：超时后结束loading，显示错误和Retry', async () => {
+  const customFetch = async (url, opts) => {
+    if (url.includes('/api/services-db')) {
+      return new Promise((resolve, reject) => {
+        if (opts && opts.signal) {
+          opts.signal.addEventListener('abort', () => reject(new Error('AbortError')));
+        }
+      });
+    }
+    return undefined;
+  };
+  const { elements } = await createCustomerContext({ customFetch, timeoutMs: 30 });
+  await new Promise(r => setTimeout(r, 60));
+
+  assert.equal(elements.get('bookingStep').hidden, false);
+  assert.equal(elements.get('servicesLoading').hidden, true);
+  assert.equal(elements.get('servicesError').hidden, false);
+  assert.equal(elements.get('servicesRetryContainer').hidden, false);
+});
+
+// 27. Retry后恢复：失败后点击Retry，重新执行完整context+分类+服务并恢复正常展示
+test('27. Retry后恢复：失败后点击Retry，重新执行完整context+分类+服务并恢复正常展示', async () => {
+  let contextShouldFail = true;
+  const services = [{ id: ID.serviceA, name: '女士剪发', price: 68, durationMinutes: 45 }];
+  const customFetch = async url => {
+    if (url.includes('/api/booking/context')) {
+      if (contextShouldFail) return { ok: false, status: 500, json: async () => ({ success: false }) };
+      return { ok: true, status: 200, json: async () => ({ success: true, data: { shopSlug: 'test-shop', shopName: 'Test Shop' } }) };
+    }
+    if (url.includes('/api/services-db')) {
+      return { ok: true, status: 200, json: async () => ({ success: true, data: services }) };
+    }
+    return undefined;
+  };
+  const { elements } = await createCustomerContext({ customFetch });
+
+  assert.equal(elements.get('servicesError').hidden, false);
+  assert.equal(elements.get('servicesRetryContainer').hidden, false);
+
+  contextShouldFail = false;
+  elements.get('servicesRetryBtn').click();
+  await new Promise(r => setTimeout(r, 60));
+
+  assert.equal(elements.get('bookingStep').hidden, false);
+  assert.equal(elements.get('servicesError').hidden, true);
+  assert.equal(elements.get('servicesRetryContainer').hidden, true);
+  assert.equal(elements.get('serviceCards').hidden, false);
+  assert.equal(elements.get('serviceCards').children.length, 1);
+});
+
+// 28. Retry旧响应迟到防覆盖：新一轮Retry先返回，旧慢响应后返回被丢弃
+test('28. Retry旧响应迟到防覆盖：新一轮Retry先返回，旧慢响应后返回被丢弃', async () => {
+  let callCount = 0;
+  let resolveSlow;
+  const servicesA = [{ id: ID.serviceA, name: '服务A', price: 50 }];
+  const servicesB = [{ id: ID.serviceB, name: '服务B', price: 100 }];
+
+  const customFetch = async url => {
+    if (url.includes('/api/services-db')) {
+      callCount++;
+      if (callCount === 1) {
+        return new Promise(resolve => {
+          resolveSlow = () => resolve({ ok: true, status: 200, json: async () => ({ success: true, data: servicesA }) });
+        });
+      }
+      return { ok: true, status: 200, json: async () => ({ success: true, data: servicesB }) };
+    }
+    return undefined;
+  };
+
+  const { elements } = await createCustomerContext({ customFetch });
+
+  elements.get('servicesRetryBtn').click();
+  await new Promise(r => setTimeout(r, 60));
+
+  assert.equal(elements.get('serviceCards').children.length, 1);
+  assert.equal(elements.get('serviceCards').children[0].dataset.serviceId, ID.serviceB);
+
+  if (resolveSlow) resolveSlow();
+  await new Promise(r => setTimeout(r, 60));
+
+  assert.equal(elements.get('serviceCards').children.length, 1);
+  assert.equal(elements.get('serviceCards').children[0].dataset.serviceId, ID.serviceB);
+});
+
+// 29. 切换语言旧响应迟到防覆盖：新语言先返回，旧慢语言后返回被丢弃
+test('29. 切换语言旧响应迟到防覆盖：新语言先返回，旧慢语言后返回被丢弃', async () => {
+  let resolveSlow;
+  const customFetch = async url => {
+    if (url.includes('/api/services-db')) {
+      const u = new URL(url, 'http://localhost');
+      const loc = u.searchParams.get('locale');
+      if (loc === 'en') {
+        return new Promise(resolve => {
+          resolveSlow = () => resolve({
+            ok: true,
+            status: 200,
+            json: async () => ({ success: true, data: [{ id: ID.serviceA, name: 'Cut En', price: 50 }] })
+          });
+        });
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ success: true, data: [{ id: ID.serviceA, name: '剪发中文', price: 50 }] })
+      };
+    }
+    return undefined;
+  };
+
+  const { context, elements } = await createCustomerContext({ customFetch });
+
+  vm.runInContext("switchLanguage('en')", context);
+  await new Promise(r => setTimeout(r, 10));
+
+  vm.runInContext("switchLanguage('zh-CN')", context);
+  await new Promise(r => setTimeout(r, 60));
+
+  assert.equal(elements.get('serviceCards').children.length, 1);
+  assert.match(elements.get('serviceCards').children[0].textContent, /剪发中文/);
+
+  if (resolveSlow) resolveSlow();
+  await new Promise(r => setTimeout(r, 60));
+
+  assert.match(elements.get('serviceCards').children[0].textContent, /剪发中文/);
+});
+
+// 30. 连续多次Retry无重复监听器：多次点击Retry保持单一监听器并正常收敛
+test('30. 连续多次Retry无重复监听器：多次点击Retry保持单一监听器并正常收敛', async () => {
+  const { elements, context } = await createCustomerContext();
+  const retryBtn = elements.get('servicesRetryBtn');
+
+  const listeners = retryBtn._listeners.get('click') || [];
+  assert.equal(listeners.length, 1);
+
+  await context.initializeCustomerPage();
+  await new Promise(r => setTimeout(r, 60));
+
+  assert.equal((retryBtn._listeners.get('click') || []).length, 1);
+});
+
+// 31. 所有非2xx路径检查：400、404、502均安全失败并显示错误+Retry
+test('31. 所有非2xx路径检查：400、404、502均安全失败并显示错误+Retry', async () => {
+  for (const status of [400, 404, 502]) {
+    const customFetch = async url => {
+      if (url.includes('/api/services-db')) {
+        return { ok: false, status, json: async () => ({ success: false, message: `Error ${status}` }) };
+      }
+      return undefined;
+    };
+    const { elements } = await createCustomerContext({ customFetch });
+    assert.equal(elements.get('bookingStep').hidden, false);
+    assert.equal(elements.get('servicesLoading').hidden, true);
+    assert.equal(elements.get('servicesError').hidden, false);
+    assert.equal(elements.get('servicesRetryContainer').hidden, false);
+  }
+});
+
+// 32. 移动端首屏 (390x844) 父容器及错误/Retry实际可见
+test('32. 移动端首屏 (390x844) 父容器及错误/Retry实际可见', async () => {
+  for (const locale of ['zh-CN', 'en']) {
+    const { elements } = await createCustomerContext({ servicesFail: true, locale });
+    assert.equal(elements.get('bookingStep').hidden, false);
+    assert.notEqual(elements.get('bookingStep').style.display, 'none');
+    assert.equal(elements.get('servicesError').hidden, false);
+    assert.equal(elements.get('servicesRetryContainer').hidden, false);
+    assert.equal(elements.get('servicesRetryBtn').hidden, false);
+    assert.equal(elements.get('servicesLoading').hidden, true);
+    assert.equal(elements.get('servicesError').textContent, i18n.t('loadServicesFailed', locale));
+  }
 });

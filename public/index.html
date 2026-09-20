@@ -724,12 +724,63 @@ function initialLocale() {
 
 let currentLocale = initialLocale();
 
-async function loadCustomerShopContext() {
+let customerLoadGeneration = 0;
+let currentCatalogueAbortController = null;
+
+function getAbortControllerClass() {
+  if (typeof AbortController !== 'undefined') return AbortController;
+  if (typeof globalThis !== 'undefined' && globalThis.AbortController) return globalThis.AbortController;
+  if (typeof window !== 'undefined' && window.AbortController) return window.AbortController;
+  return null;
+}
+
+const getCatalogueTimeoutMs = () => {
+  if (typeof globalThis !== 'undefined' && typeof globalThis.__CATALOGUE_TIMEOUT_MS__ === 'number') {
+    return globalThis.__CATALOGUE_TIMEOUT_MS__;
+  }
+  return 8000;
+};
+
+async function fetchWithTimeout(url, options = {}, timeoutMs = getCatalogueTimeoutMs()) {
+  const AbortCtrl = getAbortControllerClass();
+  if (!AbortCtrl) {
+    const fetchFn = (typeof globalThis !== 'undefined' && globalThis.fetch) ? globalThis.fetch : fetch;
+    return await fetchFn(url, options);
+  }
+  const internalCtrl = new AbortCtrl();
+  const timer = setTimeout(() => internalCtrl.abort(), timeoutMs);
+  let abortForwarder;
+  if (options.signal) {
+    if (options.signal.aborted) {
+      clearTimeout(timer);
+      internalCtrl.abort();
+    } else {
+      abortForwarder = () => internalCtrl.abort();
+      if (typeof options.signal.addEventListener === 'function') {
+        options.signal.addEventListener('abort', abortForwarder, { once: true });
+      }
+    }
+  }
+  try {
+    const fetchFn = (typeof globalThis !== 'undefined' && globalThis.fetch) ? globalThis.fetch : fetch;
+    return await fetchFn(url, { ...options, signal: internalCtrl.signal });
+  } finally {
+    clearTimeout(timer);
+    if (options.signal && abortForwarder && typeof options.signal.removeEventListener === 'function') {
+      options.signal.removeEventListener('abort', abortForwarder);
+    }
+  }
+}
+
+async function loadCustomerShopContext(signal) {
   const candidate = shopContextApi.resolveCandidate(globalThis.location);
   if (!candidate) throw new Error('Missing or invalid shop context');
-  const response = await fetch(`/api/booking/context?shopSlug=${encodeURIComponent(candidate)}`);
+  const response = await fetchWithTimeout(`/api/booking/context?shopSlug=${encodeURIComponent(candidate)}`, { signal });
+  if (!response.ok) {
+    throw new Error('Shop context request failed with status ' + response.status);
+  }
   const result = await response.json();
-  if (!response.ok || result.success === false || !result.data?.shopSlug) {
+  if (result.success === false || !result.data?.shopSlug) {
     throw new Error(result.message || 'Shop is unavailable');
   }
   if (result.data.shopSlug !== customerShopSlug) {
@@ -752,7 +803,9 @@ async function loadCustomerShopContext() {
     }
   }
   document.title = `${shopBrandName.textContent} · ${customerT('onlineAppointment')}`;
-  memberEntry.href = `/member.html?shop=${encodeURIComponent(customerShopSlug)}`;
+  if (typeof memberEntry !== 'undefined' && memberEntry) {
+    memberEntry.href = `/member.html?shop=${encodeURIComponent(customerShopSlug)}`;
+  }
 }
 
 const selectedService = () => availableServices.find(item => item.id === serviceInput.value) || null;
@@ -889,9 +942,8 @@ function renderServices() {
   }
 }
 
-async function loadServices() {
+async function loadCustomerCatalogue(gen = customerLoadGeneration, signal = currentCatalogueAbortController?.signal) {
   if (!customerShopSlug) return;
-  const reqId = ++servicesRequestId;
   const targetLocale = currentLocale;
 
   if (servicesLoading) servicesLoading.hidden = false;
@@ -901,43 +953,31 @@ async function loadServices() {
   if (serviceCards) serviceCards.hidden = true;
   if (bookingStep) bookingStep.hidden = false;
 
-  try {
-    const response = await fetch(`/api/services-db?shopSlug=${encodeURIComponent(customerShopSlug)}&locale=${encodeURIComponent(targetLocale)}`);
-    const result = await response.json();
-    if (reqId !== servicesRequestId || currentLocale !== targetLocale) return;
-    if (!response.ok || result.success === false) throw new Error(customerT('loadServicesFailed'));
-    availableServices = result.data || [];
-    const prevCartLen = cart.length;
-    cart = cartApi.reconcile(cart, availableServices);
-    if (prevCartLen > 0 && cart.length < prevCartLen) {
-      staffGeneration++;
-      for (const key of Array.from(staffByItem.keys())) {
-        if (!cart.some(c => c.clientItemKey === key)) {
-          staffByItem.delete(key);
-          latestStaffRequests.delete(key);
-        }
-      }
-      if (cart.length === 0) {
-        staffByItem.clear();
-        latestStaffRequests.clear();
-      }
-      if (messageBox) {
-        messageBox.className = 'message error';
-        messageBox.textContent = customerT('serviceUnavailableRetry');
-      }
-      clearStaleTime();
-      availabilityRequestId++;
-      timesRequestId++;
-      await refreshAvailabilityAfterCartChange();
-    }
-    if (servicesLoading) servicesLoading.hidden = true;
-    if (servicesError) servicesError.hidden = true;
-    if (servicesRetryContainer) servicesRetryContainer.hidden = true;
-    renderCategories();
-    renderServices();
-    await renderCart();
-  } catch (error) {
-    if (reqId !== servicesRequestId || currentLocale !== targetLocale) return;
+  const catPromise = fetchWithTimeout(
+    `/api/booking/service-categories?shopSlug=${encodeURIComponent(customerShopSlug)}&locale=${encodeURIComponent(targetLocale)}`,
+    { signal }
+  ).then(async res => {
+    if (!res.ok) throw new Error('Category fetch failed');
+    const data = await res.json();
+    if (data.success === false) throw new Error('Category API failed');
+    return Array.isArray(data.data) ? data.data : [];
+  });
+
+  const srvPromise = fetchWithTimeout(
+    `/api/services-db?shopSlug=${encodeURIComponent(customerShopSlug)}&locale=${encodeURIComponent(targetLocale)}`,
+    { signal }
+  ).then(async res => {
+    if (!res.ok) throw new Error('Services fetch failed');
+    const data = await res.json();
+    if (data.success === false) throw new Error('Services API failed');
+    return Array.isArray(data.data) ? data.data : [];
+  });
+
+  const [catSettled, srvSettled] = await Promise.allSettled([catPromise, srvPromise]);
+
+  if (gen !== customerLoadGeneration || currentLocale !== targetLocale) return;
+
+  if (srvSettled.status === 'rejected') {
     if (servicesLoading) servicesLoading.hidden = true;
     if (servicesEmpty) servicesEmpty.hidden = true;
     if (serviceCards) serviceCards.hidden = true;
@@ -947,36 +987,61 @@ async function loadServices() {
       servicesError.textContent = customerT('loadServicesFailed');
     }
     if (servicesRetryContainer) servicesRetryContainer.hidden = false;
-  } finally {
-    if (reqId === servicesRequestId && servicesLoading) {
-      servicesLoading.hidden = true;
-    }
+    return;
   }
+
+  availableCategories = catSettled.status === 'fulfilled' ? catSettled.value : [];
+  availableServices = srvSettled.value;
+
+  const prevCartLen = cart.length;
+  cart = cartApi.reconcile(cart, availableServices);
+  if (prevCartLen > 0 && cart.length < prevCartLen) {
+    staffGeneration++;
+    for (const key of Array.from(staffByItem.keys())) {
+      if (!cart.some(c => c.clientItemKey === key)) {
+        staffByItem.delete(key);
+        latestStaffRequests.delete(key);
+      }
+    }
+    if (cart.length === 0) {
+      staffByItem.clear();
+      latestStaffRequests.clear();
+    }
+    if (messageBox) {
+      messageBox.className = 'message error';
+      messageBox.textContent = customerT('serviceUnavailableRetry');
+    }
+    clearStaleTime();
+    availabilityRequestId++;
+    timesRequestId++;
+    await refreshAvailabilityAfterCartChange();
+  }
+
+  if (servicesLoading) servicesLoading.hidden = true;
+  if (servicesError) servicesError.hidden = true;
+  if (servicesRetryContainer) servicesRetryContainer.hidden = true;
+
+  renderCategories();
+  renderServices();
+  await renderCart();
+}
+
+async function loadServices() {
+  await loadCustomerCatalogue();
 }
 
 async function loadCategories() {
   if (!customerShopSlug) return;
-  const reqId = ++categoriesRequestId;
   const targetLocale = currentLocale;
   try {
-    const response = await fetch(`/api/booking/service-categories?shopSlug=${encodeURIComponent(customerShopSlug)}&locale=${encodeURIComponent(targetLocale)}`);
+    const response = await fetchWithTimeout(`/api/booking/service-categories?shopSlug=${encodeURIComponent(customerShopSlug)}&locale=${encodeURIComponent(targetLocale)}`);
+    if (!response.ok) { availableCategories = []; renderCategories(); return; }
     const result = await response.json();
-    if (reqId !== categoriesRequestId || currentLocale !== targetLocale) return;
-    if (response.ok && result.success !== false) {
-      availableCategories = Array.isArray(result.data) ? result.data : [];
-    } else {
-      availableCategories = [];
-    }
-  } catch (_err) {
-    if (reqId !== categoriesRequestId || currentLocale !== targetLocale) return;
+    availableCategories = (result && result.success !== false && Array.isArray(result.data)) ? result.data : [];
+  } catch {
     availableCategories = [];
   }
   renderCategories();
-}
-
-async function loadCustomerCatalogue() {
-  await loadCategories();
-  await loadServices();
 }
 
 async function staffFor(item) {
@@ -1176,32 +1241,58 @@ async function setLocale(locale) {
 }
 
 async function switchLanguage(locale) {
-  const reqId = ++languageSwitchRequestId;
+  const AbortCtrl = getAbortControllerClass();
+  if (currentCatalogueAbortController) {
+    try { currentCatalogueAbortController.abort(); } catch (_) {}
+  }
+  currentCatalogueAbortController = AbortCtrl ? new AbortCtrl() : null;
+  const gen = ++customerLoadGeneration;
+  const signal = currentCatalogueAbortController ? currentCatalogueAbortController.signal : undefined;
   const targetLocale = locale;
+
   await setLocale(locale);
   if (!customerShopSlug) return;
-  servicesRequestId++;
-  categoriesRequestId++;
+
   if (servicesLoading) servicesLoading.hidden = false;
   if (servicesError) servicesError.hidden = true;
+  if (servicesRetryContainer) servicesRetryContainer.hidden = true;
+  if (servicesEmpty) servicesEmpty.hidden = true;
+  if (serviceCards) serviceCards.hidden = true;
+  if (bookingStep) bookingStep.hidden = false;
+
   try {
-    const catPromise = fetch(`/api/booking/service-categories?shopSlug=${encodeURIComponent(customerShopSlug)}&locale=${encodeURIComponent(targetLocale)}`)
-      .then(r => r.json()).catch(() => ({ success: false, data: [] }));
-    const srvPromise = fetch(`/api/services-db?shopSlug=${encodeURIComponent(customerShopSlug)}&locale=${encodeURIComponent(targetLocale)}`)
-      .then(r => r.json());
+    const catPromise = fetchWithTimeout(
+      `/api/booking/service-categories?shopSlug=${encodeURIComponent(customerShopSlug)}&locale=${encodeURIComponent(targetLocale)}`,
+      { signal }
+    ).then(async r => {
+      if (!r.ok) throw new Error('Categories fetch failed');
+      const data = await r.json();
+      if (data.success === false) throw new Error('Categories API failed');
+      return Array.isArray(data.data) ? data.data : [];
+    });
 
-    const [catResult, srvResult] = await Promise.all([catPromise, srvPromise]);
+    const srvPromise = fetchWithTimeout(
+      `/api/services-db?shopSlug=${encodeURIComponent(customerShopSlug)}&locale=${encodeURIComponent(targetLocale)}`,
+      { signal }
+    ).then(async r => {
+      if (!r.ok) throw new Error('Services fetch failed');
+      const data = await r.json();
+      if (data.success === false) throw new Error('Services API failed');
+      return Array.isArray(data.data) ? data.data : [];
+    });
 
-    if (reqId !== languageSwitchRequestId || currentLocale !== targetLocale) {
+    const [catSettled, srvSettled] = await Promise.allSettled([catPromise, srvPromise]);
+
+    if (gen !== customerLoadGeneration || currentLocale !== targetLocale) {
       return;
     }
 
-    if (!srvResult || srvResult.success === false) {
+    if (srvSettled.status === 'rejected') {
       throw new Error(customerT('loadServicesFailed'));
     }
 
-    availableCategories = Array.isArray(catResult?.data) ? catResult.data : [];
-    availableServices = Array.isArray(srvResult?.data) ? srvResult.data : [];
+    availableCategories = catSettled.status === 'fulfilled' ? catSettled.value : [];
+    availableServices = srvSettled.value;
 
     const prevCartLen = cart.length;
     cart = cartApi.reconcile(cart, availableServices);
@@ -1227,19 +1318,27 @@ async function switchLanguage(locale) {
       await refreshAvailabilityAfterCartChange();
     }
 
+    if (servicesLoading) servicesLoading.hidden = true;
+    if (servicesError) servicesError.hidden = true;
+    if (servicesRetryContainer) servicesRetryContainer.hidden = true;
+
     renderCategories();
     renderServices();
     await renderCart();
     renderLocaleDependentBookingState();
   } catch (error) {
-    if (reqId !== languageSwitchRequestId || currentLocale !== targetLocale) return;
+    if (gen !== customerLoadGeneration || currentLocale !== targetLocale) return;
+    if (servicesLoading) servicesLoading.hidden = true;
+    if (servicesEmpty) servicesEmpty.hidden = true;
+    if (serviceCards) serviceCards.hidden = true;
+    if (bookingStep) bookingStep.hidden = false;
     if (servicesError) {
       servicesError.hidden = false;
       servicesError.textContent = customerT('loadServicesFailed');
     }
     if (servicesRetryContainer) servicesRetryContainer.hidden = false;
   } finally {
-    if (reqId === languageSwitchRequestId && servicesLoading) {
+    if (gen === customerLoadGeneration && servicesLoading && servicesError && !servicesError.hidden) {
       servicesLoading.hidden = true;
     }
   }
@@ -1325,13 +1424,53 @@ if (addAnotherBtn) {
   });
 }
 
+async function initializeCustomerPage() {
+  const AbortCtrl = getAbortControllerClass();
+  if (currentCatalogueAbortController) {
+    try { currentCatalogueAbortController.abort(); } catch (_) {}
+  }
+  currentCatalogueAbortController = AbortCtrl ? new AbortCtrl() : null;
+  const gen = ++customerLoadGeneration;
+  const signal = currentCatalogueAbortController ? currentCatalogueAbortController.signal : undefined;
+
+  if (servicesLoading) servicesLoading.hidden = false;
+  if (servicesError) servicesError.hidden = true;
+  if (servicesRetryContainer) servicesRetryContainer.hidden = true;
+  if (servicesEmpty) servicesEmpty.hidden = true;
+  if (serviceCards) serviceCards.hidden = true;
+  if (bookingStep) bookingStep.hidden = false;
+
+  try {
+    if (!cartApiValid) {
+      showCartModuleRecovery();
+      return;
+    }
+    await loadCustomerShopContext(signal);
+    if (gen !== customerLoadGeneration) return;
+    await setLocale(currentLocale);
+    if (gen !== customerLoadGeneration) return;
+    await loadCustomerCatalogue(gen, signal);
+    if (gen !== customerLoadGeneration) return;
+    renderBookingCalendar();
+  } catch (error) {
+    if (gen !== customerLoadGeneration) return;
+    if (servicesLoading) servicesLoading.hidden = true;
+    if (servicesEmpty) servicesEmpty.hidden = true;
+    if (serviceCards) serviceCards.hidden = true;
+    if (bookingStep) bookingStep.hidden = false;
+    if (servicesError) {
+      servicesError.hidden = false;
+      servicesError.textContent = customerT('loadServicesFailed');
+    }
+    if (servicesRetryContainer) servicesRetryContainer.hidden = false;
+  }
+}
+
 const servicesRetryBtn = document.getElementById('servicesRetryBtn');
-if (servicesRetryBtn) {
+if (servicesRetryBtn && !servicesRetryBtn.__retryBound) {
+  servicesRetryBtn.__retryBound = true;
   servicesRetryBtn.addEventListener('click', async () => {
-    if (servicesError) servicesError.hidden = true;
-    if (servicesRetryContainer) servicesRetryContainer.hidden = true;
-    if (servicesLoading) servicesLoading.hidden = false;
-    await loadCustomerCatalogue();
+    await initializeCustomerPage();
   });
 }
 
@@ -1762,21 +1901,7 @@ document
 document.getElementById('languageZh').addEventListener('click', () => switchLanguage('zh-CN'));
 document.getElementById('languageEn').addEventListener('click', () => switchLanguage('en'));
 (async () => {
-  try {
-    if (!cartApiValid) {
-      showCartModuleRecovery();
-      return;
-    }
-    await loadCustomerShopContext();
-    await setLocale(currentLocale);
-    await loadCustomerCatalogue();
-    renderBookingCalendar();
-  } catch (error) {
-    if (messageBox) {
-      messageBox.className = 'message error';
-      messageBox.textContent = customerT('loadServicesFailed');
-    }
-  }
+  await initializeCustomerPage();
 })();
 
 </script>
