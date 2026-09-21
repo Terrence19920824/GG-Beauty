@@ -743,10 +743,14 @@ const getCatalogueTimeoutMs = () => {
 };
 
 async function fetchJsonWithTimeout(url, options = {}, timeoutMs = getCatalogueTimeoutMs()) {
+  const fetchOptions = {
+    cache: 'no-store',
+    ...options
+  };
   const AbortCtrl = getAbortControllerClass();
   if (!AbortCtrl) {
     const fetchFn = (typeof globalThis !== 'undefined' && globalThis.fetch) ? globalThis.fetch : fetch;
-    const res = await fetchFn(url, options);
+    const res = await fetchFn(url, fetchOptions);
     if (!res || !res.ok) {
       throw new Error(`HTTP ${res ? res.status : 'error'}`);
     }
@@ -775,7 +779,7 @@ async function fetchJsonWithTimeout(url, options = {}, timeoutMs = getCatalogueT
 
   try {
     const fetchFn = (typeof globalThis !== 'undefined' && globalThis.fetch) ? globalThis.fetch : fetch;
-    const res = await fetchFn(url, { ...options, signal: internalCtrl.signal });
+    const res = await fetchFn(url, { ...fetchOptions, signal: internalCtrl.signal });
     if (!res || !res.ok) {
       throw new Error(`HTTP ${res ? res.status : 'error'}`);
     }
@@ -975,18 +979,40 @@ function renderServices() {
     }
 
     card.addEventListener('click', async () => {
-      if (cartApi.hasService(cart, service.id)) {
-        if (cartPanel) cartPanel.scrollIntoView({ behavior: 'smooth' });
-        return;
+      const isAlreadySelected = cartApi.hasService(cart, service.id);
+      if (isAlreadySelected) {
+        const existing = cart.find(item => item.serviceId === service.id);
+        if (existing) {
+          cart = cartApi.remove(cart, existing.clientItemKey);
+          staffByItem.delete(existing.clientItemKey);
+          latestStaffRequests.delete(existing.clientItemKey);
+        }
+      } else {
+        cart = cartApi.add(cart, service);
       }
-      cart = cartApi.add(cart, service);
+      cart = cart.map(c => (typeof cartApi.updateStaff === 'function' ? cartApi.updateStaff([c], c.clientItemKey, 'no_preference', '')[0] : { ...c, staffSelectionType: 'no_preference', staffId: null }));
+      staffGeneration++;
+      if (cart.length === 0) {
+        staffByItem.clear();
+        latestStaffRequests.clear();
+        calendarAvailability = new Map();
+        if (scheduleSection) scheduleSection.hidden = true;
+        if (contactStep) contactStep.hidden = true;
+        if (nextStepBtn) nextStepBtn.disabled = true;
+      }
+      if (dateInput) dateInput.value = '';
+      selectedSlot = null;
+      availabilityIsEmpty = false;
+      renderSelectedDate();
       clearStaleTime();
       availabilityRequestId++;
       timesRequestId++;
       renderServices();
       await renderCart();
       await refreshAvailabilityAfterCartChange();
-      if (cartPanel) cartPanel.scrollIntoView({ behavior: 'smooth' });
+      if (!isAlreadySelected && cartPanel) {
+        cartPanel.scrollIntoView({ behavior: 'smooth' });
+      }
     });
     serviceCards.appendChild(card);
   }
@@ -1224,9 +1250,14 @@ async function renderCart() {
     remove.setAttribute('aria-label', `${customerT('removeService')} ${service.name}`);
     remove.addEventListener('click', async () => {
       cart = cartApi.remove(cart, item.clientItemKey);
+      cart = cart.map(c => (typeof cartApi.updateStaff === 'function' ? cartApi.updateStaff([c], c.clientItemKey, 'no_preference', '')[0] : { ...c, staffSelectionType: 'no_preference', staffId: null }));
       staffGeneration++;
       latestStaffRequests.delete(item.clientItemKey);
       staffByItem.delete(item.clientItemKey);
+      if (dateInput) dateInput.value = '';
+      selectedSlot = null;
+      availabilityIsEmpty = false;
+      renderSelectedDate();
       clearStaleTime();
       availabilityRequestId++;
       timesRequestId++;
@@ -1234,13 +1265,9 @@ async function renderCart() {
         if (scheduleSection) scheduleSection.hidden = true;
         if (contactStep) contactStep.hidden = true;
         if (nextStepBtn) nextStepBtn.disabled = true;
-        if (dateInput) dateInput.value = '';
-        selectedSlot = null;
-        availabilityIsEmpty = false;
         calendarAvailability = new Map();
         staffByItem.clear();
         latestStaffRequests.clear();
-        renderSelectedDate();
         renderBookingCalendar();
       }
       renderServices();
@@ -1407,7 +1434,15 @@ if (addServiceBtn) {
     const service = selectedService();
     if (!service) return;
     cart = cartApi.add(cart, service);
+    cart = cart.map(c => (typeof cartApi.updateStaff === 'function' ? cartApi.updateStaff([c], c.clientItemKey, 'no_preference', '')[0] : { ...c, staffSelectionType: 'no_preference', staffId: null }));
+    staffGeneration++;
+    if (dateInput) dateInput.value = '';
+    selectedSlot = null;
+    availabilityIsEmpty = false;
+    renderSelectedDate();
     clearStaleTime();
+    availabilityRequestId++;
+    timesRequestId++;
     renderServices();
     await renderCart();
     await refreshAvailabilityAfterCartChange();

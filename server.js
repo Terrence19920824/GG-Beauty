@@ -688,6 +688,82 @@ app.post(
   checkoutPos.create
 );
 
+const QUALIFIED_SERVICE_STAFF_EXISTS_SQL = `
+  EXISTS (
+    SELECT 1
+    FROM staff_services AS capability
+    JOIN staff AS member
+      ON member.shop_id = capability.shop_id
+     AND member.id = capability.staff_id
+     AND member.is_active = TRUE
+     AND member.bookable = TRUE
+    JOIN staff_location_assignments AS assignment
+      ON assignment.shop_id = member.shop_id
+     AND assignment.staff_id = member.id
+     AND assignment.is_active = TRUE
+    JOIN locations AS location
+      ON location.shop_id = member.shop_id
+     AND location.id = assignment.location_id
+     AND location.is_active = TRUE
+    JOIN staff_location_working_hours AS hours
+      ON hours.shop_id = member.shop_id
+     AND hours.location_id = assignment.location_id
+     AND hours.staff_id = member.id
+     AND hours.is_active = TRUE
+    WHERE capability.shop_id = service.shop_id
+      AND capability.service_id = service.id
+      AND capability.is_active = TRUE
+  )
+`;
+
+const shopCatalogRevisions = new Map();
+const shopSlugToId = new Map();
+const shopIdToSlug = new Map();
+
+const recordShopSlugMapping = (slug, id) => {
+  if (slug && id) {
+    shopSlugToId.set(slug, id);
+    shopIdToSlug.set(id, slug);
+  }
+};
+
+const getShopCatalogRevision = (identifier) => {
+  if (!identifier) return 1;
+  const key = shopSlugToId.get(identifier) || identifier;
+  if (!shopCatalogRevisions.has(key)) {
+    shopCatalogRevisions.set(key, 1);
+  }
+  return shopCatalogRevisions.get(key);
+};
+
+const invalidateShopCatalogCache = (identifier) => {
+  if (!identifier) return;
+  const key = shopSlugToId.get(identifier) || identifier;
+  const current = getShopCatalogRevision(key);
+  const next = current + 1;
+  shopCatalogRevisions.set(key, next);
+  const slug = shopIdToSlug.get(key);
+  if (slug) {
+    shopCatalogRevisions.set(slug, next);
+  }
+  const id = shopSlugToId.get(key);
+  if (id) {
+    shopCatalogRevisions.set(id, next);
+  }
+};
+app.locals.getShopCatalogRevision = getShopCatalogRevision;
+app.locals.invalidateShopCatalogCache = invalidateShopCatalogCache;
+app.locals.recordShopSlugMapping = recordShopSlugMapping;
+
+const setPublicBookingNoCacheHeaders = (res, identifier = null) => {
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+  res.set('Pragma', 'no-cache');
+  res.set('Expires', '0');
+  if (identifier) {
+    res.set('X-Catalog-Revision', String(getShopCatalogRevision(identifier)));
+  }
+};
+
 const ownerStaffManagement = createOwnerStaffManagement({
   pool: {
     connect: (...args) =>
@@ -695,7 +771,8 @@ const ownerStaffManagement = createOwnerStaffManagement({
   },
   isUuid,
   runInTransaction,
-  safeErrorCode: safeStaffAuthErrorCode
+  safeErrorCode: safeStaffAuthErrorCode,
+  invalidateCatalog: invalidateShopCatalogCache
 });
 
 app.get(
@@ -741,7 +818,8 @@ const ownerStaffCapabilityManagement =
     },
     isUuid,
     runInTransaction,
-    safeErrorCode: safeStaffAuthErrorCode
+    safeErrorCode: safeStaffAuthErrorCode,
+    invalidateCatalog: invalidateShopCatalogCache
   });
 
 app.get(
@@ -762,7 +840,8 @@ const ownerScheduleManagement = createOwnerScheduleManagement({
   pool: { connect: (...args) => app.locals.ownerAuthPool.connect(...args) },
   isUuid,
   runInTransaction,
-  safeErrorCode: safeStaffAuthErrorCode
+  safeErrorCode: safeStaffAuthErrorCode,
+  invalidateCatalog: invalidateShopCatalogCache
 });
 
 app.get('/api/owner/staff/:staffId/schedule', requireOwnerAuth, requireOwnerRole(['owner', 'manager', 'admin']), ownerScheduleManagement.getWeekly);
@@ -775,7 +854,8 @@ const ownerServiceCategoryManagement = createOwnerServiceCategoryManagement({
   pool: { connect: (...args) => app.locals.ownerAuthPool.connect(...args) },
   isUuid,
   runInTransaction,
-  safeErrorCode: safeStaffAuthErrorCode
+  safeErrorCode: safeStaffAuthErrorCode,
+  invalidateCatalog: invalidateShopCatalogCache
 });
 app.get('/api/owner/service-categories', requireOwnerAuth, requireOwnerRole(['owner', 'manager', 'admin']), ownerServiceCategoryManagement.list);
 app.post('/api/owner/service-categories', requireOwnerAuth, requireOwnerRole(['owner', 'manager']), ownerServiceCategoryManagement.create);
@@ -1168,6 +1248,8 @@ app.post(
         }
       );
 
+      invalidateShopCatalogCache(req.ownerAuth.shopId);
+
       res.status(201).json({
         success: true,
         data: created
@@ -1295,6 +1377,8 @@ app.patch(
         }
       );
 
+      invalidateShopCatalogCache(req.ownerAuth.shopId);
+
       res.json({ success: true, data: updated });
     } catch (error) {
       console.error(
@@ -1339,9 +1423,10 @@ app.get('/api/db-test', async (req, res) => {
 });
 
 // Public, tenant-scoped service categories. Categories without an active,
-// bookable service are intentionally hidden from the customer journey.
+// bookable service backed by staff with active schedules are hidden.
 app.get('/api/booking/service-categories', async (req, res) => {
   const shopSlug = typeof req.query.shopSlug === 'string' ? req.query.shopSlug.trim() : '';
+  setPublicBookingNoCacheHeaders(res, shopSlug);
   const locale = normalizeLocale(req.query.locale);
   if (!shopSlug) return res.status(400).json({ success: false, message: '缺少店铺资料' });
 
@@ -1379,6 +1464,7 @@ app.get('/api/booking/service-categories', async (req, res) => {
              AND service.category_id = category.id
              AND service.is_active = TRUE
              AND service.bookable = TRUE
+             AND ${QUALIFIED_SERVICE_STAFF_EXISTS_SQL}
          )
        ORDER BY category.sort_order ASC, category.id ASC`,
       [shopSlug, locale]
@@ -1397,6 +1483,7 @@ app.get('/api/services-db', async (req, res) => {
   const shopSlug = typeof req.query.shopSlug === 'string'
     ? req.query.shopSlug.trim()
     : '';
+  setPublicBookingNoCacheHeaders(res, shopSlug);
   const locale = normalizeLocale(req.query.locale);
 
   if (!shopSlug) {
@@ -1425,6 +1512,10 @@ app.get('/api/services-db', async (req, res) => {
          ON service.shop_id = shop.id
         AND service.is_active = TRUE
         AND service.bookable = TRUE
+       JOIN service_categories AS category
+         ON category.shop_id = service.shop_id
+        AND category.id = service.category_id
+        AND category.is_active = TRUE
        LEFT JOIN service_translations AS requested
          ON requested.shop_id = service.shop_id
         AND requested.service_id = service.id
@@ -1439,6 +1530,7 @@ app.get('/api/services-db', async (req, res) => {
         AND chinese.locale = 'zh-CN'
        WHERE shop.slug = $1
          AND shop.status = 'active'
+         AND ${QUALIFIED_SERVICE_STAFF_EXISTS_SQL}
        ORDER BY service.sort_order ASC, service.name ASC`,
       [shopSlug, locale]
     );
@@ -2237,7 +2329,8 @@ const loadMultiServiceContext = async (client, { shopSlug, items, locale }) => {
      LEFT JOIN service_translations chinese ON chinese.shop_id=service.shop_id
        AND chinese.service_id=service.id AND chinese.locale='zh-CN'
      WHERE service.shop_id=$1 AND service.id=ANY($2::UUID[])
-       AND service.is_active=TRUE AND service.bookable=TRUE`,
+       AND service.is_active=TRUE AND service.bookable=TRUE
+       AND ${QUALIFIED_SERVICE_STAFF_EXISTS_SQL}`,
     [scope.shop_id, ids, locale]
   );
   if (result.rows.length !== ids.length) throw new AppointmentMutationError('service_not_found', 400, '找不到服务项目');
@@ -2951,14 +3044,19 @@ const loadTrustedCustomerBookingScope = async (dbClient, shopSlug) => {
     `,
     [shopSlug]
   );
-  return result.rows[0] || null;
+  const row = result.rows[0] || null;
+  if (row) {
+    recordShopSlugMapping(row.shop_slug, row.shop_id);
+  }
+  return row;
 };
 
 app.get('/api/booking/context', async (req, res) => {
+  const shopSlug = typeof req.query.shopSlug === 'string' ? req.query.shopSlug.trim().toLowerCase() : '';
+  setPublicBookingNoCacheHeaders(res, shopSlug);
   if (req.query.shopId !== undefined || req.query.shop_id !== undefined || req.query.tenantId !== undefined) {
     return res.status(400).json({ success: false, message: 'Invalid shop context' });
   }
-  const shopSlug = typeof req.query.shopSlug === 'string' ? req.query.shopSlug.trim().toLowerCase() : '';
   if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(shopSlug) || shopSlug.length > 100) {
     return res.status(400).json({ success: false, message: 'Invalid shop context' });
   }
@@ -2991,6 +3089,10 @@ const loadEligibleBookingStaff = async (
           AND ($4::DATE IS NULL OR (busy.start_at AT TIME ZONE location.timezone)::DATE = $4::DATE)
       )::INTEGER AS assigned_appointment_count
     FROM services AS service
+    JOIN service_categories AS category
+      ON category.shop_id = service.shop_id
+     AND category.id = service.category_id
+     AND category.is_active = TRUE
     JOIN staff_services AS capability
       ON capability.shop_id = service.shop_id
      AND capability.service_id = service.id
@@ -3020,6 +3122,14 @@ const loadEligibleBookingStaff = async (
       AND service.id = $3::UUID
       AND service.is_active = TRUE
       AND service.bookable = TRUE
+      AND EXISTS (
+        SELECT 1
+        FROM staff_location_working_hours AS hours
+        WHERE hours.shop_id = member.shop_id
+          AND hours.location_id = location_assignment.location_id
+          AND hours.staff_id = member.id
+          AND hours.is_active = TRUE
+      )
     GROUP BY member.id, member.name
     ORDER BY assigned_appointment_count ASC, member.id ASC
     LIMIT 100
@@ -3095,6 +3205,7 @@ const loadMultiServiceAvailableTimes = async ({ client, context, date, validator
 };
 
 app.post('/api/booking/multi-service-available-times', async (req, res) => {
+  setPublicBookingNoCacheHeaders(res, req.body && req.body.shopSlug);
   if (req.body.shopId !== undefined || req.body.shop_id !== undefined) {
     return res.status(400).json({ success: false, message: 'Invalid shop context' });
   }
@@ -3122,6 +3233,7 @@ app.post('/api/booking/multi-service-available-times', async (req, res) => {
 });
 
 app.post('/api/booking/multi-service-available-dates', async (req, res) => {
+  setPublicBookingNoCacheHeaders(res, req.body && req.body.shopSlug);
   if (req.body.shopId !== undefined || req.body.shop_id !== undefined || req.body.locationId !== undefined) {
     return res.status(400).json({ success: false, message: 'Invalid shop context' });
   }
@@ -3163,6 +3275,7 @@ app.post('/api/booking/multi-service-available-dates', async (req, res) => {
 });
 
 app.get('/api/booking/staff-options', async (req, res) => {
+  setPublicBookingNoCacheHeaders(res, req.query && req.query.shopSlug);
   const { shopSlug, serviceId } = req.query;
   if (typeof shopSlug !== 'string' || !shopSlug || !isUuid(serviceId)) {
     return res.status(400).json({ success: false, message: '预约选项无效' });
@@ -3190,6 +3303,7 @@ app.get('/api/booking/staff-options', async (req, res) => {
 });
 
 app.post('/api/booking/multi-service-eligible-staff', async (req, res) => {
+  setPublicBookingNoCacheHeaders(res, req.body && req.body.shopSlug);
   if (req.body.shopId !== undefined || req.body.shop_id !== undefined) {
     return res.status(400).json({ success: false, message: 'Invalid shop context' });
   }
@@ -4892,5 +5006,7 @@ module.exports = {
   filterBookableCandidateSlots,
   filterAnyStaffCandidateSlots,
   loadEligibleBookingStaff,
-  loadTrustedCustomerBookingScope
+  loadTrustedCustomerBookingScope,
+  invalidateShopCatalogCache,
+  getShopCatalogRevision
 };
