@@ -573,6 +573,7 @@ let availabilityIsEmpty = false;
 let availableCategories = [];
 let availableServices = [];
 let customerShopSlug = '';
+let customerShopName = '';
 let selectedCategoryId = '';
 let cart = cartApi.create();
 let bookingFor = 'myself';
@@ -741,29 +742,66 @@ const getCatalogueTimeoutMs = () => {
   return 8000;
 };
 
-async function fetchWithTimeout(url, options = {}, timeoutMs = getCatalogueTimeoutMs()) {
+async function fetchJsonWithTimeout(url, options = {}, timeoutMs = getCatalogueTimeoutMs()) {
   const AbortCtrl = getAbortControllerClass();
   if (!AbortCtrl) {
     const fetchFn = (typeof globalThis !== 'undefined' && globalThis.fetch) ? globalThis.fetch : fetch;
-    return await fetchFn(url, options);
+    const res = await fetchFn(url, options);
+    if (!res || !res.ok) {
+      throw new Error(`HTTP ${res ? res.status : 'error'}`);
+    }
+    return await res.json();
   }
+
   const internalCtrl = new AbortCtrl();
-  const timer = setTimeout(() => internalCtrl.abort(), timeoutMs);
+  const timer = setTimeout(() => {
+    try { internalCtrl.abort(); } catch (_) {}
+  }, timeoutMs);
+
   let abortForwarder;
   if (options.signal) {
     if (options.signal.aborted) {
       clearTimeout(timer);
-      internalCtrl.abort();
+      try { internalCtrl.abort(); } catch (_) {}
     } else {
-      abortForwarder = () => internalCtrl.abort();
+      abortForwarder = () => {
+        try { internalCtrl.abort(); } catch (_) {}
+      };
       if (typeof options.signal.addEventListener === 'function') {
         options.signal.addEventListener('abort', abortForwarder, { once: true });
       }
     }
   }
+
   try {
     const fetchFn = (typeof globalThis !== 'undefined' && globalThis.fetch) ? globalThis.fetch : fetch;
-    return await fetchFn(url, { ...options, signal: internalCtrl.signal });
+    const res = await fetchFn(url, { ...options, signal: internalCtrl.signal });
+    if (!res || !res.ok) {
+      throw new Error(`HTTP ${res ? res.status : 'error'}`);
+    }
+    const jsonPromise = res.json();
+    const abortPromise = new Promise((_, reject) => {
+      if (internalCtrl.signal.aborted) {
+        const err = new Error('Request timed out or aborted');
+        err.name = 'AbortError';
+        reject(err);
+        return;
+      }
+      internalCtrl.signal.addEventListener('abort', () => {
+        const err = new Error('Request timed out or aborted');
+        err.name = 'AbortError';
+        reject(err);
+      }, { once: true });
+    });
+    const data = await Promise.race([jsonPromise, abortPromise]);
+    return data;
+  } catch (err) {
+    if (err && (err.name === 'AbortError' || err.code === 20 || String(err).includes('aborted') || String(err).includes('AbortError'))) {
+      const abortErr = new Error('Request timed out or aborted');
+      abortErr.name = 'TimeoutError';
+      throw abortErr;
+    }
+    throw err;
   } finally {
     clearTimeout(timer);
     if (options.signal && abortForwarder && typeof options.signal.removeEventListener === 'function') {
@@ -772,40 +810,52 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = getCatalogueTimeo
   }
 }
 
-async function loadCustomerShopContext(signal) {
+async function fetchWithTimeout(url, options = {}, timeoutMs = getCatalogueTimeoutMs()) {
+  const data = await fetchJsonWithTimeout(url, options, timeoutMs);
+  return {
+    ok: true,
+    status: 200,
+    json: async () => data
+  };
+}
+
+function validateServicesResult(result) {
+  if (!result || typeof result !== 'object' || Array.isArray(result)) {
+    return { valid: false };
+  }
+  if (result.success !== true) {
+    return { valid: false };
+  }
+  if (!Array.isArray(result.data)) {
+    return { valid: false };
+  }
+  for (const item of result.data) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) {
+      return { valid: false };
+    }
+    if (!item.id || typeof item.id !== 'string') {
+      return { valid: false };
+    }
+  }
+  return { valid: true, isEmpty: result.data.length === 0, services: result.data };
+}
+
+async function loadCustomerShopContext(signal = currentCatalogueAbortController?.signal) {
   const candidate = shopContextApi.resolveCandidate(globalThis.location);
   if (!candidate) throw new Error('Missing or invalid shop context');
-  const response = await fetchWithTimeout(`/api/booking/context?shopSlug=${encodeURIComponent(candidate)}`, { signal });
-  if (!response.ok) {
-    throw new Error('Shop context request failed with status ' + response.status);
+  const result = await fetchJsonWithTimeout(`/api/booking/context?shopSlug=${encodeURIComponent(candidate)}`, { signal });
+  if (
+    !result ||
+    result.success !== true ||
+    !result.data ||
+    typeof result.data !== 'object' ||
+    Array.isArray(result.data) ||
+    !result.data.shopSlug ||
+    typeof result.data.shopSlug !== 'string'
+  ) {
+    throw new Error((result && result.message) || 'Shop is unavailable');
   }
-  const result = await response.json();
-  if (result.success === false || !result.data?.shopSlug) {
-    throw new Error(result.message || 'Shop is unavailable');
-  }
-  if (result.data.shopSlug !== customerShopSlug) {
-    customerShopSlug = result.data.shopSlug;
-    staffGeneration++;
-    staffByItem.clear();
-    latestStaffRequests.clear();
-  }
-  shopBrandName.textContent = result.data.shopName || customerShopSlug;
-  if (globalThis.ggCustomerTheme && typeof globalThis.ggCustomerTheme.resolveTheme === 'function') {
-    const theme = globalThis.ggCustomerTheme.resolveTheme(customerShopSlug, { shopName: shopBrandName.textContent });
-    if (typeof document !== 'undefined' && document.documentElement) {
-      globalThis.ggCustomerTheme.applyTheme(document.documentElement, theme);
-    }
-    const badge = typeof document !== 'undefined' && typeof document.getElementById === 'function' ? document.getElementById('shopBrandBadge') : null;
-    const placeholder = typeof document !== 'undefined' && typeof document.getElementById === 'function' ? document.getElementById('shopBrandLogoPlaceholder') : null;
-    if (placeholder) placeholder.textContent = theme.logoText || 'GG';
-    if (badge && theme.logoUrl) {
-      badge.innerHTML = `<img src="${theme.logoUrl}" alt="" style="width:100%;height:100%;border-radius:50%;object-fit:cover;">`;
-    }
-  }
-  document.title = `${shopBrandName.textContent} · ${customerT('onlineAppointment')}`;
-  if (typeof memberEntry !== 'undefined' && memberEntry) {
-    memberEntry.href = `/member.html?shop=${encodeURIComponent(customerShopSlug)}`;
-  }
+  return result;
 }
 
 const selectedService = () => availableServices.find(item => item.id === serviceInput.value) || null;
@@ -953,31 +1003,99 @@ async function loadCustomerCatalogue(gen = customerLoadGeneration, signal = curr
   if (serviceCards) serviceCards.hidden = true;
   if (bookingStep) bookingStep.hidden = false;
 
-  const catPromise = fetchWithTimeout(
+  let categoriesResolved = false;
+  let servicesResolved = false;
+
+  const catPromise = fetchJsonWithTimeout(
     `/api/booking/service-categories?shopSlug=${encodeURIComponent(customerShopSlug)}&locale=${encodeURIComponent(targetLocale)}`,
     { signal }
-  ).then(async res => {
-    if (!res.ok) throw new Error('Category fetch failed');
-    const data = await res.json();
-    if (data.success === false) throw new Error('Category API failed');
-    return Array.isArray(data.data) ? data.data : [];
+  ).then(catResult => {
+    if (gen !== customerLoadGeneration || currentLocale !== targetLocale) return;
+    if (catResult && catResult.success === true && Array.isArray(catResult.data)) {
+      const validCats = catResult.data.filter(c => c && typeof c === 'object' && c.categoryId);
+      availableCategories = validCats;
+      categoriesResolved = true;
+      if (servicesResolved && availableServices.length > 0) {
+        renderCategories();
+        renderServices();
+      }
+    } else {
+      categoriesResolved = true;
+    }
+  }).catch(() => {
+    if (gen !== customerLoadGeneration || currentLocale !== targetLocale) return;
+    categoriesResolved = true;
   });
 
-  const srvPromise = fetchWithTimeout(
-    `/api/services-db?shopSlug=${encodeURIComponent(customerShopSlug)}&locale=${encodeURIComponent(targetLocale)}`,
-    { signal }
-  ).then(async res => {
-    if (!res.ok) throw new Error('Services fetch failed');
-    const data = await res.json();
-    if (data.success === false) throw new Error('Services API failed');
-    return Array.isArray(data.data) ? data.data : [];
-  });
+  try {
+    const srvResult = await fetchJsonWithTimeout(
+      `/api/services-db?shopSlug=${encodeURIComponent(customerShopSlug)}&locale=${encodeURIComponent(targetLocale)}`,
+      { signal }
+    );
 
-  const [catSettled, srvSettled] = await Promise.allSettled([catPromise, srvPromise]);
+    if (gen !== customerLoadGeneration || currentLocale !== targetLocale) return;
 
-  if (gen !== customerLoadGeneration || currentLocale !== targetLocale) return;
+    const validation = validateServicesResult(srvResult);
+    if (!validation.valid) {
+      throw new Error(customerT('loadServicesFailed'));
+    }
 
-  if (srvSettled.status === 'rejected') {
+    servicesResolved = true;
+    availableServices = validation.services;
+
+    const prevCartLen = cart.length;
+    cart = cartApi.reconcile(cart, availableServices);
+    if (prevCartLen > 0 && cart.length < prevCartLen) {
+      staffGeneration++;
+      for (const key of Array.from(staffByItem.keys())) {
+        if (!cart.some(c => c.clientItemKey === key)) {
+          staffByItem.delete(key);
+          latestStaffRequests.delete(key);
+        }
+      }
+      if (cart.length === 0) {
+        staffByItem.clear();
+        latestStaffRequests.clear();
+      }
+      if (messageBox) {
+        messageBox.className = 'message error';
+        messageBox.textContent = customerT('serviceUnavailableRetry');
+      }
+      clearStaleTime();
+      availabilityRequestId++;
+      timesRequestId++;
+      await refreshAvailabilityAfterCartChange();
+    }
+    await renderCart();
+
+    if (validation.isEmpty) {
+      availableCategories = [];
+      if (servicesLoading) servicesLoading.hidden = true;
+      if (servicesError) servicesError.hidden = true;
+      if (servicesRetryContainer) servicesRetryContainer.hidden = true;
+      if (serviceCards) serviceCards.hidden = true;
+      if (categoryStep) categoryStep.hidden = true;
+      if (servicesEmpty) servicesEmpty.hidden = false;
+      if (bookingStep) bookingStep.hidden = false;
+      return;
+    }
+
+    if (servicesLoading) servicesLoading.hidden = true;
+    if (servicesError) servicesError.hidden = true;
+    if (servicesRetryContainer) servicesRetryContainer.hidden = true;
+    if (servicesEmpty) servicesEmpty.hidden = true;
+    if (serviceCards) serviceCards.hidden = false;
+    if (bookingStep) bookingStep.hidden = false;
+
+    if (categoriesResolved && availableCategories.length > 0) {
+      renderCategories();
+    } else {
+      if (categoryStep) categoryStep.hidden = true;
+      selectedCategoryId = '';
+    }
+    renderServices();
+  } catch (err) {
+    if (gen !== customerLoadGeneration || currentLocale !== targetLocale) return;
     if (servicesLoading) servicesLoading.hidden = true;
     if (servicesEmpty) servicesEmpty.hidden = true;
     if (serviceCards) serviceCards.hidden = true;
@@ -987,43 +1105,7 @@ async function loadCustomerCatalogue(gen = customerLoadGeneration, signal = curr
       servicesError.textContent = customerT('loadServicesFailed');
     }
     if (servicesRetryContainer) servicesRetryContainer.hidden = false;
-    return;
   }
-
-  availableCategories = catSettled.status === 'fulfilled' ? catSettled.value : [];
-  availableServices = srvSettled.value;
-
-  const prevCartLen = cart.length;
-  cart = cartApi.reconcile(cart, availableServices);
-  if (prevCartLen > 0 && cart.length < prevCartLen) {
-    staffGeneration++;
-    for (const key of Array.from(staffByItem.keys())) {
-      if (!cart.some(c => c.clientItemKey === key)) {
-        staffByItem.delete(key);
-        latestStaffRequests.delete(key);
-      }
-    }
-    if (cart.length === 0) {
-      staffByItem.clear();
-      latestStaffRequests.clear();
-    }
-    if (messageBox) {
-      messageBox.className = 'message error';
-      messageBox.textContent = customerT('serviceUnavailableRetry');
-    }
-    clearStaleTime();
-    availabilityRequestId++;
-    timesRequestId++;
-    await refreshAvailabilityAfterCartChange();
-  }
-
-  if (servicesLoading) servicesLoading.hidden = true;
-  if (servicesError) servicesError.hidden = true;
-  if (servicesRetryContainer) servicesRetryContainer.hidden = true;
-
-  renderCategories();
-  renderServices();
-  await renderCart();
 }
 
 async function loadServices() {
@@ -1251,96 +1333,14 @@ async function switchLanguage(locale) {
   const targetLocale = locale;
 
   await setLocale(locale);
-  if (!customerShopSlug) return;
+  if (!customerShopSlug) {
+    await initializeCustomerPage();
+    return;
+  }
 
-  if (servicesLoading) servicesLoading.hidden = false;
-  if (servicesError) servicesError.hidden = true;
-  if (servicesRetryContainer) servicesRetryContainer.hidden = true;
-  if (servicesEmpty) servicesEmpty.hidden = true;
-  if (serviceCards) serviceCards.hidden = true;
-  if (bookingStep) bookingStep.hidden = false;
-
-  try {
-    const catPromise = fetchWithTimeout(
-      `/api/booking/service-categories?shopSlug=${encodeURIComponent(customerShopSlug)}&locale=${encodeURIComponent(targetLocale)}`,
-      { signal }
-    ).then(async r => {
-      if (!r.ok) throw new Error('Categories fetch failed');
-      const data = await r.json();
-      if (data.success === false) throw new Error('Categories API failed');
-      return Array.isArray(data.data) ? data.data : [];
-    });
-
-    const srvPromise = fetchWithTimeout(
-      `/api/services-db?shopSlug=${encodeURIComponent(customerShopSlug)}&locale=${encodeURIComponent(targetLocale)}`,
-      { signal }
-    ).then(async r => {
-      if (!r.ok) throw new Error('Services fetch failed');
-      const data = await r.json();
-      if (data.success === false) throw new Error('Services API failed');
-      return Array.isArray(data.data) ? data.data : [];
-    });
-
-    const [catSettled, srvSettled] = await Promise.allSettled([catPromise, srvPromise]);
-
-    if (gen !== customerLoadGeneration || currentLocale !== targetLocale) {
-      return;
-    }
-
-    if (srvSettled.status === 'rejected') {
-      throw new Error(customerT('loadServicesFailed'));
-    }
-
-    availableCategories = catSettled.status === 'fulfilled' ? catSettled.value : [];
-    availableServices = srvSettled.value;
-
-    const prevCartLen = cart.length;
-    cart = cartApi.reconcile(cart, availableServices);
-    if (prevCartLen > 0 && cart.length < prevCartLen) {
-      staffGeneration++;
-      for (const key of Array.from(staffByItem.keys())) {
-        if (!cart.some(c => c.clientItemKey === key)) {
-          staffByItem.delete(key);
-          latestStaffRequests.delete(key);
-        }
-      }
-      if (cart.length === 0) {
-        staffByItem.clear();
-        latestStaffRequests.clear();
-      }
-      if (messageBox) {
-        messageBox.className = 'message error';
-        messageBox.textContent = customerT('serviceUnavailableRetry');
-      }
-      clearStaleTime();
-      availabilityRequestId++;
-      timesRequestId++;
-      await refreshAvailabilityAfterCartChange();
-    }
-
-    if (servicesLoading) servicesLoading.hidden = true;
-    if (servicesError) servicesError.hidden = true;
-    if (servicesRetryContainer) servicesRetryContainer.hidden = true;
-
-    renderCategories();
-    renderServices();
-    await renderCart();
+  await loadCustomerCatalogue(gen, signal);
+  if (gen === customerLoadGeneration && currentLocale === targetLocale) {
     renderLocaleDependentBookingState();
-  } catch (error) {
-    if (gen !== customerLoadGeneration || currentLocale !== targetLocale) return;
-    if (servicesLoading) servicesLoading.hidden = true;
-    if (servicesEmpty) servicesEmpty.hidden = true;
-    if (serviceCards) serviceCards.hidden = true;
-    if (bookingStep) bookingStep.hidden = false;
-    if (servicesError) {
-      servicesError.hidden = false;
-      servicesError.textContent = customerT('loadServicesFailed');
-    }
-    if (servicesRetryContainer) servicesRetryContainer.hidden = false;
-  } finally {
-    if (gen === customerLoadGeneration && servicesLoading && servicesError && !servicesError.hidden) {
-      servicesLoading.hidden = true;
-    }
   }
 }
 
@@ -1445,8 +1445,40 @@ async function initializeCustomerPage() {
       showCartModuleRecovery();
       return;
     }
-    await loadCustomerShopContext(signal);
+    const contextResult = await loadCustomerShopContext(signal);
     if (gen !== customerLoadGeneration) return;
+
+    const result = contextResult;
+    const nextSlug = result.data.shopSlug;
+    const nextName = result.data.shopName || nextSlug;
+    if (nextSlug !== customerShopSlug) {
+      customerShopSlug = nextSlug;
+      customerShopName = nextName;
+      staffGeneration++;
+      staffByItem.clear();
+      latestStaffRequests.clear();
+    } else {
+      customerShopName = nextName;
+    }
+
+    shopBrandName.textContent = result.data.shopName || customerShopSlug;
+    if (globalThis.ggCustomerTheme && typeof globalThis.ggCustomerTheme.resolveTheme === 'function') {
+      const theme = globalThis.ggCustomerTheme.resolveTheme(customerShopSlug, { shopName: shopBrandName.textContent });
+      if (typeof document !== 'undefined' && document.documentElement) {
+        globalThis.ggCustomerTheme.applyTheme(document.documentElement, theme);
+      }
+      const badge = typeof document !== 'undefined' && typeof document.getElementById === 'function' ? document.getElementById('shopBrandBadge') : null;
+      const placeholder = typeof document !== 'undefined' && typeof document.getElementById === 'function' ? document.getElementById('shopBrandLogoPlaceholder') : null;
+      if (placeholder) placeholder.textContent = theme.logoText || 'GG';
+      if (badge && theme.logoUrl) {
+        badge.innerHTML = `<img src="${theme.logoUrl}" alt="" style="width:100%;height:100%;border-radius:50%;object-fit:cover;">`;
+      }
+    }
+    document.title = `${shopBrandName.textContent} · ${customerT('onlineAppointment')}`;
+    if (typeof memberEntry !== 'undefined' && memberEntry) {
+      memberEntry.href = `/member.html?shop=${encodeURIComponent(customerShopSlug)}`;
+    }
+
     await setLocale(currentLocale);
     if (gen !== customerLoadGeneration) return;
     await loadCustomerCatalogue(gen, signal);

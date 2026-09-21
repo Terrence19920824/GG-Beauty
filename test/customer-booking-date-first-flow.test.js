@@ -980,3 +980,297 @@ test('32. 移动端首屏 (390x844) 父容器及错误/Retry实际可见', async
     assert.equal(elements.get('servicesError').textContent, i18n.t('loadServicesFailed', locale));
   }
 });
+
+// 33. HTTP 200响应头+部分JSON正文永久悬挂：body读取超时后错误及Retry可见
+test('33. HTTP 200响应头+部分JSON正文永久悬挂：body读取超时后错误及Retry可见', async () => {
+  const customFetch = async (url, opts) => {
+    if (url.includes('/api/services-db')) {
+      return {
+        ok: true,
+        status: 200,
+        json: () => new Promise((resolve, reject) => {
+          if (opts && opts.signal) {
+            opts.signal.addEventListener('abort', () => {
+              const err = new Error('The operation was aborted');
+              err.name = 'AbortError';
+              reject(err);
+            }, { once: true });
+          }
+        })
+      };
+    }
+    return undefined;
+  };
+
+  const { elements } = await createCustomerContext({ customFetch, timeoutMs: 30 });
+  await new Promise(r => setTimeout(r, 60));
+
+  assert.equal(elements.get('bookingStep').hidden, false);
+  assert.equal(elements.get('servicesLoading').hidden, true);
+  assert.equal(elements.get('servicesError').hidden, false);
+  assert.equal(elements.get('servicesRetryContainer').hidden, false);
+  assert.equal(elements.get('servicesRetryBtn').hidden, false);
+});
+
+// 34. OLD Context晚于NEW返回，shopSlug和标题仍保持NEW
+test('34. OLD Context晚于NEW返回，shopSlug和标题仍保持NEW', async () => {
+  let resolveOldContext;
+  const customFetch = async url => {
+    if (url.includes('/api/booking/context')) {
+      const u = new URL(url, 'http://localhost');
+      const slug = u.searchParams.get('shopSlug');
+      if (slug === 'test-shop') {
+        return new Promise(resolve => {
+          resolveOldContext = () => resolve({
+            ok: true,
+            status: 200,
+            json: async () => ({ success: true, data: { shopSlug: 'test-shop', shopName: 'Old Shop' } })
+          });
+        });
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ success: true, data: { shopSlug: 'new-shop', shopName: 'New Shop' } })
+      };
+    }
+    return undefined;
+  };
+
+  const { context, elements } = await createCustomerContext({ customFetch });
+
+  // 触发新的初始化
+  context.globalThis.location.search = '?shop=new-shop';
+  const newInitPromise = context.initializeCustomerPage();
+  await new Promise(r => setTimeout(r, 60));
+  await newInitPromise;
+
+  assert.equal(vm.runInContext('customerShopSlug', context), 'new-shop');
+  assert.equal(elements.get('shopBrandName').textContent, 'New Shop');
+  assert.match(context.document.title, /New Shop/);
+
+  // 旧Context迟到返回
+  if (resolveOldContext) resolveOldContext();
+  await new Promise(r => setTimeout(r, 60));
+
+  // 仍保持 NEW
+  assert.equal(vm.runInContext('customerShopSlug', context), 'new-shop');
+  assert.equal(elements.get('shopBrandName').textContent, 'New Shop');
+  assert.match(context.document.title, /New Shop/);
+});
+
+// 35. 初始化期间切换中文/英文：新语言胜出且旧初始化不污染状态
+test('35. 初始化期间切换中文/英文：新语言胜出且旧初始化不污染状态', async () => {
+  let resolveSlowZh;
+  const customFetch = async url => {
+    if (url.includes('/api/services-db')) {
+      const u = new URL(url, 'http://localhost');
+      const loc = u.searchParams.get('locale');
+      if (loc === 'zh-CN') {
+        return new Promise(resolve => {
+          resolveSlowZh = () => resolve({
+            ok: true,
+            status: 200,
+            json: async () => ({ success: true, data: [{ id: ID.serviceA, name: '剪发中文', price: 50 }] })
+          });
+        });
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ success: true, data: [{ id: ID.serviceA, name: 'Haircut English', price: 50 }] })
+      };
+    }
+    return undefined;
+  };
+
+  const { context, elements } = await createCustomerContext({ customFetch, locale: 'zh-CN' });
+  // 在中文初始化挂起时快速切换英文
+  await vm.runInContext("switchLanguage('en')", context);
+  await new Promise(r => setTimeout(r, 60));
+
+  assert.equal(vm.runInContext('currentLocale', context), 'en');
+  assert.match(elements.get('serviceCards').children[0].textContent, /Haircut English/);
+
+  // 迟到的中文响应返回
+  if (resolveSlowZh) resolveSlowZh();
+  await new Promise(r => setTimeout(r, 60));
+
+  assert.equal(vm.runInContext('currentLocale', context), 'en');
+  assert.match(elements.get('serviceCards').children[0].textContent, /Haircut English/);
+});
+
+// 36. 初始化期间点击Retry：新generation胜出并正常收敛
+test('36. 初始化期间点击Retry：新generation胜出并正常收敛', async () => {
+  let callCount = 0;
+  let resolveFirst;
+  const customFetch = async url => {
+    if (url.includes('/api/services-db')) {
+      callCount++;
+      if (callCount === 1) {
+        return new Promise(resolve => {
+          resolveFirst = () => resolve({
+            ok: true,
+            status: 200,
+            json: async () => ({ success: true, data: [{ id: ID.serviceA, name: 'First Service', price: 50 }] })
+          });
+        });
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ success: true, data: [{ id: ID.serviceB, name: 'Second Service', price: 60 }] })
+      };
+    }
+    return undefined;
+  };
+
+  const { elements } = await createCustomerContext({ customFetch });
+  // 点击Retry
+  elements.get('servicesRetryBtn').click();
+  await new Promise(r => setTimeout(r, 60));
+
+  assert.equal(elements.get('serviceCards').children.length, 1);
+  assert.equal(elements.get('serviceCards').children[0].dataset.serviceId, ID.serviceB);
+
+  // 迟到的第一轮返回
+  if (resolveFirst) resolveFirst();
+  await new Promise(r => setTimeout(r, 60));
+
+  assert.equal(elements.get('serviceCards').children.length, 1);
+  assert.equal(elements.get('serviceCards').children[0].dataset.serviceId, ID.serviceB);
+});
+
+// 37. 服务1ms成功、分类悬挂：服务在1秒内可见，分类后来成功升级标签但购物车保持
+test('37. 服务1ms成功、分类悬挂：服务在1秒内可见，分类后来成功升级标签但购物车保持', async () => {
+  let resolveCats;
+  const customFetch = async (url, opts) => {
+    if (url.includes('/api/booking/service-categories')) {
+      return new Promise((resolve, reject) => {
+        resolveCats = () => resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            success: true,
+            data: [
+              { categoryId: 'cat-hair', name: '美发' },
+              { categoryId: 'cat-spa', name: 'SPA' }
+            ]
+          })
+        });
+        if (opts && opts.signal) {
+          opts.signal.addEventListener('abort', () => reject(new Error('AbortError')), { once: true });
+        }
+      });
+    }
+    if (url.includes('/api/services-db')) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          success: true,
+          data: [
+            { id: ID.serviceA, name: '剪发', price: 50, durationMinutes: 30, categoryId: 'cat-hair' },
+            { id: ID.serviceB, name: '按摩', price: 80, durationMinutes: 60, categoryId: 'cat-spa' }
+          ]
+        })
+      };
+    }
+    return undefined;
+  };
+
+  const startTime = Date.now();
+  const { context, elements } = await createCustomerContext({ customFetch });
+
+  // 确认在1秒内服务即刻可见（无需等待分类）
+  const elapsed = Date.now() - startTime;
+  assert.ok(elapsed < 1000, `Services must be visible in under 1s, took ${elapsed}ms`);
+  assert.equal(elements.get('servicesLoading').hidden, true);
+  assert.equal(elements.get('serviceCards').hidden, false);
+  assert.equal(elements.get('serviceCards').children.length, 2);
+  assert.equal(elements.get('categoryStep').hidden, true);
+
+  // 顾客选购项目加入购物车
+  elements.get('serviceCards').children[0].click();
+  await new Promise(r => setTimeout(r, 20));
+  assert.equal(vm.runInContext('cart.length', context), 1);
+  assert.equal(vm.runInContext('cart[0].serviceId', context), ID.serviceA);
+
+  // 分类稍后成功返回
+  resolveCats();
+  await new Promise(r => setTimeout(r, 60));
+
+  // 升级为分类标签展示
+  assert.equal(elements.get('categoryStep').hidden, false);
+  // 购物车保持不受影响
+  assert.equal(vm.runInContext('cart.length', context), 1);
+  assert.equal(vm.runInContext('cart[0].serviceId', context), ID.serviceA);
+});
+
+// 38. data对象/字符串/缺失/null项目全部显示错误而不是误判为空状态
+test('38. data对象/字符串/缺失/null项目全部显示错误而不是误判为空状态', async () => {
+  const invalidPayloads = [
+    { success: true, data: { id: ID.serviceA } },
+    { success: true, data: 'invalid string' },
+    { success: true },
+    { success: true, data: null },
+    { success: false, data: [] },
+    { success: true, data: [null] },
+    { success: true, data: [{ id: ID.serviceA }, null] },
+    { success: true, data: [{ name: 'No ID' }] }
+  ];
+
+  for (const payload of invalidPayloads) {
+    const customFetch = async url => {
+      if (url.includes('/api/services-db')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => payload
+        };
+      }
+      return undefined;
+    };
+
+    const { elements } = await createCustomerContext({ customFetch });
+    assert.equal(elements.get('bookingStep').hidden, false);
+    assert.equal(elements.get('servicesLoading').hidden, true);
+    assert.equal(elements.get('servicesEmpty').hidden, true);
+    assert.equal(elements.get('servicesError').hidden, false);
+    assert.equal(elements.get('servicesRetryContainer').hidden, false);
+  }
+});
+
+// 39. 连续多次Retry无重复监听器且各轮次正常收敛
+test('39. 连续多次Retry无重复监听器且各轮次正常收敛', async () => {
+  const services = [{ id: ID.serviceA, name: '服务A', price: 50 }];
+  const { elements, context } = await createCustomerContext({ services });
+  const retryBtn = elements.get('servicesRetryBtn');
+
+  assert.equal((retryBtn._listeners.get('click') || []).length, 1);
+
+  for (let i = 0; i < 3; i++) {
+    await context.initializeCustomerPage();
+    await new Promise(r => setTimeout(r, 20));
+  }
+
+  assert.equal((retryBtn._listeners.get('click') || []).length, 1);
+  assert.equal(elements.get('servicesError').hidden, true);
+  assert.equal(elements.get('serviceCards').hidden, false);
+});
+
+// 40. 390×844移动端全功能视口渲染与双语测试
+test('40. 390×844移动端全功能视口渲染与双语测试', async () => {
+  const services = [
+    { id: ID.serviceA, name: '服务A', price: 50 },
+    { id: ID.serviceB, name: '服务B', price: 60 }
+  ];
+  for (const locale of ['zh-CN', 'en']) {
+    const { elements } = await createCustomerContext({ services, locale });
+    assert.equal(elements.get('bookingStep').hidden, false);
+    assert.equal(elements.get('servicesLoading').hidden, true);
+    assert.equal(elements.get('servicesError').hidden, true);
+    assert.equal(elements.get('serviceCards').hidden, false);
+    assert.equal(elements.get('serviceCards').children.length, 2);
+  }
+});
