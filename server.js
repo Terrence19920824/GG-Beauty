@@ -23,6 +23,9 @@ const {
   planStaffAssignments
 } = require('./lib/customer-multi-service-booking');
 const {
+  computeBatchAvailability
+} = require('./lib/customer-batch-availability');
+const {
   StaffBookabilityError,
   validateStaffBookability
 } = require('./lib/staff-bookability-validator');
@@ -3181,27 +3184,43 @@ const CUSTOMER_BOOKING_TIMES = [
 ];
 
 const loadMultiServiceAvailableTimes = async ({ client, context, date, validator }) => {
-  const instantResult = await client.query(
-    `SELECT candidate.time,
-       TO_CHAR((($1::DATE+candidate.time::TIME) AT TIME ZONE location.timezone) AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS start_at
-     FROM locations location CROSS JOIN UNNEST($2::TEXT[]) WITH ORDINALITY candidate(time,position)
-     WHERE location.shop_id=$3 AND location.id=$4 AND location.is_active=TRUE ORDER BY candidate.position`,
-    [date, CUSTOMER_BOOKING_TIMES, context.scope.shop_id, context.scope.location_id]
-  );
-  const candidatesByService = new Map();
-  for (const serviceId of [...new Set(context.services.map(item => item.serviceId))]) {
-    candidatesByService.set(serviceId, await loadEligibleBookingStaff(client, {
-      shopId: context.scope.shop_id, locationId: context.scope.location_id, serviceId, date
-    }));
+  const resultByDate = await computeBatchAvailability({
+    client,
+    context,
+    startDate: date,
+    endDate: date,
+    validator,
+    defaultValidator: validateStaffBookability,
+    loadEligibleBookingStaff,
+    planMultiServiceStaff,
+    bookingTimes: CUSTOMER_BOOKING_TIMES,
+    earlyExitPerDate: false
+  });
+  return resultByDate.get(date) || [];
+};
+
+const loadMultiServiceAvailableDates = async ({ client, context, startDate, endDate, validator }) => {
+  const resultByDate = await computeBatchAvailability({
+    client,
+    context,
+    startDate,
+    endDate,
+    validator,
+    defaultValidator: validateStaffBookability,
+    loadEligibleBookingStaff,
+    planMultiServiceStaff,
+    bookingTimes: CUSTOMER_BOOKING_TIMES,
+    earlyExitPerDate: true
+  });
+  const data = [];
+  for (const [date, available] of resultByDate.entries()) {
+    data.push({
+      date,
+      hasAvailability: available.length > 0,
+      earliestStartAt: available[0]?.startAt || null
+    });
   }
-  const available = [];
-  for (const candidate of instantResult.rows) {
-    const timeline = buildSequentialTimeline(context.services, candidate.start_at);
-    const plan = await planMultiServiceStaff({ client, scope: context.scope, date,
-      timeline, validator, candidatesByService });
-    if (plan) available.push({ time: candidate.time, startAt: new Date(candidate.start_at).toISOString() });
-  }
-  return available;
+  return data;
 };
 
 app.post('/api/booking/multi-service-available-times', async (req, res) => {
@@ -3254,14 +3273,13 @@ app.post('/api/booking/multi-service-available-dates', async (req, res) => {
     const context = await loadMultiServiceContext(client, {
       shopSlug: req.body.shopSlug, items, locale: normalizeLocale(req.body.locale)
     });
-    const data = [];
-    for (let offset = 0; offset < dayCount; offset += 1) {
-      const date = new Date(start.getTime() + offset * 86400000).toISOString().slice(0, 10);
-      const available = await loadMultiServiceAvailableTimes({ client, context, date,
-        validator: req.app.locals.bookingValidator });
-      data.push({ date, hasAvailability: available.length > 0,
-        earliestStartAt: available[0]?.startAt || null });
-    }
+    const data = await loadMultiServiceAvailableDates({
+      client,
+      context,
+      startDate,
+      endDate,
+      validator: req.app.locals.bookingValidator
+    });
     return res.json({ success: true, data });
   } catch (error) {
     console.error('Multi-service available dates error:', safeStaffAuthErrorCode(error));
@@ -5008,5 +5026,7 @@ module.exports = {
   loadEligibleBookingStaff,
   loadTrustedCustomerBookingScope,
   invalidateShopCatalogCache,
-  getShopCatalogRevision
+  getShopCatalogRevision,
+  loadMultiServiceAvailableTimes,
+  loadMultiServiceAvailableDates
 };
