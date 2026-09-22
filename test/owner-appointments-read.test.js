@@ -158,7 +158,7 @@ test('unauthenticated appointment read returns 401', async () => {
   assert.equal(fixture.state.clientQueries.length, 0);
 });
 
-for (const role of ['owner', 'manager', 'admin']) {
+for (const role of ['owner', 'manager', 'admin', 'front_desk']) {
   test(`${role} may read tenant appointments`, async () => {
     const fixture = makePool({ role });
     installPool(fixture);

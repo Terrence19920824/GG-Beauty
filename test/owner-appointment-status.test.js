@@ -202,7 +202,7 @@ test('unauthenticated status update returns 401 before DB mutation', async () =>
   assert.equal(fixture.state.queries.length, 0);
 });
 
-for (const role of ['owner', 'manager', 'admin']) {
+for (const role of ['owner', 'manager', 'admin', 'front_desk']) {
   test(`${role} may update a tenant appointment`, async () => {
     const fixture = makePool({ role });
     const response = await runRequest(fixture, { id: ID.appointmentA, status: 'confirmed' });

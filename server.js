@@ -1554,7 +1554,7 @@ app.get('/api/services-db', async (req, res) => {
 app.get(
   '/api/owner/calendar-context',
   requireOwnerAuth,
-  requireOwnerRole(['owner', 'manager', 'admin']),
+  requireOwnerRole(['owner', 'manager', 'admin', 'front_desk']),
   async (req, res) => {
     const trustedShopId = req.ownerAuth.shopId;
     const requestedLocationId =
@@ -1660,7 +1660,7 @@ app.get(
 app.get(
   '/api/appointments-db',
   requireOwnerAuth,
-  requireOwnerRole(['owner', 'manager', 'admin']),
+  requireOwnerRole(['owner', 'manager', 'admin', 'front_desk']),
   async (req, res) => {
   const trustedShopId = req.ownerAuth.shopId;
   const requestedLocationId =
@@ -4778,7 +4778,7 @@ app.post(
 app.post(
   '/api/admin/update-status-db',
   requireOwnerAuth,
-  requireOwnerRole(['owner', 'manager', 'admin']),
+  requireOwnerRole(['owner', 'manager', 'admin', 'front_desk']),
   async (req, res) => {
     const trustedShopId = req.ownerAuth.shopId;
     const body =

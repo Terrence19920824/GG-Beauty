@@ -921,14 +921,7 @@ test('79. clicking normal UUID status button invokes action exactly once with va
   const mutationsAfterStaleClick = requests.filter(r => r.url === '/api/admin/update-status-db');
   assert.strictEqual(mutationsAfterStaleClick.length, 1, 'Stale detached button must not trigger operations');
 
-  // The re-rendered button in the active DOM triggers the next request
-  const newConfirmBtn = elements.get('content').querySelectorAll('button[data-action="status"]').find(b => b.getAttribute('data-target-status') === 'confirmed');
-  assert.ok(newConfirmBtn, 'Newly rendered confirm button must exist after loadAppointments re-render');
-  newConfirmBtn.click();
-  await new Promise(r => setTimeout(r, 10));
-
-  const statusMutationsAfterSecondClick = requests.filter(r => r.url === '/api/admin/update-status-db');
-  assert.strictEqual(statusMutationsAfterSecondClick.length, 2, 'Newly rendered button click sends second mutation request');
+  assert.strictEqual(confirmBtn.disabled, true, 'A successfully submitted action is disabled until its card is replaced in place');
 });
 
 test('80. re-rendering and locale switching cleans previous action registry without duplicate listeners (Req 36 & 57)', async () => {

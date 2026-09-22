@@ -836,6 +836,17 @@
 
 </div>
 
+<div id="appointmentDrawerBackdrop" class="drawer-backdrop" hidden></div>
+<aside id="appointmentDrawer" class="appointment-drawer" role="dialog" aria-modal="true" aria-labelledby="drawerTitle" hidden>
+  <div class="drawer-header">
+    <h3 id="drawerTitle" class="drawer-title" data-i18n="appointmentDetails">预约详情</h3>
+    <button type="button" class="drawer-close-btn" id="drawerCloseBtn" aria-label="关闭">&times;</button>
+  </div>
+  <div class="drawer-body" id="drawerBody"></div>
+  <div class="drawer-footer" id="drawerFooter"></div>
+</aside>
+<div id="adminToast" class="admin-toast" role="status" aria-live="polite" hidden></div>
+
 <script src="/shared-i18n.js"></script>
 <script src="/service-locale.js"></script>
 <script src="/admin-self-service.js"></script>
@@ -2157,8 +2168,11 @@ const renderAppointmentsView = () => {
             </div>`
           : '';
 
+        const safeCardId = UUID_REGEX.test(String(item.id || '').trim()) ? String(item.id || '').trim() : '';
+        const cardAttr = safeCardId ? ` data-appointment-id="${safeCardId}"` : '';
+
         return `
-          <div class="owner-calendar-appointment status-${statusClass}${layout.hasOverlap ? ' has-overlap' : ''}${isLate ? ' is-late' : ''}" data-appointment-id="${escapeHtml(item.id)}" style="${style}" tabindex="0" role="article" aria-label="${escapeHtml(item.customer_name || '')} ${escapeHtml(timeDisplay)} ${escapeHtml(getStatusText(item.status))}">
+          <div class="owner-calendar-appointment status-${statusClass}${layout.hasOverlap ? ' has-overlap' : ''}${isLate ? ' is-late' : ''}"${cardAttr} style="${style}" tabindex="0" role="article" aria-label="${escapeHtml(item.customer_name || '')} ${escapeHtml(timeDisplay)} ${escapeHtml(getStatusText(item.status))}">
             <div class="calendar-card-header">
               <span class="calendar-card-time">${escapeHtml(timeDisplay)}</span>
               <span class="calendar-status-pill status-${statusClass}" role="status" aria-label="${escapeHtml(getStatusText(item.status))}">
@@ -2309,8 +2323,11 @@ const renderAppointmentsView = () => {
             </div>`
           : '';
 
+        const safeItemId = String(item.id || '').trim();
+        const safeRowAttr = UUID_REGEX.test(safeItemId) ? ` data-appointment-id="${safeItemId}" tabindex="0" role="row"` : '';
+
         return `
-          <tr${isLate ? ' class="is-late"' : ''}>
+          <tr${isLate ? ' class="is-late"' : ''}${safeRowAttr}>
             <td>
               ${formatSingaporeTime(
                 item.start_at
@@ -2388,9 +2405,12 @@ const renderAppointmentsView = () => {
         const recordCanStart = record.can_start_checkout === true;
 
         if (typeof btn?.addEventListener === 'function') {
-          btn.addEventListener('click', function onActionClick(event) {
+          btn.addEventListener('click', async function onActionClick(event) {
             if (event && typeof event.preventDefault === 'function') {
               event.preventDefault();
+            }
+            if (event && typeof event.stopPropagation === 'function') {
+              event.stopPropagation();
             }
 
             if (thisGeneration !== currentRenderGeneration) {
@@ -2433,10 +2453,34 @@ const renderAppointmentsView = () => {
                 console.warn('Invalid status mutation rejected');
                 return;
               }
-              updateAppointmentStatus(safeId, targetStatus);
+              if (btn.disabled) return;
+              btn.disabled = true;
+              const didSave = await updateAppointmentStatus(safeId, targetStatus);
+              if (!didSave) btn.disabled = false;
             }
           });
         }
+      });
+    }
+
+    const apptCards = content.querySelectorAll('.owner-calendar-appointment, tr[data-appointment-id]');
+    if (apptCards && typeof apptCards.forEach === 'function') {
+      apptCards.forEach(card => {
+        const apptId = card.getAttribute('data-appointment-id');
+        if (!apptId) return;
+        card.addEventListener('click', function onCardClick(ev) {
+          if (ev.target.closest('button, a')) return;
+          openAppointmentDrawer(apptId, card);
+        });
+        card.addEventListener('keydown', function onCardKeyDown(ev) {
+          if (ev.key === 'Enter' || ev.key === ' ') {
+            if (ev.target.closest('button, a')) return;
+            if (ev.target === card) {
+              ev.preventDefault();
+              openAppointmentDrawer(apptId, card);
+            }
+          }
+        });
       });
     }
   }
@@ -2524,10 +2568,16 @@ function setAdminLocale(locale) {
   if (typeof renderAppointmentsView === 'function' && currentAppointmentsSnapshot.length > 0) {
     renderAppointmentsView();
   }
+  if (typeof renderAppointmentDrawerById === 'function' && activeDrawerAppointmentId) {
+    renderAppointmentDrawerById(activeDrawerAppointmentId);
+  }
 }
 globalScope.setAdminLocale = setAdminLocale;
 
 function showLogin(message = '') {
+  if (typeof closeAppointmentDrawer === 'function') {
+    closeAppointmentDrawer();
+  }
   calendarContextGeneration++;
   if (calendarContextAbortController) {
     try { calendarContextAbortController.abort(); } catch (_) {}
@@ -2569,6 +2619,9 @@ function showAdmin() {
   adminContent.hidden = false;
   if (typeof setupCalendarToolbar === 'function') {
     setupCalendarToolbar();
+  }
+  if (typeof setupAppointmentDrawer === 'function') {
+    setupAppointmentDrawer();
   }
 }
 
@@ -2662,6 +2715,9 @@ async function adminLogin() {
 }
 
 async function ownerLogout() {
+  if (typeof closeAppointmentDrawer === 'function') {
+    closeAppointmentDrawer();
+  }
   calendarContextGeneration++;
   if (calendarContextAbortController) {
     try { calendarContextAbortController.abort(); } catch (_) {}
@@ -2866,21 +2922,614 @@ function updateSummary(appointments) {
     .textContent =
     todayCount;
 }
+// ==================================================
+// Appointment Detail Drawer & In-Place Status Updates
+// ==================================================
+
+let activeDrawerAppointmentId = null;
+let activeDrawerTriggerElement = null;
+let adminToastTimeoutId = null;
+
+function formatTelUri(phone) {
+  if (!phone || typeof phone !== 'string') return '';
+  const cleaned = phone.replace(/[^\d+]/g, '');
+  return cleaned ? `tel:${cleaned}` : '';
+}
+
+function formatWhatsAppUri(phone) {
+  if (!phone || typeof phone !== 'string') return '';
+  let digits = phone.replace(/\D/g, '');
+  if (!digits) return '';
+  if (digits.length === 8 && (digits.startsWith('8') || digits.startsWith('9'))) {
+    digits = `65${digits}`;
+  }
+  return `https://wa.me/${digits}`;
+}
+
+function showAdminToast(message, type = 'success') {
+  const toast = safeGetElement('adminToast');
+  if (!toast) return;
+  if (adminToastTimeoutId) {
+    clearTimeout(adminToastTimeoutId);
+    adminToastTimeoutId = null;
+  }
+  toast.className = `admin-toast ${type}`;
+  toast.textContent = message;
+  toast.hidden = false;
+  adminToastTimeoutId = setTimeout(() => {
+    toast.hidden = true;
+    adminToastTimeoutId = null;
+  }, 3000);
+}
+
+function openAppointmentDrawer(appointmentId, triggerElement = null) {
+  const safeId = String(appointmentId || '').trim();
+  if (!UUID_REGEX.test(safeId)) return;
+  const appointment = currentAppointmentMap.get(safeId) ||
+    (Array.isArray(currentAppointmentsSnapshot)
+      ? currentAppointmentsSnapshot.find(a => a && String(a.id || '').trim() === safeId)
+      : null);
+  if (!appointment) return;
+
+  activeDrawerAppointmentId = safeId;
+  if (triggerElement) {
+    activeDrawerTriggerElement = triggerElement;
+  }
+
+  renderAppointmentDrawer(appointment);
+
+  const drawer = safeGetElement('appointmentDrawer');
+  const backdrop = safeGetElement('appointmentDrawerBackdrop');
+  if (drawer && backdrop) {
+    backdrop.hidden = false;
+    drawer.hidden = false;
+    drawer.classList.add('open');
+    backdrop.classList.add('visible');
+    const closeBtn = safeGetElement('drawerCloseBtn');
+    if (closeBtn && typeof closeBtn.focus === 'function') {
+      try { closeBtn.focus(); } catch (_) {}
+    }
+  }
+}
+
+function closeAppointmentDrawer() {
+  const drawer = safeGetElement('appointmentDrawer');
+  const backdrop = safeGetElement('appointmentDrawerBackdrop');
+  if (drawer) {
+    drawer.classList.remove('open');
+    drawer.hidden = true;
+  }
+  if (backdrop) {
+    backdrop.classList.remove('visible');
+    backdrop.hidden = true;
+  }
+  activeDrawerAppointmentId = null;
+  if (activeDrawerTriggerElement && typeof activeDrawerTriggerElement.focus === 'function') {
+    try { activeDrawerTriggerElement.focus(); } catch (_) {}
+  }
+  activeDrawerTriggerElement = null;
+}
+
+function renderAppointmentDrawerById(appointmentId) {
+  const safeId = String(appointmentId || '').trim();
+  if (!safeId) return;
+  const appointment = currentAppointmentMap.get(safeId) ||
+    (Array.isArray(currentAppointmentsSnapshot)
+      ? currentAppointmentsSnapshot.find(a => a && String(a.id || '').trim() === safeId)
+      : null);
+  if (appointment) {
+    renderAppointmentDrawer(appointment);
+  }
+}
+
+function drawerElement(tag, className, value = '') {
+  const element = document.createElement(tag);
+  if (className) element.className = className;
+  element.textContent = value == null ? '' : String(value);
+  return element;
+}
+
+function appendDrawerField(section, label, value, className = '') {
+  const field = drawerElement('div', 'drawer-field');
+  field.appendChild(drawerElement('span', 'drawer-field-label', label));
+  const valueNode = drawerElement('span', `drawer-field-value ${className}`.trim(), value || '-');
+  valueNode.setAttribute('translate', 'no');
+  field.appendChild(valueNode);
+  section.appendChild(field);
+}
+
+function appendDrawerSection(body, title) {
+  const section = drawerElement('section', 'drawer-section');
+  section.appendChild(drawerElement('div', 'drawer-section-title', title));
+  body.appendChild(section);
+  return section;
+}
+
+function renderDrawerFooterWithTextContent(footer, canonicalStatus) {
+  footer.replaceChildren();
+  const transitions = {
+    pending: [['confirmed', 'btn-confirmed', 'confirm'], ['cancelled', 'btn-cancelled', 'markCancelled']],
+    confirmed: [['arrived', 'btn-arrived', 'markArrived'], ['no_show', 'btn-no_show', 'markNoShow'], ['cancelled', 'btn-cancelled', 'markCancelled']],
+    arrived: [['in_service', 'btn-in_service', 'markInService']],
+    in_service: [['completed', 'btn-completed', 'complete']]
+  };
+  for (const [status, className, key] of transitions[canonicalStatus] || []) {
+    const button = drawerElement('button', `drawer-status-btn ${className}`, adminT(key));
+    button.type = 'button';
+    button.addEventListener('click', () => {
+      if (activeDrawerAppointmentId) updateAppointmentStatus(activeDrawerAppointmentId, status);
+    });
+    footer.appendChild(button);
+  }
+}
+
+function renderAppointmentDrawer(appointment) {
+  if (!appointment) return;
+  const safeId = String(appointment.id || '').trim();
+
+  const rawStatus = typeof appointment.status === 'string' ? appointment.status.trim().toLowerCase() : '';
+  const canonicalStatus = globalThis.ggI18n && typeof globalThis.ggI18n.normalizeAppointmentStatus === 'function'
+    ? globalThis.ggI18n.normalizeAppointmentStatus(rawStatus)
+    : (['pending', 'confirmed', 'arrived', 'in_service', 'completed', 'no_show', 'cancelled'].includes(rawStatus) ? rawStatus : 'unknown');
+  const statusClass = escapeHtml(canonicalStatus);
+
+  const customerName = (appointment.customer_name || appointment.recipient_name_snapshot || '').trim() || '-';
+  const customerPhone = (appointment.customer_phone || appointment.recipient_phone_snapshot || '').trim();
+  const customerEmail = (appointment.customer_email || appointment.recipient_email_snapshot || '').trim();
+
+  const bookerName = (appointment.booker_name_snapshot || appointment.booker_name || '').trim();
+  const bookerPhone = (appointment.booker_phone_snapshot || appointment.booker_phone || '').trim();
+  const recipientName = (appointment.recipient_name_snapshot || appointment.recipient_name || appointment.customer_name || '').trim();
+  const recipientPhone = (appointment.recipient_phone_snapshot || appointment.recipient_phone || appointment.customer_phone || '').trim();
+
+  const hasDistinctBooker = Boolean(bookerName && recipientName && bookerName !== recipientName);
+
+  const dateFormatted = appointment.start_at ? getSingaporeDateString(appointment.start_at) : '-';
+  const timeFormatted = (appointment.start_at && appointment.end_at)
+    ? `${formatSingaporeHourMinute(appointment.start_at)} - ${formatSingaporeHourMinute(appointment.end_at)}`
+    : (appointment.start_at ? formatSingaporeHourMinute(appointment.start_at) : '-');
+
+  const phoneToContact = customerPhone || recipientPhone || bookerPhone;
+  const telUri = formatTelUri(phoneToContact);
+  const waUri = formatWhatsAppUri(phoneToContact);
+
+  let contactButtonsHtml = '';
+  if (phoneToContact) {
+    contactButtonsHtml = `
+      <div class="drawer-contact-actions">
+        <a href="${escapeHtml(telUri)}" class="drawer-action-link drawer-call-btn" role="button" aria-label="${escapeHtml(adminT('callCustomer'))}: ${escapeHtml(phoneToContact)}">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+          <span>${escapeHtml(adminT('callCustomer'))}</span>
+        </a>
+        <a href="${escapeHtml(waUri)}" target="_blank" rel="noopener noreferrer" class="drawer-action-link drawer-whatsapp-btn" role="button" aria-label="${escapeHtml(adminT('openWhatsApp'))}: ${escapeHtml(phoneToContact)}">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
+          <span>${escapeHtml(adminT('openWhatsApp'))}</span>
+        </a>
+      </div>
+    `;
+  }
+
+  let customerSectionHtml = `
+    <div class="drawer-section">
+      <div class="drawer-section-title">${escapeHtml(adminT('customers'))}</div>
+      <div class="drawer-field">
+        <span class="drawer-field-label">${escapeHtml(adminT('customerName'))}</span>
+        <span class="drawer-field-value drawer-customer-name notranslate" translate="no">${escapeHtml(customerName)}</span>
+      </div>
+      <div class="drawer-field">
+        <span class="drawer-field-label">${escapeHtml(adminT('phone'))}</span>
+        <span class="drawer-field-value drawer-customer-phone notranslate" translate="no">${escapeHtml(customerPhone || adminT('noCustomerPhone'))}</span>
+      </div>
+      ${customerEmail ? `
+      <div class="drawer-field">
+        <span class="drawer-field-label">${escapeHtml(adminT('email'))}</span>
+        <span class="drawer-field-value drawer-customer-email notranslate" translate="no">${escapeHtml(customerEmail)}</span>
+      </div>
+      ` : ''}
+      ${hasDistinctBooker ? `
+      <div class="drawer-field">
+        <span class="drawer-field-label">${escapeHtml(adminT('recipient'))}</span>
+        <span class="drawer-field-value notranslate" translate="no">${escapeHtml(recipientName)}${recipientPhone ? ` (${escapeHtml(recipientPhone)})` : ''}</span>
+      </div>
+      <div class="drawer-field">
+        <span class="drawer-field-label">${escapeHtml(adminT('booker'))}</span>
+        <span class="drawer-field-value notranslate" translate="no">${escapeHtml(bookerName)}${bookerPhone ? ` (${escapeHtml(bookerPhone)})` : ''}</span>
+      </div>
+      ` : `
+      <div class="drawer-field">
+        <span class="drawer-field-label">${escapeHtml(adminT('booker'))}</span>
+        <span class="drawer-field-value notranslate" translate="no">${escapeHtml(customerName)} (${escapeHtml(adminT('bookerSameAsRecipient'))})</span>
+      </div>
+      `}
+      ${contactButtonsHtml}
+    </div>
+  `;
+
+  let servicesItemsHtml = '';
+  if (Array.isArray(appointment.items) && appointment.items.length > 0) {
+    servicesItemsHtml = appointment.items.map(it => {
+      const sName = it.service_name_snapshot || it.service_name || '-';
+      const dur = it.duration_minutes_snapshot || it.duration_minutes || '-';
+      let staffDisplay = '-';
+      if (Array.isArray(it.staff_assignments) && it.staff_assignments.length > 0) {
+        staffDisplay = it.staff_assignments.map(a => a.staff_name || a.name || '').filter(Boolean).join(', ') || '-';
+      } else if (it.staff_name_snapshot || it.staff_name) {
+        staffDisplay = it.staff_name_snapshot || it.staff_name;
+      } else if (appointment.staff_name) {
+        staffDisplay = appointment.staff_name;
+      }
+      return `
+        <div class="drawer-item-card">
+          <div class="drawer-item-header notranslate" translate="no">
+            <span>${escapeHtml(sName)}</span>
+            <span>${escapeHtml(String(dur))} ${escapeHtml(adminT('minutes'))}</span>
+          </div>
+          <div class="drawer-item-sub">
+            <span>${escapeHtml(adminT('staff'))}: <strong class="notranslate" translate="no">${escapeHtml(staffDisplay)}</strong></span>
+          </div>
+        </div>
+      `;
+    }).join('');
+  } else {
+    const sName = appointment.service_name || '-';
+    const dur = appointment.duration_minutes || '-';
+    const staffDisplay = appointment.staff_name || '-';
+    servicesItemsHtml = `
+      <div class="drawer-item-card">
+        <div class="drawer-item-header notranslate" translate="no">
+          <span>${escapeHtml(sName)}</span>
+          <span>${escapeHtml(String(dur))} ${escapeHtml(adminT('minutes'))}</span>
+        </div>
+        <div class="drawer-item-sub">
+          <span>${escapeHtml(adminT('staff'))}: <strong class="notranslate" translate="no">${escapeHtml(staffDisplay)}</strong></span>
+        </div>
+      </div>
+    `;
+  }
+
+  const scheduleSectionHtml = `
+    <div class="drawer-section">
+      <div class="drawer-section-title">${escapeHtml(adminT('appointmentTime'))}</div>
+      <div class="drawer-field">
+        <span class="drawer-field-label">${escapeHtml(adminT('date'))}</span>
+        <span class="drawer-field-value notranslate" translate="no">${escapeHtml(dateFormatted)}</span>
+      </div>
+      <div class="drawer-field">
+        <span class="drawer-field-label">${escapeHtml(adminT('time'))}</span>
+        <span class="drawer-field-value notranslate" translate="no">${escapeHtml(timeFormatted)}</span>
+      </div>
+    </div>
+  `;
+
+  const servicesSectionHtml = `
+    <div class="drawer-section">
+      <div class="drawer-section-title">${escapeHtml(adminT('servicesAndStaff'))}</div>
+      ${servicesItemsHtml}
+    </div>
+  `;
+
+  const notesText = appointment.notes || appointment.remark || '';
+  const notesSectionHtml = `
+    <div class="drawer-section">
+      <div class="drawer-section-title">${escapeHtml(adminT('notes'))}</div>
+      <div class="drawer-notes-box notranslate" translate="no">${notesText.trim() ? escapeHtml(notesText) : `<span class="muted">${escapeHtml(adminT('noNotes'))}</span>`}</div>
+    </div>
+  `;
+
+  const statusBarHtml = `
+    <div class="drawer-status-bar status-${statusClass}" role="status" aria-label="${escapeHtml(getStatusText(appointment.status))}">
+      <span class="calendar-status-icon" aria-hidden="true"></span>
+      <span class="status-text">${escapeHtml(getStatusText(appointment.status))}</span>
+    </div>
+  `;
+
+  const drawerTitle = safeGetElement('drawerTitle');
+  if (drawerTitle) {
+    drawerTitle.textContent = adminT('appointmentDetails');
+  }
+
+  const closeBtn = safeGetElement('drawerCloseBtn');
+  if (closeBtn) {
+    closeBtn.setAttribute('aria-label', adminT('close'));
+  }
+
+  const drawerBody = safeGetElement('drawerBody');
+  if (drawerBody) {
+    drawerBody.replaceChildren();
+    const statusBar = drawerElement('div', `drawer-status-bar status-${canonicalStatus}`, getStatusText(appointment.status));
+    statusBar.setAttribute('role', 'status');
+    drawerBody.appendChild(statusBar);
+
+    const customerSection = appendDrawerSection(drawerBody, adminT('customers'));
+    appendDrawerField(customerSection, adminT('customerName'), customerName, 'drawer-customer-name notranslate');
+    appendDrawerField(customerSection, adminT('phone'), customerPhone || adminT('noCustomerPhone'), 'drawer-customer-phone notranslate');
+    if (customerEmail) appendDrawerField(customerSection, adminT('email'), customerEmail, 'drawer-customer-email notranslate');
+    const recipientDisplay = recipientPhone
+      ? `${recipientName || customerName} (${recipientPhone})`
+      : (recipientName || customerName);
+    const bookerDisplay = hasDistinctBooker
+      ? (bookerPhone ? `${bookerName} (${bookerPhone})` : bookerName)
+      : `${customerName} (${adminT('bookerSameAsRecipient')})`;
+    appendDrawerField(customerSection, adminT('recipient'), recipientDisplay, 'notranslate');
+    appendDrawerField(customerSection, adminT('booker'), bookerDisplay, 'notranslate');
+    if (phoneToContact) {
+      const actions = drawerElement('div', 'drawer-contact-actions');
+      for (const [href, className, label] of [[telUri, 'drawer-call-btn', adminT('callCustomer')], [waUri, 'drawer-whatsapp-btn', adminT('openWhatsApp')]]) {
+        const link = drawerElement('a', `drawer-action-link ${className}`, label);
+        link.href = href;
+        if (className === 'drawer-whatsapp-btn') { link.target = '_blank'; link.rel = 'noopener noreferrer'; }
+        actions.appendChild(link);
+      }
+      customerSection.appendChild(actions);
+    }
+
+    const scheduleSection = appendDrawerSection(drawerBody, adminT('appointmentTime'));
+    appendDrawerField(scheduleSection, adminT('date'), dateFormatted, 'notranslate');
+    appendDrawerField(scheduleSection, adminT('time'), timeFormatted, 'notranslate');
+    const serviceSection = appendDrawerSection(drawerBody, adminT('servicesAndStaff'));
+    for (const item of Array.isArray(appointment.items) && appointment.items.length ? appointment.items : [appointment]) {
+      const card = drawerElement('div', 'drawer-item-card');
+      const name = item.service_name_snapshot || item.service_name || appointment.service_name || '-';
+      const duration = item.duration_minutes_snapshot || item.duration_minutes || appointment.duration_minutes || '-';
+      card.appendChild(drawerElement('div', 'drawer-item-header notranslate', `${name} · ${duration} ${adminT('minutes')}`));
+      const staffNames = Array.isArray(item.staff_assignments)
+        ? item.staff_assignments.map(a => a.staff_name || a.name).filter(Boolean).join(', ')
+        : (item.staff_name_snapshot || item.staff_name || appointment.staff_name || '-');
+      card.appendChild(drawerElement('div', 'drawer-item-sub notranslate', `${adminT('staff')}: ${staffNames || '-'}`));
+      serviceSection.appendChild(card);
+    }
+    const notesSection = appendDrawerSection(drawerBody, adminT('notes'));
+    notesSection.appendChild(drawerElement('div', 'drawer-notes-box notranslate', notesText.trim() || adminT('noNotes')));
+  }
+
+  const drawerFooter = safeGetElement('drawerFooter');
+  if (drawerFooter) {
+    renderDrawerFooterWithTextContent(drawerFooter, canonicalStatus);
+  }
+}
+
+function bindActionButtonsIn(container) {
+  if (typeof container?.querySelectorAll !== 'function') return;
+  const buttons = container.querySelectorAll('button[data-action-key]');
+  if (!buttons || typeof buttons.forEach !== 'function') return;
+  buttons.forEach(btn => {
+    const key = btn?.getAttribute ? btn.getAttribute('data-action-key') : (btn?.dataset?.actionKey || btn?.['data-action-key']);
+    const record = localActionMap.get(String(key));
+    if (!record) return;
+
+    if (typeof btn?.removeAttribute === 'function') {
+      btn.removeAttribute('data-action-key');
+    } else if (btn?.dataset) {
+      delete btn.dataset.actionKey;
+    }
+
+    const safeId = String(record.appointmentId || '').trim();
+    const recordType = record.type;
+    const targetStatus = record.targetStatus;
+    const recordCanStart = record.can_start_checkout === true;
+
+    if (typeof btn?.addEventListener === 'function') {
+      btn.addEventListener('click', async function onActionClick(event) {
+        if (event && typeof event.preventDefault === 'function') {
+          event.preventDefault();
+        }
+        if (event && typeof event.stopPropagation === 'function') {
+          event.stopPropagation();
+        }
+
+        if (!UUID_REGEX.test(safeId)) {
+          console.warn('Invalid appointment ID format rejected');
+          return;
+        }
+
+        if (!currentAppointmentMap.has(safeId)) {
+          return;
+        }
+        const currentAppt = currentAppointmentMap.get(safeId);
+        if (!currentAppt || String(currentAppt.id || '').trim() !== safeId) {
+          return;
+        }
+
+        const inSnapshot = currentAppointmentsSnapshot.find(a => a && String(a.id || '').trim() === safeId);
+        if (!inSnapshot || String(inSnapshot.id || '').trim() !== safeId) {
+          return;
+        }
+
+        if (recordType === 'checkout') {
+          if (globalScope.FEATURE_CHECKOUT_ENABLED !== true) {
+            if (typeof alert === 'function') {
+              alert(adminT('featureGatedNoticeDesc'));
+            }
+            return;
+          }
+
+          if (recordCanStart !== true || currentAppt.can_start_checkout !== true || inSnapshot.can_start_checkout !== true) {
+            return;
+          }
+
+          console.info('Checkout workflow initiated for appointment:', safeId);
+        } else if (recordType === 'status') {
+          if (!ALLOWED_STATUS_MUTATIONS.has(targetStatus)) {
+            console.warn('Invalid status mutation rejected');
+            return;
+          }
+          if (btn.disabled) return;
+          btn.disabled = true;
+          const didSave = await updateAppointmentStatus(safeId, targetStatus);
+          if (!didSave) btn.disabled = false;
+        }
+      });
+    }
+  });
+}
+
+function renderActionButtonsForAppointment(item) {
+  const rawStatus = typeof item?.status === 'string' ? item.status.trim().toLowerCase() : '';
+  const canonicalStatus = globalThis.ggI18n && typeof globalThis.ggI18n.normalizeAppointmentStatus === 'function'
+    ? globalThis.ggI18n.normalizeAppointmentStatus(rawStatus)
+    : (['pending', 'confirmed', 'arrived', 'in_service', 'completed', 'no_show', 'cancelled'].includes(rawStatus) ? rawStatus : 'unknown');
+
+  const canCheckout = (globalScope.FEATURE_CHECKOUT_ENABLED === true) && (canStartCheckout(item) === true);
+  let checkoutBtnHtml = '';
+  if (canCheckout) {
+    const kCheckout = String(++localKeySeq);
+    localActionMap.set(kCheckout, {
+      type: 'checkout',
+      appointmentId: item.id,
+      can_start_checkout: item.can_start_checkout === true
+    });
+    checkoutBtnHtml = `<button type="button" class="checkout-btn" data-action="checkout" data-action-key="${kCheckout}" title="${escapeHtml(adminT('goToCheckout'))}">${escapeHtml(adminT('goToCheckout'))}</button>`;
+  }
+
+  let statusBtnsHtml = '';
+  if (canonicalStatus === 'pending') {
+    const kConfirm = String(++localKeySeq);
+    localActionMap.set(kConfirm, { type: 'status', appointmentId: item.id, targetStatus: 'confirmed' });
+    const kCancel = String(++localKeySeq);
+    localActionMap.set(kCancel, { type: 'status', appointmentId: item.id, targetStatus: 'cancelled' });
+    statusBtnsHtml = `<button type="button" data-action="status" data-action-key="${kConfirm}" data-target-status="confirmed">${escapeHtml(adminT('confirm'))}</button><button type="button" data-action="status" data-action-key="${kCancel}" data-target-status="cancelled">${escapeHtml(adminT('cancel'))}</button>`;
+  } else if (canonicalStatus === 'confirmed') {
+    const kArrive = String(++localKeySeq);
+    localActionMap.set(kArrive, { type: 'status', appointmentId: item.id, targetStatus: 'arrived' });
+    const kNoShow = String(++localKeySeq);
+    localActionMap.set(kNoShow, { type: 'status', appointmentId: item.id, targetStatus: 'no_show' });
+    const kCancel = String(++localKeySeq);
+    localActionMap.set(kCancel, { type: 'status', appointmentId: item.id, targetStatus: 'cancelled' });
+    statusBtnsHtml = `<button type="button" data-action="status" data-action-key="${kArrive}" data-target-status="arrived">${escapeHtml(adminT('arrived'))}</button><button type="button" data-action="status" data-action-key="${kNoShow}" data-target-status="no_show">${escapeHtml(adminT('noShow'))}</button><button type="button" data-action="status" data-action-key="${kCancel}" data-target-status="cancelled">${escapeHtml(adminT('cancel'))}</button>`;
+  } else if (canonicalStatus === 'arrived') {
+    const kInService = String(++localKeySeq);
+    localActionMap.set(kInService, { type: 'status', appointmentId: item.id, targetStatus: 'in_service' });
+    statusBtnsHtml = `<button type="button" data-action="status" data-action-key="${kInService}" data-target-status="in_service">${escapeHtml(adminT('in_service'))}</button>`;
+  } else if (canonicalStatus === 'in_service') {
+    const kComplete = String(++localKeySeq);
+    localActionMap.set(kComplete, { type: 'status', appointmentId: item.id, targetStatus: 'completed' });
+    statusBtnsHtml = `<button type="button" data-action="status" data-action-key="${kComplete}" data-target-status="completed">${escapeHtml(adminT('complete'))}</button>`;
+  }
+
+  return { statusBtnsHtml, checkoutBtnHtml, fullHtml: (statusBtnsHtml || checkoutBtnHtml) ? (statusBtnsHtml + checkoutBtnHtml) : '' };
+}
+
+function applyAppointmentStatusChangeInPlace(safeId, targetStatus, updatedData = {}) {
+  const apptInSnapshot = currentAppointmentsSnapshot.find(a => a && String(a.id || '').trim() === safeId);
+  if (apptInSnapshot) {
+    apptInSnapshot.status = targetStatus;
+    if (updatedData?.updated_at) apptInSnapshot.updated_at = updatedData.updated_at;
+  }
+  const apptInMap = currentAppointmentMap.get(safeId);
+  if (apptInMap) {
+    apptInMap.status = targetStatus;
+    if (updatedData?.updated_at) apptInMap.updated_at = updatedData.updated_at;
+  }
+  if (typeof globalScope !== 'undefined' && Array.isArray(globalScope.currentAppointments)) {
+    const inGlobal = globalScope.currentAppointments.find(a => a && String(a.id || '').trim() === safeId);
+    if (inGlobal) {
+      inGlobal.status = targetStatus;
+      if (updatedData?.updated_at) inGlobal.updated_at = updatedData.updated_at;
+    }
+  }
+
+  updateSummary(currentAppointmentsSnapshot);
+
+  const card = (typeof document !== 'undefined' && typeof document.querySelector === 'function')
+    ? document.querySelector(`.owner-calendar-appointment[data-appointment-id="${safeId}"]`)
+    : null;
+  if (card) {
+    ALLOWED_STATUS_MUTATIONS.forEach(s => card.classList.remove(`status-${s}`));
+    card.classList.remove('status-pending', 'status-unknown');
+    card.classList.add(`status-${targetStatus}`);
+
+    const pill = card.querySelector ? card.querySelector('.calendar-status-pill') : null;
+    if (pill) {
+      ALLOWED_STATUS_MUTATIONS.forEach(s => pill.classList.remove(`status-${s}`));
+      pill.classList.remove('status-pending', 'status-unknown');
+      pill.classList.add(`status-${targetStatus}`);
+      pill.setAttribute('aria-label', getStatusText(targetStatus));
+      const textEl = pill.querySelector ? pill.querySelector('.status-text') : null;
+      if (textEl) textEl.textContent = getStatusText(targetStatus);
+    }
+
+    if (targetStatus !== 'pending' && targetStatus !== 'confirmed') {
+      card.classList.remove('is-late');
+      const lateBadge = card.querySelector ? card.querySelector('.owner-calendar-late-badge') : null;
+      if (lateBadge && typeof lateBadge.remove === 'function') lateBadge.remove();
+    }
+
+    const timeDisplay = (card.querySelector && card.querySelector('.calendar-card-time')?.textContent) || '';
+    const custName = (card.querySelector && card.querySelector('.calendar-card-customer')?.textContent) || '';
+    if (typeof card.setAttribute === 'function') {
+      card.setAttribute('aria-label', `${custName} ${timeDisplay} ${getStatusText(targetStatus)}`.trim());
+    }
+
+    let actionsContainer = card.querySelector ? card.querySelector('.calendar-card-actions') : null;
+    const { fullHtml } = renderActionButtonsForAppointment(apptInSnapshot || { id: safeId, status: targetStatus });
+    if (fullHtml) {
+      if (!actionsContainer && typeof document.createElement === 'function') {
+        actionsContainer = document.createElement('div');
+        actionsContainer.className = 'calendar-card-actions';
+        if (typeof card.appendChild === 'function') {
+          card.appendChild(actionsContainer);
+        }
+      }
+      if (actionsContainer) {
+        actionsContainer.innerHTML = fullHtml;
+        bindActionButtonsIn(actionsContainer);
+      }
+    } else if (actionsContainer && typeof actionsContainer.remove === 'function') {
+      actionsContainer.remove();
+    }
+  }
+
+  const row = (typeof document !== 'undefined' && typeof document.querySelector === 'function')
+    ? document.querySelector(`tr[data-appointment-id="${safeId}"]`)
+    : null;
+  if (row) {
+    const statusSpan = row.querySelector ? row.querySelector('.status') : null;
+    if (statusSpan) {
+      ALLOWED_STATUS_MUTATIONS.forEach(s => statusSpan.classList.remove(`status-${s}`, s));
+      statusSpan.classList.remove('status-pending', 'status-unknown', 'pending', 'unknown');
+      statusSpan.classList.add('status', targetStatus);
+      statusSpan.setAttribute('aria-label', getStatusText(targetStatus));
+      const textEl = statusSpan.querySelector ? statusSpan.querySelector('.status-text') : null;
+      if (textEl) textEl.textContent = getStatusText(targetStatus);
+    }
+
+    if (targetStatus !== 'pending' && targetStatus !== 'confirmed') {
+      row.classList.remove('is-late');
+      const lateBadge = row.querySelector ? row.querySelector('.owner-calendar-late-badge') : null;
+      if (lateBadge && typeof lateBadge.remove === 'function') lateBadge.remove();
+    }
+
+    const actionsTd = row.cells?.[row.cells.length - 1];
+    if (actionsTd) {
+      const { fullHtml } = renderActionButtonsForAppointment(apptInSnapshot || { id: safeId, status: targetStatus });
+      actionsTd.innerHTML = fullHtml;
+      bindActionButtonsIn(actionsTd);
+    }
+  }
+
+  if (activeDrawerAppointmentId === safeId) {
+    const appt = apptInSnapshot || currentAppointmentMap.get(safeId);
+    if (appt) {
+      renderAppointmentDrawer(appt);
+    }
+  }
+}
+
 async function updateAppointmentStatus(id, status) {
   const safeId = String(id || '').trim();
   if (!UUID_REGEX.test(safeId)) {
     console.warn('Invalid appointment ID format rejected');
-    return;
+    return false;
   }
   if (typeof status !== 'string' || !ALLOWED_STATUS_MUTATIONS.has(status)) {
     console.warn('Invalid status mutation rejected');
-    return;
+    return false;
   }
 
   const promptKey = { confirmed: 'confirmAppointmentPrompt', arrived: 'arrivedAppointmentPrompt', in_service: 'startServicePrompt', completed: 'completeAppointmentPrompt', no_show: 'noShowAppointmentPrompt', cancelled: 'cancelAppointmentPrompt' }[status];
 
-  if (!confirm(adminT(promptKey))) {
-    return;
+  if (promptKey && typeof confirm === 'function' && !confirm(adminT(promptKey))) {
+    return false;
   }
 
   try {
@@ -2900,25 +3549,72 @@ async function updateAppointmentStatus(id, status) {
 
     if (response.status === 401 || response.status === 403) {
       showLogin(adminT('sessionExpired'));
-      return;
+      return false;
     }
 
     if (!response.ok || !result.success) {
       throw new Error(adminResultMessage(result, 'operationFailed'));
     }
 
-    await loadAppointments();
+    applyAppointmentStatusChangeInPlace(safeId, status, result.data);
+    showAdminToast(adminT('statusUpdatedSuccess'), 'success');
+    return true;
 
   } catch (error) {
-    alert(error.message || adminT('operationFailed'));
+    const errorMsg = error.message || adminT('operationFailed');
+    showAdminToast(errorMsg, 'error');
+    if (typeof alert === 'function') {
+      alert(errorMsg);
+    }
+    return false;
   }
 }
+
+function setupAppointmentDrawer() {
+  const closeBtn = safeGetElement('drawerCloseBtn');
+  if (closeBtn && !closeBtn._drawerBound && typeof closeBtn.addEventListener === 'function') {
+    closeBtn.addEventListener('click', closeAppointmentDrawer);
+    closeBtn._drawerBound = true;
+  }
+  const backdrop = safeGetElement('appointmentDrawerBackdrop');
+  if (backdrop && !backdrop._drawerBound && typeof backdrop.addEventListener === 'function') {
+    backdrop.addEventListener('click', closeAppointmentDrawer);
+    backdrop._drawerBound = true;
+  }
+  if (!globalScope._drawerKeydownBound) {
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && activeDrawerAppointmentId) {
+        closeAppointmentDrawer();
+      }
+    });
+    globalScope._drawerKeydownBound = true;
+  }
+}
+
+function getActiveDrawerAppointmentId() {
+  return activeDrawerAppointmentId;
+}
+
+globalScope.openAppointmentDrawer = openAppointmentDrawer;
+globalScope.closeAppointmentDrawer = closeAppointmentDrawer;
+globalScope.getActiveDrawerAppointmentId = getActiveDrawerAppointmentId;
+globalScope.renderAppointmentDrawerById = renderAppointmentDrawerById;
+globalScope.renderAppointmentDrawer = renderAppointmentDrawer;
+globalScope.updateAppointmentStatus = updateAppointmentStatus;
+globalScope.showAdminToast = showAdminToast;
+globalScope.formatTelUri = formatTelUri;
+globalScope.formatWhatsAppUri = formatWhatsAppUri;
+globalScope.setupAppointmentDrawer = setupAppointmentDrawer;
+globalScope.applyAppointmentStatusChangeInPlace = applyAppointmentStatusChangeInPlace;
 
 document.addEventListener(
   'DOMContentLoaded',
   () => {
     if (typeof setupCalendarToolbar === 'function') {
       setupCalendarToolbar();
+    }
+    if (typeof setupAppointmentDrawer === 'function') {
+      setupAppointmentDrawer();
     }
     return initializeAdmin();
   }
