@@ -3183,7 +3183,7 @@ const CUSTOMER_BOOKING_TIMES = [
   '18:00','18:30','19:00','19:30','20:00','20:30'
 ];
 
-const loadMultiServiceAvailableTimes = async ({ client, context, date, validator }) => {
+const loadMultiServiceAvailableTimes = async ({ client, context, date, validator, now }) => {
   const resultByDate = await computeBatchAvailability({
     client,
     context,
@@ -3194,12 +3194,13 @@ const loadMultiServiceAvailableTimes = async ({ client, context, date, validator
     loadEligibleBookingStaff,
     planMultiServiceStaff,
     bookingTimes: CUSTOMER_BOOKING_TIMES,
-    earlyExitPerDate: false
+    earlyExitPerDate: false,
+    now
   });
   return resultByDate.get(date) || [];
 };
 
-const loadMultiServiceAvailableDates = async ({ client, context, startDate, endDate, validator }) => {
+const loadMultiServiceAvailableDates = async ({ client, context, startDate, endDate, validator, now }) => {
   const resultByDate = await computeBatchAvailability({
     client,
     context,
@@ -3210,7 +3211,8 @@ const loadMultiServiceAvailableDates = async ({ client, context, startDate, endD
     loadEligibleBookingStaff,
     planMultiServiceStaff,
     bookingTimes: CUSTOMER_BOOKING_TIMES,
-    earlyExitPerDate: true
+    earlyExitPerDate: true,
+    now
   });
   const data = [];
   for (const [date, available] of resultByDate.entries()) {
@@ -3237,8 +3239,9 @@ app.post('/api/booking/multi-service-available-times', async (req, res) => {
     client = await req.app.locals.bookingPool.connect();
     const locale = normalizeLocale(req.body.locale);
     const context = await loadMultiServiceContext(client, { shopSlug: req.body.shopSlug, items, locale });
+    const now = req.app.locals.bookingNow || (req.body && req.body.now ? new Date(req.body.now) : undefined);
     const available = await loadMultiServiceAvailableTimes({ client, context, date: req.body.date,
-      validator: req.app.locals.bookingValidator });
+      validator: req.app.locals.bookingValidator, now });
     return res.json({ success: true, data: available });
   } catch (error) {
     console.error('Multi-service available times error:', safeStaffAuthErrorCode(error));
@@ -3273,12 +3276,14 @@ app.post('/api/booking/multi-service-available-dates', async (req, res) => {
     const context = await loadMultiServiceContext(client, {
       shopSlug: req.body.shopSlug, items, locale: normalizeLocale(req.body.locale)
     });
+    const now = req.app.locals.bookingNow || (req.body && req.body.now ? new Date(req.body.now) : undefined);
     const data = await loadMultiServiceAvailableDates({
       client,
       context,
       startDate,
       endDate,
-      validator: req.app.locals.bookingValidator
+      validator: req.app.locals.bookingValidator,
+      now
     });
     return res.json({ success: true, data });
   } catch (error) {

@@ -10,7 +10,6 @@ const { Client, Pool } = require('pg');
 
 const ROOT = path.join(__dirname, '..');
 const PG_BIN = process.env.PG17_BIN || '/opt/homebrew/opt/postgresql@17/bin';
-const migration = name => fs.readFileSync(path.join(ROOT, 'migrations', name), 'utf8');
 
 const id = {
   shop: '11111111-1111-4111-8111-111111111111',
@@ -33,15 +32,21 @@ CREATE TABLE service_categories(id uuid PRIMARY KEY, shop_id uuid NOT NULL, cano
 CREATE TABLE service_category_translations(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), shop_id uuid NOT NULL, category_id uuid NOT NULL, locale text NOT NULL, name text NOT NULL, description text);
 CREATE TABLE services(id uuid PRIMARY KEY, shop_id uuid NOT NULL, category text, category_id uuid, name text NOT NULL, description text, duration_minutes integer NOT NULL, price numeric NOT NULL, price_is_from boolean NOT NULL, sort_order integer NOT NULL DEFAULT 0, is_active boolean NOT NULL, bookable boolean NOT NULL, UNIQUE(shop_id, id));
 CREATE TABLE service_translations(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), shop_id uuid NOT NULL, service_id uuid NOT NULL, locale text NOT NULL, name text NOT NULL, description text);
-CREATE TABLE staff_services(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), shop_id uuid NOT NULL, staff_id uuid NOT NULL, service_id uuid NOT NULL, is_active boolean NOT NULL);
-CREATE TABLE staff_location_assignments(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), shop_id uuid NOT NULL, location_id uuid NOT NULL, staff_id uuid NOT NULL, is_active boolean NOT NULL);
+CREATE TABLE staff_services(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), shop_id uuid NOT NULL, staff_id uuid NOT NULL, service_id uuid NOT NULL, is_active boolean NOT NULL, UNIQUE(shop_id, staff_id, service_id));
+CREATE TABLE staff_location_assignments(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), shop_id uuid NOT NULL, location_id uuid NOT NULL, staff_id uuid NOT NULL, is_active boolean NOT NULL, UNIQUE(shop_id, staff_id, location_id));
 CREATE TABLE staff_location_working_hours(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), shop_id uuid NOT NULL, location_id uuid NOT NULL, staff_id uuid NOT NULL, day_of_week integer NOT NULL, start_time time NOT NULL, end_time time NOT NULL, is_active boolean NOT NULL, effective_from date, effective_to date);
 CREATE TABLE staff_schedule_overrides(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), shop_id uuid, location_id uuid, staff_id uuid, schedule_date date, is_active boolean, approval_status text, override_type text, start_time time, end_time time);
 CREATE TABLE customers(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), shop_id uuid NOT NULL, name text NOT NULL, phone text NOT NULL, email text);
 CREATE TABLE appointments(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), shop_id uuid NOT NULL, location_id uuid NOT NULL, customer_id uuid, service_id uuid NOT NULL, staff_id uuid NOT NULL, appointment_no text NOT NULL DEFAULT ('GG-'||substr(gen_random_uuid()::text,1,8)), start_at timestamptz NOT NULL, end_at timestamptz NOT NULL, status text NOT NULL, booking_source text, override_conflict boolean NOT NULL DEFAULT false, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(), UNIQUE(shop_id, location_id, id), UNIQUE(shop_id, id));
 CREATE TABLE appointment_items(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), shop_id uuid NOT NULL, location_id uuid NOT NULL, appointment_id uuid NOT NULL, service_id uuid NOT NULL, sequence_no integer NOT NULL, service_name_snapshot text NOT NULL, service_locale_snapshot text, duration_minutes_snapshot integer NOT NULL, price_snapshot numeric, snapshot_source text NOT NULL, start_at timestamptz NOT NULL, end_at timestamptz NOT NULL, status text NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(), CONSTRAINT appointment_items_time_range_check CHECK(end_at > start_at), UNIQUE(shop_id, location_id, id), FOREIGN KEY(shop_id, location_id, appointment_id) REFERENCES appointments(shop_id, location_id, id) ON DELETE RESTRICT);
 CREATE TABLE appointment_item_staff_assignments(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), shop_id uuid NOT NULL, location_id uuid NOT NULL, appointment_item_id uuid NOT NULL, staff_id uuid NOT NULL, role text NOT NULL CHECK(role IN('primary','assistant')), start_at timestamptz NOT NULL, end_at timestamptz NOT NULL, blocks_time boolean NOT NULL DEFAULT true, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(), CONSTRAINT appointment_item_staff_time_range_check CHECK(end_at > start_at), UNIQUE(shop_id, location_id, appointment_item_id, staff_id), FOREIGN KEY(shop_id, location_id, appointment_item_id) REFERENCES appointment_items(shop_id, location_id, id) ON DELETE RESTRICT, FOREIGN KEY(shop_id, staff_id) REFERENCES staff(shop_id, id) ON DELETE RESTRICT);
+
+-- Baseline 000-052 indexes (strictly NO 056 indexes)
 CREATE UNIQUE INDEX appointment_item_staff_primary_uidx ON appointment_item_staff_assignments(shop_id, location_id, appointment_item_id) WHERE role = 'primary';
+CREATE INDEX appointment_item_staff_schedule_idx ON appointment_item_staff_assignments(shop_id, location_id, staff_id, start_at, end_at);
+CREATE INDEX staff_location_working_hours_lookup_idx ON staff_location_working_hours(shop_id, location_id, staff_id, day_of_week);
+CREATE INDEX staff_schedule_overrides_lookup_idx ON staff_schedule_overrides(shop_id, location_id, staff_id, schedule_date);
+ALTER TABLE appointment_item_staff_assignments ADD CONSTRAINT appointment_item_staff_collision_excl EXCLUDE USING gist (shop_id WITH =, staff_id WITH =, tstzrange(start_at, end_at, '[)') WITH &&) WHERE (blocks_time=TRUE);
 `;
 
 const withServer = async (app, operation) => {
@@ -54,7 +59,7 @@ const withServer = async (app, operation) => {
   }
 };
 
-test('Batch Availability Performance & Migration 056 Verification', { timeout: 120000 }, async t => {
+test('Batch Availability Performance Without Migration 056 (000-052 Only)', { timeout: 120000 }, async t => {
   if (!fs.existsSync(path.join(PG_BIN, 'initdb'))) return t.skip('PostgreSQL 17 unavailable');
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'gg-batch-perf-pg-'));
   const data = path.join(temp, 'data');
@@ -79,21 +84,14 @@ test('Batch Availability Performance & Migration 056 Verification', { timeout: 1
     assert.ok(db, 'Connected to test database');
     await db.query(SCHEMA);
 
-    // Apply Migration 056
-    const migration056Sql = migration('056_customer_catalog_qualification_indexes.sql');
-    await db.query(migration056Sql);
-
-    // Verify indexes created by Migration 056
+    // Verify migration 056 indexes DO NOT exist
     const indexCheck = await db.query(`
-      SELECT indexname, tablename, indexdef
+      SELECT indexname
       FROM pg_indexes
       WHERE schemaname = 'public'
-        AND indexname IN ('idx_staff_services_qualified', 'idx_appointment_item_staff_assignments_blocking')
-      ORDER BY indexname;
+        AND indexname IN ('idx_staff_services_qualified', 'idx_appointment_item_staff_assignments_blocking');
     `);
-    assert.equal(indexCheck.rows.length, 2, 'Migration 056 created both indexes');
-    assert.match(indexCheck.rows[0].indexdef, /blocks_time = true/i);
-    assert.match(indexCheck.rows[1].indexdef, /is_active = true/i);
+    assert.equal(indexCheck.rows.length, 0, 'Migration 056 indexes must not exist');
 
     // Seed shop & location
     await db.query(`INSERT INTO shops VALUES($1, 'gg-beauty', 'GG Beauty & Hair', 'active')`, [id.shop]);
@@ -163,7 +161,7 @@ test('Batch Availability Performance & Migration 056 Verification', { timeout: 1
       ($1, $2, $3, $4, 'primary', '2026-03-15T06:00:00.000Z', '2026-03-15T09:00:00.000Z', true)`,
       [id.shop, id.location, itemId, id.staffBob]);
 
-    // EXPLAIN (ANALYZE, BUFFERS) validation for queries
+    // EXPLAIN (ANALYZE, BUFFERS) validation under baseline 000-052 indexes
     const explainStaff = await db.query(`
       EXPLAIN (ANALYZE, BUFFERS)
       SELECT capability.service_id, member.id AS staff_id, member.name AS display_name
@@ -176,7 +174,8 @@ test('Batch Availability Performance & Migration 056 Verification', { timeout: 1
       WHERE service.shop_id = $1::UUID AND service.id = ANY($3::UUID[]) AND service.is_active = TRUE AND service.bookable = TRUE
       ORDER BY member.name ASC, member.id ASC;
     `, [id.shop, id.location, [id.srvBalayage]]);
-    console.log('EXPLAIN (ANALYZE, BUFFERS) - Qualified Staff:\n', explainStaff.rows.map(r => r['QUERY PLAN']).join('\n'));
+    console.log('EXPLAIN (ANALYZE, BUFFERS) - Qualified Staff (Baseline 000-052):');
+    console.log(explainStaff.rows.map(r => r['QUERY PLAN']).join(String.fromCharCode(10)));
 
     const explainBlocking = await db.query(`
       EXPLAIN (ANALYZE, BUFFERS)
@@ -190,7 +189,8 @@ test('Batch Availability Performance & Migration 056 Verification', { timeout: 1
         AND assignment.role IN ('primary', 'assistant') AND assignment.blocks_time = TRUE
         AND assignment.start_at < '2026-03-31T23:59:59Z'::TIMESTAMPTZ AND assignment.end_at > '2026-03-01T00:00:00Z'::TIMESTAMPTZ;
     `, [id.shop, id.location, [id.staffBob]]);
-    console.log('EXPLAIN (ANALYZE, BUFFERS) - Blocking Assignments:\n', explainBlocking.rows.map(r => r['QUERY PLAN']).join('\n'));
+    console.log('EXPLAIN (ANALYZE, BUFFERS) - Blocking Assignments (Baseline 000-052):');
+    console.log(explainBlocking.rows.map(r => r['QUERY PLAN']).join(String.fromCharCode(10)));
 
     // Set up instrumented client pool to count queries
     process.env.DATABASE_URL = url;
@@ -217,6 +217,8 @@ test('Batch Availability Performance & Migration 056 Verification', { timeout: 1
 
     app.locals.bookingPool = pool;
     app.locals.ownerAuthPool = pool;
+    // Inject fixed now before test dates so dates are in future
+    app.locals.bookingNow = new Date('2026-01-01T00:00:00Z');
 
     await withServer(app, async base => {
       // 1. Single-day times query
@@ -237,7 +239,7 @@ test('Batch Availability Performance & Migration 056 Verification', { timeout: 1
       assert.ok(timesData.data.length > 0);
       const timesQueryCount = queryLog.length;
       console.log(`Query count for single-day (multi-service-available-times): ${timesQueryCount}`);
-      assert.ok(timesQueryCount <= 8, `Single-day query count must be <= 8 (got ${timesQueryCount})`);
+      assert.equal(timesQueryCount, 7, `Single-day query count must be exactly 7 (got ${timesQueryCount})`);
 
       // 2. 28-day month query (February 2026)
       queryLog.length = 0;
@@ -258,6 +260,7 @@ test('Batch Availability Performance & Migration 056 Verification', { timeout: 1
       assert.equal(febData.data.length, 28);
       const count28 = queryLog.length;
       console.log(`Query count for 28-day month: ${count28}`);
+      assert.equal(count28, 7, `28-day query count must be 7 (got ${count28})`);
 
       // 3. 30-day month query (April 2026)
       queryLog.length = 0;
@@ -278,6 +281,7 @@ test('Batch Availability Performance & Migration 056 Verification', { timeout: 1
       assert.equal(aprData.data.length, 30);
       const count30 = queryLog.length;
       console.log(`Query count for 30-day month: ${count30}`);
+      assert.equal(count30, 7, `30-day query count must be 7 (got ${count30})`);
 
       // 4. 31-day month query (March 2026)
       queryLog.length = 0;
@@ -298,11 +302,14 @@ test('Batch Availability Performance & Migration 056 Verification', { timeout: 1
       assert.equal(marData.data.length, 31);
       const count31 = queryLog.length;
       console.log(`Query count for 31-day month: ${count31}`);
+      assert.equal(count31, 7, `31-day query count must be 7 (got ${count31})`);
 
-      // Query Invariance Assertions:
+      // Query Invariance Assertions: 7/7/7
+      assert.equal(count28, 7);
+      assert.equal(count30, 7);
+      assert.equal(count31, 7);
       assert.equal(count28, count30, 'Query count for 28 days must equal 30 days');
       assert.equal(count30, count31, 'Query count for 30 days must equal 31 days');
-      assert.ok(count31 <= 8, `Monthly query count must be bounded <= 8 (got ${count31})`);
 
       // 5. Multi-service 2-item cart query count check across 31 days
       queryLog.length = 0;
@@ -326,14 +333,44 @@ test('Batch Availability Performance & Migration 056 Verification', { timeout: 1
       assert.equal(multiMarData.data.length, 31);
       const count2Items = queryLog.length;
       console.log(`Query count for 2-item multi-service 31-day month: ${count2Items}`);
-      assert.ok(count2Items <= 9, `2-item multi-service 31-day query count bounded <= 9 (got ${count2Items})`);
+      assert.equal(count2Items, 8, `2-item multi-service 31-day query count must be exactly 8 (got ${count2Items})`);
+
+      // 6. Latency & P50/P95 Benchmark (10 consecutive runs across 31 days)
+      const latencies = [];
+      for (let i = 0; i < 10; i++) {
+        const t0 = performance.now();
+        const benchRes = await fetch(`${base}/api/booking/multi-service-available-dates`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            shopSlug: 'gg-beauty',
+            startDate: '2026-03-01',
+            endDate: '2026-03-31',
+            locale: 'zh-CN',
+            items: [
+              { serviceId: id.srvFacial, staffSelectionType: 'no_preference' },
+              { serviceId: id.srvBalayage, staffSelectionType: 'no_preference' }
+            ]
+          })
+        });
+        const t1 = performance.now();
+        assert.equal(benchRes.status, 200);
+        latencies.push(t1 - t0);
+      }
+      latencies.sort((a, b) => a - b);
+      const p50 = latencies[Math.floor(latencies.length * 0.5)];
+      const p95 = latencies[Math.floor(latencies.length * 0.95)];
+      const min = latencies[0];
+      const max = latencies[latencies.length - 1];
+      console.log(`Latency metrics across 10 runs (ms): Min=${min.toFixed(2)}ms, P50=${p50.toFixed(2)}ms, P95=${p95.toFixed(2)}ms, Max=${max.toFixed(2)}ms`);
+      assert.ok(p95 < 200, `P95 latency must remain well within tens of milliseconds (<200ms), got ${p95.toFixed(2)}ms`);
     });
 
-    } finally {
-    if (db) await db.end().catch(() => {});
+  } finally {
     if (pool) await pool.end().catch(() => {});
-    pg.kill();
-    await new Promise(r => setTimeout(r, 100));
+    if (db) await db.end().catch(() => {});
+    pg.kill('SIGTERM');
+    await new Promise(r => pg.once('exit', r));
     try { fs.rmSync(temp, { recursive: true, force: true }); } catch {}
   }
 });
