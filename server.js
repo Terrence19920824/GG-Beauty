@@ -2389,6 +2389,10 @@ const createMultiServiceBooking = async (req,verifiedSession=null) => {
     throw new AppointmentMutationError('booking_input_invalid', 400, '请完整填写所有必填信息');
   }
   return runInTransaction(req.app.locals.bookingPool, async client => {
+    const serverNow = req.app.locals.bookingNow || new Date();
+    if (parsedStart.getTime() <= serverNow.getTime()) {
+      throw new AppointmentMutationError('booking_time_in_past', 400, '所选时间已过，无法预约');
+    }
     const { scope, services } = await loadMultiServiceContext(client, { shopSlug: body.shopSlug, items, locale });
     const timeline = buildSequentialTimeline(services, parsedStart.toISOString());
     const businessDate = new Intl.DateTimeFormat('en-CA', {
@@ -2704,6 +2708,11 @@ app.post('/api/new-db', async (req, res) => {
           intervalResult.rows[0].start_at;
         const endAt =
           intervalResult.rows[0].end_at;
+
+        const serverNow = req.app.locals.bookingNow || new Date();
+        if (new Date(startAt).getTime() <= serverNow.getTime()) {
+          throw new AppointmentMutationError('booking_time_in_past', 400, '所选时间已过，无法预约');
+        }
 
         if (noPreference) {
           const staffCandidates = await loadEligibleBookingStaff(client, {
@@ -3239,7 +3248,7 @@ app.post('/api/booking/multi-service-available-times', async (req, res) => {
     client = await req.app.locals.bookingPool.connect();
     const locale = normalizeLocale(req.body.locale);
     const context = await loadMultiServiceContext(client, { shopSlug: req.body.shopSlug, items, locale });
-    const now = req.app.locals.bookingNow || (req.body && req.body.now ? new Date(req.body.now) : undefined);
+    const now = req.app.locals.bookingNow || undefined;
     const available = await loadMultiServiceAvailableTimes({ client, context, date: req.body.date,
       validator: req.app.locals.bookingValidator, now });
     return res.json({ success: true, data: available });
@@ -3276,7 +3285,7 @@ app.post('/api/booking/multi-service-available-dates', async (req, res) => {
     const context = await loadMultiServiceContext(client, {
       shopSlug: req.body.shopSlug, items, locale: normalizeLocale(req.body.locale)
     });
-    const now = req.app.locals.bookingNow || (req.body && req.body.now ? new Date(req.body.now) : undefined);
+    const now = req.app.locals.bookingNow || undefined;
     const data = await loadMultiServiceAvailableDates({
       client,
       context,

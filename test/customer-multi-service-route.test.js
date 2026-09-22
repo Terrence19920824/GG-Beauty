@@ -332,51 +332,56 @@ test('startAt-only legacy assignment collision returns safe 409 and rolls back',
 
 test('regression: current and future dates are never blocked by hardcoded expiry guard', async () => {
   delete process.env.BOOKING_WRITE_MAINTENANCE;
+  app.locals.bookingNow = new Date('2026-09-18T00:00:00.000Z');
 
-  const now = new Date();
-  const testDates = [
-    now.toISOString(),
-    new Date(Date.now() + 86400000).toISOString(),
-    '2026-09-19T10:00:00.000Z',
-    '2026-12-31T10:00:00.000Z',
-    '2027-01-01T10:00:00.000Z',
-    '2030-06-15T10:00:00.000Z',
-    '2035-01-01T10:00:00.000Z'
-  ];
+  try {
+    const now = new Date('2026-09-18T12:00:00.000Z');
+    const testDates = [
+      now.toISOString(),
+      new Date(now.getTime() + 86400000).toISOString(),
+      '2026-09-19T10:00:00.000Z',
+      '2026-12-31T10:00:00.000Z',
+      '2027-01-01T10:00:00.000Z',
+      '2030-06-15T10:00:00.000Z',
+      '2035-01-01T10:00:00.000Z'
+    ];
 
-  for (const dateStr of testDates) {
-    // 1. Multi-service booking enters real business processing
-    const multiFixture = makeFixture();
-    app.locals.bookingPool = multiFixture.pool;
-    app.locals.bookingValidator = async () => {};
+    for (const dateStr of testDates) {
+      // 1. Multi-service booking enters real business processing
+      const multiFixture = makeFixture();
+      app.locals.bookingPool = multiFixture.pool;
+      app.locals.bookingValidator = async () => {};
 
-    const multiBody = { ...requestBody, startAt: dateStr };
-    await withServer(async url => {
-      const response = await post(url, multiBody);
-      const text = await response.text();
-      assert.doesNotMatch(text, /服务已过期/);
-      assert.equal(response.status, 200);
-      const json = JSON.parse(text);
-      assert.equal(json.success, true);
-    });
-    assert.ok(multiFixture.state.queries.some(q => /^INSERT INTO appointments/.test(q.sql)));
+      const multiBody = { ...requestBody, startAt: dateStr };
+      await withServer(async url => {
+        const response = await post(url, multiBody);
+        const text = await response.text();
+        assert.doesNotMatch(text, /服务已过期/);
+        assert.equal(response.status, 200);
+        const json = JSON.parse(text);
+        assert.equal(json.success, true);
+      });
+      assert.ok(multiFixture.state.queries.some(q => /^INSERT INTO appointments/.test(q.sql)));
 
-    // 2. Single-service booking enters real business processing
-    const singleFixture = makeFixture();
-    app.locals.bookingPool = singleFixture.pool;
-    app.locals.bookingValidator = async () => {};
+      // 2. Single-service booking enters real business processing
+      const singleFixture = makeFixture();
+      app.locals.bookingPool = singleFixture.pool;
+      app.locals.bookingValidator = async () => {};
 
-    const { items: _items, ...singleBase } = requestBody;
-    const singleBody = { ...singleBase, serviceId: ID.serviceA, staffSelectionType: 'specific', staffId: ID.staffA, startAt: dateStr };
-    await withServer(async url => {
-      const response = await post(url, singleBody);
-      const text = await response.text();
-      assert.doesNotMatch(text, /服务已过期/);
-      assert.equal(response.status, 200);
-      const json = JSON.parse(text);
-      assert.equal(json.success, true);
-    });
-    assert.ok(singleFixture.state.queries.some(q => /^INSERT INTO appointments/.test(q.sql)));
+      const { items: _items, ...singleBase } = requestBody;
+      const singleBody = { ...singleBase, serviceId: ID.serviceA, staffSelectionType: 'specific', staffId: ID.staffA, startAt: dateStr };
+      await withServer(async url => {
+        const response = await post(url, singleBody);
+        const text = await response.text();
+        assert.doesNotMatch(text, /服务已过期/);
+        assert.equal(response.status, 200);
+        const json = JSON.parse(text);
+        assert.equal(json.success, true);
+      });
+      assert.ok(singleFixture.state.queries.some(q => /^INSERT INTO appointments/.test(q.sql)));
+    }
+  } finally {
+    delete app.locals.bookingNow;
   }
 });
 
