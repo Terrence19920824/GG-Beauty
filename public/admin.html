@@ -2531,7 +2531,49 @@ const acceptAuthoritativeAppointments = (apiAppointments) => {
   }
 };
 
+function captureAdminLocaleViewState() {
+  let scrollY = 0;
+  try {
+    if (typeof window !== 'undefined' && Number.isFinite(window.scrollY)) {
+      scrollY = window.scrollY;
+    }
+  } catch (_) {}
+  return {
+    scrollY,
+    calendarDate: currentCalendarDate,
+    viewMode: currentViewMode,
+    appointmentId: activeDrawerAppointmentId,
+    drawerOpen: Boolean(activeDrawerAppointmentId)
+  };
+}
+
+function restoreAdminLocaleViewState(viewState) {
+  if (!viewState || typeof viewState !== 'object') return;
+  currentCalendarDate = viewState.calendarDate;
+  currentViewMode = viewState.viewMode;
+  activeDrawerAppointmentId = viewState.appointmentId;
+
+  if (viewState.drawerOpen && viewState.appointmentId) {
+    renderAppointmentDrawerById(viewState.appointmentId);
+    const drawer = safeGetElement('appointmentDrawer');
+    const backdrop = safeGetElement('appointmentDrawerBackdrop');
+    if (drawer && backdrop) {
+      drawer.hidden = false;
+      backdrop.hidden = false;
+      drawer.classList.add('open');
+      backdrop.classList.add('visible');
+    }
+  }
+
+  try {
+    if (typeof window !== 'undefined' && typeof window.scrollTo === 'function') {
+      window.scrollTo(0, viewState.scrollY);
+    }
+  } catch (_) {}
+}
+
 function setAdminLocale(locale) {
+  const viewState = captureAdminLocaleViewState();
   if (globalThis.ownerSelfService?.setLocale) {
     globalThis.ownerSelfService.setLocale(locale);
   } else {
@@ -2568,9 +2610,7 @@ function setAdminLocale(locale) {
   if (typeof renderAppointmentsView === 'function' && currentAppointmentsSnapshot.length > 0) {
     renderAppointmentsView();
   }
-  if (typeof renderAppointmentDrawerById === 'function' && activeDrawerAppointmentId) {
-    renderAppointmentDrawerById(activeDrawerAppointmentId);
-  }
+  restoreAdminLocaleViewState(viewState);
 }
 globalScope.setAdminLocale = setAdminLocale;
 

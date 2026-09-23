@@ -587,7 +587,27 @@ test('12. Front desk access is authenticated, tenant-scoped, and backed by a sch
     assert.match(segment, /requireOwnerAuth/, `${route} must require authenticated owner access`);
     assert.match(segment, /front_desk/, `${route} must explicitly permit front desk`);
   }
-  assert.match(frontDeskMigration, /BEGIN;[\s\S]*DROP CONSTRAINT owner_shop_memberships_role_check[\s\S]*front_desk[\s\S]*COMMIT;/);
+  assert.match(frontDeskMigration, /BEGIN;[\s\S]*DROP CONSTRAINT(?: IF EXISTS)? owner_shop_memberships_role_check[\s\S]*front_desk[\s\S]*COMMIT;/);
+  assert.match(frontDeskMigration, /SET LOCAL lock_timeout\s*=\s*'5s';/);
+  assert.match(frontDeskMigration, /SET LOCAL statement_timeout\s*=\s*'30s';/);
+  assert.match(frontDeskMigration, /DROP CONSTRAINT IF EXISTS owner_shop_memberships_role_check/);
+});
+
+test('12a. Language switching explicitly retains the current view, date, drawer, and scroll position without reloading', () => {
+  assert.match(adminHtml, /function captureAdminLocaleViewState\(\)/);
+  assert.match(adminHtml, /scrollY/);
+  assert.match(adminHtml, /calendarDate:\s*currentCalendarDate/);
+  assert.match(adminHtml, /viewMode:\s*currentViewMode/);
+  assert.match(adminHtml, /appointmentId:\s*activeDrawerAppointmentId/);
+  assert.match(adminHtml, /function restoreAdminLocaleViewState\(viewState\)/);
+  assert.match(adminHtml, /currentCalendarDate\s*=\s*viewState\.calendarDate/);
+  assert.match(adminHtml, /currentViewMode\s*=\s*viewState\.viewMode/);
+  assert.match(adminHtml, /activeDrawerAppointmentId\s*=\s*viewState\.appointmentId/);
+  assert.match(adminHtml, /window\.scrollTo\(0, viewState\.scrollY\)/);
+  const localeFunction = adminHtml.slice(adminHtml.indexOf('function setAdminLocale'), adminHtml.indexOf('globalScope.setAdminLocale'));
+  assert.match(localeFunction, /const viewState = captureAdminLocaleViewState\(\)/);
+  assert.match(localeFunction, /restoreAdminLocaleViewState\(viewState\)/);
+  assert.doesNotMatch(localeFunction, /location\.reload\s*\(/);
 });
 
 test('13. Failed status mutation leaves the current card and drawer state unchanged', async () => {

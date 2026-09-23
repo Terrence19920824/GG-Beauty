@@ -5,8 +5,11 @@
 
 BEGIN;
 
+SET LOCAL lock_timeout = '5s';
+SET LOCAL statement_timeout = '30s';
+
 ALTER TABLE public.owner_shop_memberships
-  DROP CONSTRAINT owner_shop_memberships_role_check;
+  DROP CONSTRAINT IF EXISTS owner_shop_memberships_role_check;
 
 ALTER TABLE public.owner_shop_memberships
   ADD CONSTRAINT owner_shop_memberships_role_check
