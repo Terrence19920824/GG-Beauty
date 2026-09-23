@@ -570,14 +570,16 @@ test('10. Localization purity: drawer in zh-CN is pure Chinese, drawer in en is 
 });
 
 // 11. Backend authority: /api/appointments-db provides full phone, /api/staff/appointments masks phone
-test('11. Security & Authority: server.js provides full phone on owner route and masks on staff route', () => {
-  // Check /api/appointments-db query includes customer_phone without masking
-  assert.match(serverJs, /\/api\/appointments-db/);
-  assert.match(serverJs, /customer_phone/);
+test('11. Security & Authority: trusted owner roles receive full phone while staff is always masked', () => {
+  const ownerRoute = serverJs.slice(serverJs.indexOf('/api/appointments-db'), serverJs.indexOf('/api/staff/appointments'));
+  const staffRoute = serverJs.slice(serverJs.indexOf('/api/staff/appointments'), serverJs.indexOf("app.patch('/api/staff/appointments/:appointmentId/status'"));
 
-  // Check /api/staff/appointments implements phone masking
-  assert.match(serverJs, /\/api\/staff\/appointments/);
-  assert.match(serverJs, /maskPhone|•••••/);
+  assert.match(ownerRoute, /requireOwnerRole\(\['owner', 'manager', 'admin', 'front_desk'\]\)/);
+  assert.match(ownerRoute, /c\.phone AS customer_phone/);
+  assert.match(staffRoute, /'•••••'\s*\|\|\s*RIGHT\(/);
+  assert.doesNotMatch(staffRoute, /THEN\s+c\.phone/);
+  assert.doesNotMatch(staffRoute, /can_view_full_customer_phone/);
+  assert.doesNotMatch(staffRoute, /\$5::BOOLEAN/);
 });
 
 test('12. Front desk access is authenticated, tenant-scoped, and backed by a schema migration', () => {

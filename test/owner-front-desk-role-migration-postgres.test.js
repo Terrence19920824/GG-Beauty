@@ -11,8 +11,9 @@ const { Client } = require('pg');
 const ROOT = path.resolve(__dirname, '..');
 const PG_BIN = process.env.PG17_BIN || '/opt/homebrew/opt/postgresql@17/bin';
 const migration = fs.readFileSync(path.join(ROOT, 'migrations', '053_owner_front_desk_role.sql'), 'utf8');
+const rollback = fs.readFileSync(path.join(ROOT, 'migrations', 'rollback', '053_owner_front_desk_role.sql'), 'utf8');
 
-test('PostgreSQL 17 front-desk role migration is idempotent and rolls back on invalid existing data', { timeout: 120000 }, async t => {
+test('PostgreSQL 17 front-desk role migration is idempotent and has a data-safe rollback', { timeout: 120000 }, async t => {
   if (!fs.existsSync(path.join(PG_BIN, 'initdb'))) return t.skip('PostgreSQL 17 unavailable');
 
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'gg-beauty-owner-role-'));
@@ -46,6 +47,15 @@ test('PostgreSQL 17 front-desk role migration is idempotent and rolls back on in
     await db.query("INSERT INTO public.owner_shop_memberships (role) VALUES ('front_desk')");
     await assert.rejects(db.query("INSERT INTO public.owner_shop_memberships (role) VALUES ('invalid_role')"), error => error.code === '23514');
     assert.deepEqual((await db.query('SELECT role FROM public.owner_shop_memberships ORDER BY role')).rows.map(row => row.role), ['admin', 'front_desk', 'manager', 'owner']);
+
+    await assert.rejects(db.query(rollback), /Cannot roll back 053 while front_desk memberships exist/);
+    await db.query('ROLLBACK');
+    assert.match((await db.query("SELECT pg_get_constraintdef(oid) AS definition FROM pg_constraint WHERE conrelid = 'public.owner_shop_memberships'::regclass AND conname = 'owner_shop_memberships_role_check'")).rows[0].definition, /front_desk/);
+
+    await db.query("DELETE FROM public.owner_shop_memberships WHERE role = 'front_desk'");
+    await db.query(rollback);
+    assert.deepEqual((await db.query('SELECT role FROM public.owner_shop_memberships ORDER BY role')).rows.map(row => row.role), ['admin', 'manager', 'owner']);
+    await assert.rejects(db.query("INSERT INTO public.owner_shop_memberships (role) VALUES ('front_desk')"), error => error.code === '23514');
 
     await db.query('ALTER TABLE public.owner_shop_memberships DROP CONSTRAINT owner_shop_memberships_role_check');
     await db.query("INSERT INTO public.owner_shop_memberships (role) VALUES ('invalid_existing_role')");

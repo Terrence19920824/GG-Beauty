@@ -159,13 +159,15 @@ test('unauthenticated appointment read returns 401', async () => {
 });
 
 for (const role of ['owner', 'manager', 'admin', 'front_desk']) {
-  test(`${role} may read tenant appointments`, async () => {
+  test(`${role} may read tenant appointments with the full phone only in the trusted owner route`, async () => {
     const fixture = makePool({ role });
     installPool(fixture);
     await withServer(async baseUrl => {
       const response = await getAppointments(baseUrl);
       assert.equal(response.status, 200);
-      assert.deepEqual((await response.json()).data, [projectedAppointmentRow]);
+      const payload = await response.json();
+      assert.deepEqual(payload.data, [projectedAppointmentRow]);
+      assert.equal(payload.data[0].customer_phone, appointmentRow.customer_phone);
     });
   });
 }

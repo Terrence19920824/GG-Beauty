@@ -48,6 +48,20 @@ test('server resolves active shop by slug and returns no tenant id', async () =>
   assert.match(queries[0].sql, /shop\.status = 'active'/);
 });
 
+test('public booking context never returns customer phone, email, or other customer PII', async () => {
+  const client = {
+    query: async () => ({ rows: [{ shop_id: 'private-id', shop_slug: 'merchant-a', shop_name: 'Merchant A', location_id: 'private-location' }] }),
+    release() {}
+  };
+  app.locals.bookingPool = { connect: async () => client };
+  await withServer(async baseUrl => {
+    const payload = await (await fetch(`${baseUrl}/api/booking/context?shopSlug=merchant-a`)).json();
+    const serialized = JSON.stringify(payload);
+    assert.doesNotMatch(serialized, /phone|email|customer/i);
+    assert.deepEqual(payload, { success: true, data: { shopSlug: 'merchant-a', shopName: 'Merchant A' } });
+  });
+});
+
 test('unknown slug fails safely and client tenant ids are rejected before database access', async () => {
   let connectCount = 0;
   const client = { query: async () => ({ rows: [] }), release() {} };

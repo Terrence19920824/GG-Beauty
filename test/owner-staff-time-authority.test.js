@@ -426,6 +426,39 @@ test('11. Staff appointments: server_now is additive and does not break original
   );
 });
 
+test('11a. Staff appointments always request a masked phone projection, even with legacy full-phone permission', async () => {
+  let staffAppointmentsQuery;
+  let staffAppointmentsParams;
+  await withTestServer(
+    () => ({
+      ownerAuthPool: { query: async () => ({ rows: [] }) },
+      bookingPool: {
+        query: async (sql, params) => {
+          if (/FROM staff_sessions/.test(sql)) {
+            return { rows: [{ ...staffSessionRow(), can_view_full_customer_phone: true }] };
+          }
+          if (/WITH staff_scope AS/.test(sql)) {
+            staffAppointmentsQuery = sql;
+            staffAppointmentsParams = params;
+            return { rows: [{ appointment_date: '2030-01-01', timezone: 'Asia/Singapore', appointments: [] }] };
+          }
+          return { rows: [] };
+        }
+      },
+      state: {}
+    }),
+    async ({ baseUrl }) => {
+      const res = await fetch(`${baseUrl}/api/staff/appointments?date=2030-01-01`, {
+        headers: { cookie: 'gg_beauty_staff_session=test-token' }
+      });
+      assert.strictEqual(res.status, 200);
+    }
+  );
+  assert.match(staffAppointmentsQuery, /'•••••'\s*\|\|\s*RIGHT\(/);
+  assert.doesNotMatch(staffAppointmentsQuery, /THEN\s+c\.phone/);
+  assert.strictEqual(staffAppointmentsParams.length, 4, 'staff SQL must not receive a full-phone permission flag');
+});
+
 test('12. Staff appointments: client forbidden query parameters (staffId, shopId, etc.) return 400', async () => {
   await withTestServer(
     () => ({

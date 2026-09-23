@@ -4218,8 +4218,6 @@ app.get(
                   'customerName', c.name,
                   'customerPhone',
                     CASE
-                      WHEN $5::BOOLEAN = TRUE
-                      THEN c.phone
                       WHEN c.phone IS NULL
                       THEN NULL
                       ELSE
@@ -4278,9 +4276,7 @@ app.get(
           req.staffAuth.shopId,
           req.staffAuth.staffId,
           req.staffAuth.locationId,
-          requestedDate,
-          req.staffAuth.permissions
-            .can_view_full_customer_phone === true
+          requestedDate
         ]
       );
 
