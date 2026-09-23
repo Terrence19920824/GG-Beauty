@@ -2196,48 +2196,26 @@ app.get('/api/config', (req, res) => {
 
 
 // ==================================================
-// 旧版预约 API
-// 暂时保留
+// 旧版预约读取 API 已退役：它们基于内存数据，且不具备现代的
+// 身份认证、店铺隔离或 PII 保护。正式预约流程使用 /api/booking/*；
+// 老板端使用受 owner session 保护的 /api/appointments-db。
 // ==================================================
 
-app.get('/api/bookings', (req, res) => {
-  res.json({
-    success: true,
-    data: bookings
-  });
-});
-
-
-app.get('/api/bookings/:id', (req, res) => {
-  const booking = bookings.find(
-    b => b.id === parseInt(req.params.id)
-  );
-
-  if (booking) {
-    res.json({
-      success: true,
-      data: booking
-    });
-
-  } else {
-    res.status(404).json({
+app.get(
+  [
+    '/api/bookings',
+    '/api/bookings/:id',
+    '/api/bookings/phone/:phone'
+  ],
+  (_req, res) => {
+    res.set('Cache-Control', 'no-store');
+    res.status(410).json({
       success: false,
-      message: '预约不存在'
+      code: 'LEGACY_BOOKINGS_RETIRED',
+      message: '旧版预约读取接口已停用'
     });
   }
-});
-
-
-app.get('/api/bookings/phone/:phone', (req, res) => {
-  const userBookings = bookings.filter(
-    b => b.phone === req.params.phone
-  );
-
-  res.json({
-    success: true,
-    data: userBookings
-  });
-});
+);
 
 
 // ==================================================
