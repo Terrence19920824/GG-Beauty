@@ -34,7 +34,12 @@
     const links = [];
     if (data.contactPhone && safeHref('tel:' + data.contactPhone)) links.push(['tel:' + data.contactPhone, 'merchantCall', false]);
     if (data.whatsAppUrl && safeHref(data.whatsAppUrl)) links.push([data.whatsAppUrl, 'merchantWhatsApp', true]);
-    if (data.showAddress !== false && data.mapUrl && safeHref(data.mapUrl)) links.push([data.mapUrl, 'openMap', true]);
+    const resolvedMapUrl = (data.showAddress !== false)
+      ? (data.mapUrl || ((data.address || data.postalCode)
+          ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent([data.address, data.postalCode].filter(Boolean).join(' '))}`
+          : ''))
+      : '';
+    if (resolvedMapUrl && safeHref(resolvedMapUrl)) links.push([resolvedMapUrl, 'openMap', true]);
     links.push([`/member.html?shop=${encodeURIComponent(shopSlug)}`, 'membershipEntry', false]);
     links.push([`/?shop=${encodeURIComponent(shopSlug)}`, 'merchantBooking', false]);
     for (const [href, key, external] of links) {

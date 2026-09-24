@@ -117,6 +117,85 @@ test('2. public presentation exposes intended contact fields, address, and map l
   });
 });
 
+test('2b. auto map link fallback generates standard Google Maps search URL when mapUrl is omitted', () => {
+  // 1. Prioritize explicit custom https mapUrl
+  const explicitRow = {
+    shop_name: 'Shop',
+    public_address: '123 Orchard Road, #02-356',
+    public_postal_code: '238888',
+    public_map_url: 'https://maps.custom.com/place',
+    show_public_address: true
+  };
+  assert.equal(contact.publicPresentation(explicitRow).mapUrl, 'https://maps.custom.com/place');
+
+  // 2. Only address -> auto generate
+  const onlyAddrRow = {
+    shop_name: 'Shop',
+    public_address: '123 Orchard Road',
+    public_postal_code: null,
+    public_map_url: null,
+    show_public_address: true
+  };
+  assert.equal(
+    contact.publicPresentation(onlyAddrRow).mapUrl,
+    'https://www.google.com/maps/search/?api=1&query=123%20Orchard%20Road'
+  );
+
+  // 3. Only postalCode -> auto generate
+  const onlyPostalRow = {
+    shop_name: 'Shop',
+    public_address: null,
+    public_postal_code: '238888',
+    public_map_url: '',
+    show_public_address: true
+  };
+  assert.equal(
+    contact.publicPresentation(onlyPostalRow).mapUrl,
+    'https://www.google.com/maps/search/?api=1&query=238888'
+  );
+
+  // 4. Address + postalCode with unit number (#02-356) -> properly encoded
+  const complexAddrRow = {
+    shop_name: 'Shop',
+    public_address: '123 Orchard Road, #02-356',
+    public_postal_code: '238888',
+    public_map_url: null,
+    show_public_address: true
+  };
+  const expectedQuery = encodeURIComponent('123 Orchard Road, #02-356 238888');
+  assert.ok(expectedQuery.includes('%2302-356'));
+  assert.equal(
+    contact.publicPresentation(complexAddrRow).mapUrl,
+    `https://www.google.com/maps/search/?api=1&query=${expectedQuery}`
+  );
+
+  // 5. show_public_address=false -> mapUrl MUST be null even if address exists
+  const hiddenWithAddrRow = {
+    shop_name: 'Shop',
+    public_address: '123 Orchard Road, #02-356',
+    public_postal_code: '238888',
+    public_map_url: null,
+    show_public_address: false
+  };
+  assert.equal(contact.publicPresentation(hiddenWithAddrRow).mapUrl, null);
+  assert.equal(contact.publicPresentation(hiddenWithAddrRow).address, null);
+
+  // 6. Empty address and empty postal code -> mapUrl is null
+  const noAddressRow = {
+    shop_name: 'Shop',
+    public_address: '   ',
+    public_postal_code: '',
+    public_map_url: '',
+    show_public_address: true
+  };
+  assert.equal(contact.publicPresentation(noAddressRow).mapUrl, null);
+
+  // 7. Directly verify buildAutoMapUrl helper
+  assert.equal(contact.buildAutoMapUrl('123 Road', '12345'), 'https://www.google.com/maps/search/?api=1&query=123%20Road%2012345');
+  assert.equal(contact.buildAutoMapUrl(null, null), null);
+  assert.equal(contact.buildAutoMapUrl('', '  '), null);
+});
+
 test('3. owner, manager, and admin can write merchant contact while front desk is rejected by the role allow-list', () => {
   for (const role of ['owner', 'manager', 'admin']) assert.ok(OWNER_MERCHANT_CONTACT_WRITE_ROLES.includes(role));
   assert.equal(OWNER_MERCHANT_CONTACT_WRITE_ROLES.includes('front_desk'), false);
@@ -149,6 +228,7 @@ test('6. i18n: all merchant address keys are defined in zh-CN and en with pure l
     'merchantAddress',
     'merchantPostalCode',
     'merchantMapUrl',
+    'merchantMapUrlHelp',
     'merchantShowAddress',
     'openMap',
     'address'
@@ -163,7 +243,7 @@ test('6. i18n: all merchant address keys are defined in zh-CN and en with pure l
     assert.notStrictEqual(zh, key, `zh-CN translation for ${key} must not be identical to key`);
     assert.notStrictEqual(en, key, `en translation for ${key} must not be identical to key`);
 
-    assert.doesNotMatch(zh, /[a-zA-Z]{3,}/, `zh-CN translation for ${key} should not contain English words: "${zh}"`);
+    assert.doesNotMatch(zh.replace(/Google Maps/g, ''), /[a-zA-Z]{3,}/, `zh-CN translation for ${key} should not contain English words: "${zh}"`);
     assert.doesNotMatch(en, /[\u4e00-\u9fa5]/, `en translation for ${key} should not contain Chinese characters: "${en}"`);
   }
 });
@@ -181,6 +261,7 @@ test('7. PWA and merchant contact surfaces contain address fields and safe map l
   assert.match(admin, /id="merchantAddress"/);
   assert.match(admin, /id="merchantPostalCode"/);
   assert.match(admin, /id="merchantMapUrl"/);
+  assert.match(admin, /data-i18n="merchantMapUrlHelp"/);
   assert.match(admin, /id="merchantShowAddress"/);
   assert.match(adminSelfService, /merchantAddress/);
   assert.match(adminSelfService, /merchantPostalCode/);
@@ -192,6 +273,7 @@ test('7. PWA and merchant contact surfaces contain address fields and safe map l
   assert.match(bar, /openMap/);
   assert.match(bar, /target = '_blank'/);
   assert.match(bar, /rel = 'noopener noreferrer'/);
+  assert.match(bar, /google\.com\/maps\/search/);
 
   // CSS
   assert.match(css, /\.merchant-contact-address/);
