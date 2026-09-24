@@ -815,7 +815,13 @@ app.get('/api/customer/public-config', async (req, res) => {
   }
   try {
     const result = await app.locals.bookingPool.query(
-      `SELECT shop.name AS shop_name, settings.public_contact_phone, settings.public_whatsapp_phone
+      `SELECT shop.name AS shop_name,
+              settings.public_contact_phone,
+              settings.public_whatsapp_phone,
+              settings.public_address,
+              settings.public_postal_code,
+              settings.public_map_url,
+              settings.show_public_address
        FROM shops AS shop
        LEFT JOIN shop_customer_settings AS settings ON settings.shop_id = shop.id
        WHERE shop.slug = $1 AND shop.status = 'active' LIMIT 1`, [shopSlug]
@@ -861,7 +867,14 @@ app.post('/api/customer/my-bookings', async (req, res) => {
 
   try {
     const shopResult = await app.locals.bookingPool.query(
-      `SELECT shop.id, shop.name AS shop_name, settings.public_contact_phone, settings.public_whatsapp_phone
+      `SELECT shop.id,
+              shop.name AS shop_name,
+              settings.public_contact_phone,
+              settings.public_whatsapp_phone,
+              settings.public_address,
+              settings.public_postal_code,
+              settings.public_map_url,
+              settings.show_public_address
        FROM shops AS shop
        LEFT JOIN shop_customer_settings AS settings ON settings.shop_id = shop.id
        WHERE shop.slug = $1 AND shop.status = 'active' LIMIT 1`, [normalizedSlug]
@@ -901,12 +914,22 @@ app.get('/api/owner/merchant-contact', requireOwnerAuth, requireOwnerRole(OWNER_
   setPublicBookingNoCacheHeaders(res);
   try {
     const result = await app.locals.ownerAuthPool.query(
-      `SELECT public_contact_phone, public_whatsapp_phone
+      `SELECT public_contact_phone,
+              public_whatsapp_phone,
+              public_address,
+              public_postal_code,
+              public_map_url,
+              show_public_address
        FROM shop_customer_settings WHERE shop_id = $1 LIMIT 1`, [req.ownerAuth.shopId]
     );
     const row = result.rows[0] || {};
     return res.json({ success: true, data: {
-      contactPhone: row.public_contact_phone || '', whatsAppPhone: row.public_whatsapp_phone || ''
+      contactPhone: row.public_contact_phone || '',
+      whatsAppPhone: row.public_whatsapp_phone || '',
+      address: row.public_address || '',
+      postalCode: row.public_postal_code || '',
+      mapUrl: row.public_map_url || '',
+      showAddress: row.show_public_address !== false
     }});
   } catch (error) {
     console.error('Owner merchant contact read error:', safeStaffAuthErrorCode(error));
@@ -924,12 +947,17 @@ app.patch('/api/owner/merchant-contact', requireOwnerAuth, requireOwnerRole(OWNE
     const result = await app.locals.ownerAuthPool.query(
       `INSERT INTO shop_customer_settings (shop_id) VALUES ($1)
        ON CONFLICT (shop_id) DO UPDATE SET ${assignments}
-       RETURNING public_contact_phone, public_whatsapp_phone`,
+       RETURNING public_contact_phone, public_whatsapp_phone, public_address, public_postal_code, public_map_url, show_public_address`,
       [req.ownerAuth.shopId, ...fields.map(([, value]) => value)]
     );
-    const row = result.rows[0];
+    const row = result.rows[0] || {};
     return res.json({ success: true, data: {
-      contactPhone: row.public_contact_phone || '', whatsAppPhone: row.public_whatsapp_phone || ''
+      contactPhone: row.public_contact_phone || '',
+      whatsAppPhone: row.public_whatsapp_phone || '',
+      address: row.public_address || '',
+      postalCode: row.public_postal_code || '',
+      mapUrl: row.public_map_url || '',
+      showAddress: row.show_public_address !== false
     }});
   } catch (error) {
     console.error('Owner merchant contact write error:', safeStaffAuthErrorCode(error));

@@ -227,6 +227,10 @@
       const data = await request('/api/owner/merchant-contact');
       byId('merchantContactPhone').value = data.contactPhone || '';
       byId('merchantWhatsAppPhone').value = data.whatsAppPhone || '';
+      if (byId('merchantAddress')) byId('merchantAddress').value = data.address || '';
+      if (byId('merchantPostalCode')) byId('merchantPostalCode').value = data.postalCode || '';
+      if (byId('merchantMapUrl')) byId('merchantMapUrl').value = data.mapUrl || '';
+      if (byId('merchantShowAddress')) byId('merchantShowAddress').checked = data.showAddress !== false;
       byId('saveMerchantContactButton').hidden = !canWrite();
     } catch (error) { if (!error.sessionExpired) setMessage('merchantContactMessage', error.message, true); }
   }
@@ -234,11 +238,22 @@
     if (!canWrite()) return;
     const button = byId('saveMerchantContactButton'); button.disabled = true;
     try {
-      const data = await request('/api/owner/merchant-contact', { method: 'PATCH', body: JSON.stringify({
-        contactPhone: value('merchantContactPhone').trim(), whatsAppPhone: value('merchantWhatsAppPhone').trim()
-      }) });
+      const payload = {
+        contactPhone: value('merchantContactPhone').trim(),
+        whatsAppPhone: value('merchantWhatsAppPhone').trim()
+      };
+      if (byId('merchantAddress')) payload.address = value('merchantAddress').trim();
+      if (byId('merchantPostalCode')) payload.postalCode = value('merchantPostalCode').trim();
+      if (byId('merchantMapUrl')) payload.mapUrl = value('merchantMapUrl').trim();
+      if (byId('merchantShowAddress')) payload.showAddress = Boolean(byId('merchantShowAddress').checked);
+
+      const data = await request('/api/owner/merchant-contact', { method: 'PATCH', body: JSON.stringify(payload) });
       byId('merchantContactPhone').value = data.contactPhone || '';
       byId('merchantWhatsAppPhone').value = data.whatsAppPhone || '';
+      if (byId('merchantAddress')) byId('merchantAddress').value = data.address || '';
+      if (byId('merchantPostalCode')) byId('merchantPostalCode').value = data.postalCode || '';
+      if (byId('merchantMapUrl')) byId('merchantMapUrl').value = data.mapUrl || '';
+      if (byId('merchantShowAddress')) byId('merchantShowAddress').checked = data.showAddress !== false;
       setMessage('merchantContactMessage', t('saved'));
     } catch (error) { if (!error.sessionExpired) setMessage('merchantContactMessage', error.message, true); }
     finally { button.disabled = false; }

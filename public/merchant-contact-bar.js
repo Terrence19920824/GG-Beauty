@@ -11,12 +11,43 @@
     const data = result.data;
     const bar = root.document.createElement('nav'); bar.className = 'merchant-contact-bar'; bar.setAttribute('aria-label', label('merchantContactAria'));
     const name = root.document.createElement('strong'); name.className = 'merchant-contact-name notranslate'; name.translate = false; name.textContent = data.shopName || shopSlug; bar.appendChild(name);
+
+    if (data.showAddress !== false && (data.address || data.postalCode)) {
+      const addrRow = root.document.createElement('div');
+      addrRow.className = 'merchant-contact-address notranslate';
+      addrRow.translate = false;
+      const addrPin = root.document.createElement('span');
+      addrPin.setAttribute('aria-hidden', 'true');
+      addrPin.textContent = '📍 ';
+      addrRow.appendChild(addrPin);
+      const addrText = root.document.createElement('span');
+      addrText.className = 'merchant-contact-address-text';
+      let formatted = data.address || '';
+      if (data.postalCode) {
+        formatted = formatted ? `${formatted} (${data.postalCode})` : data.postalCode;
+      }
+      addrText.textContent = formatted;
+      addrRow.appendChild(addrText);
+      bar.appendChild(addrRow);
+    }
+
     const links = [];
     if (data.contactPhone && safeHref('tel:' + data.contactPhone)) links.push(['tel:' + data.contactPhone, 'merchantCall', false]);
     if (data.whatsAppUrl && safeHref(data.whatsAppUrl)) links.push([data.whatsAppUrl, 'merchantWhatsApp', true]);
+    if (data.showAddress !== false && data.mapUrl && safeHref(data.mapUrl)) links.push([data.mapUrl, 'openMap', true]);
     links.push([`/member.html?shop=${encodeURIComponent(shopSlug)}`, 'membershipEntry', false]);
     links.push([`/?shop=${encodeURIComponent(shopSlug)}`, 'merchantBooking', false]);
-    for (const [href, key, external] of links) { const a = root.document.createElement('a'); a.href = href; a.className = 'merchant-contact-action'; a.textContent = label(key); if (external) { a.target = '_blank'; a.rel = 'noopener noreferrer'; } bar.appendChild(a); }
+    for (const [href, key, external] of links) {
+      const a = root.document.createElement('a');
+      a.href = href;
+      a.className = 'merchant-contact-action';
+      a.textContent = label(key);
+      if (external) {
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
+      }
+      bar.appendChild(a);
+    }
     host.replaceChildren(bar);
   }
   root.ggMerchantContactBar = { mount };
