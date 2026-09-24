@@ -66,6 +66,9 @@ const {
   normalizeCustomerQueryPhone,
   queryCustomerBookings
 } = require('./lib/customer-booking-query');
+const {
+  createOwnerAppointmentEdit
+} = require('./lib/owner-appointment-edit');
 
 const app = express();
 const OWNER_MERCHANT_CONTACT_READ_ROLES = Object.freeze(['owner', 'manager', 'admin']);
@@ -712,6 +715,20 @@ app.post(
   checkoutPos.create
 );
 
+const ownerAppointmentEdit = createOwnerAppointmentEdit({
+  pool: { connect: (...args) => app.locals.ownerAuthPool.connect(...args) },
+  isUuid,
+  runInTransaction,
+  safeErrorCode: safeStaffAuthErrorCode
+});
+
+app.patch(
+  '/api/owner/appointments/:appointmentId/adjust',
+  requireOwnerAuth,
+  requireOwnerRole(['owner', 'manager', 'admin', 'front_desk']),
+  ownerAppointmentEdit.adjustAppointment
+);
+
 const QUALIFIED_SERVICE_STAFF_EXISTS_SQL = `
   EXISTS (
     SELECT 1
@@ -934,7 +951,7 @@ const ownerStaffManagement = createOwnerStaffManagement({
 app.get(
   '/api/owner/staff',
   requireOwnerAuth,
-  requireOwnerRole(['owner', 'manager', 'admin']),
+  requireOwnerRole(['owner', 'manager', 'admin', 'front_desk']),
   ownerStaffManagement.listStaff
 );
 
