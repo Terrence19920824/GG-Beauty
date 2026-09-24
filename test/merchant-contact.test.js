@@ -41,6 +41,22 @@ test('rollback first and second runs are safe while configured contact data rema
   assert.match(rollback, /DROP COLUMN IF EXISTS public_whatsapp_phone/);
 });
 
+test('merchant contact migrations require E.164 values with one escaped plus and verify those exact constraints', () => {
+  const migrations = path.join(__dirname, '..', 'migrations');
+  const schema = fs.readFileSync(path.join(migrations, '055_merchant_contact_schema.sql'), 'utf8');
+  const verification = fs.readFileSync(path.join(migrations, '056_merchant_contact_verification_readonly.sql'), 'utf8');
+  const expectedPattern = '^\\+[1-9][0-9]{6,14}$';
+  const incorrectDoubleEscapedPattern = '^\\\\+[1-9][0-9]{6,14}$';
+  const e164Phone = /^\+[1-9][0-9]{6,14}$/;
+
+  assert.equal(e164Phone.test('+6581234567'), true);
+  assert.equal(schema.includes("'" + expectedPattern + "'"), true);
+  assert.equal(schema.includes("'" + incorrectDoubleEscapedPattern + "'"), false);
+  assert.match(verification, /pg_get_constraintdef\(oid\) LIKE/);
+  assert.equal(verification.includes("'" + expectedPattern + "'"), true);
+  assert.equal(verification.includes("'" + incorrectDoubleEscapedPattern + "'"), false);
+});
+
 test('PWA and merchant contact surfaces are present without introducing self-service rescheduling', () => {
   const root = path.join(__dirname, '..');
   const booking = fs.readFileSync(path.join(root, 'public/index.html'), 'utf8');
