@@ -1150,6 +1150,9 @@ let currentRenderGeneration = 0;
 let currentAppointmentsSnapshot = [];
 let currentStaffSnapshot = [];
 const currentAppointmentMap = new Map();
+let currentAdminProfile = null;
+let activeDrawerMode = 'view';
+const serviceEligibleStaffCache = new Map();
 
 function getViewStorage() {
   try {
@@ -1224,6 +1227,8 @@ const invalidateAppointmentActionContext = () => {
   currentAppointmentMap.clear();
   currentAppointmentsSnapshot = [];
   currentStaffSnapshot = [];
+  activeDrawerMode = 'view';
+  serviceEligibleStaffCache.clear();
   stopLiveLineTimer();
   stopTimeResync();
   invalidateTimeAnchor();
@@ -2695,6 +2700,7 @@ async function initializeAdmin() {
 
     const result = await response.json();
 
+    currentAdminProfile = result.data || {};
     if (globalThis.ownerSelfService) {
       globalThis.ownerSelfService.setProfile(result.data || {});
     }
@@ -2753,6 +2759,7 @@ async function adminLogin() {
 
     message.textContent = '';
 
+    currentAdminProfile = result.data || {};
     if (globalThis.ownerSelfService) {
       globalThis.ownerSelfService.setProfile(result.data || {});
     }
@@ -3024,6 +3031,7 @@ function openAppointmentDrawer(appointmentId, triggerElement = null) {
   if (!appointment) return;
 
   activeDrawerAppointmentId = safeId;
+  activeDrawerMode = 'view';
   if (triggerElement) {
     activeDrawerTriggerElement = triggerElement;
   }
@@ -3056,6 +3064,7 @@ function closeAppointmentDrawer() {
     backdrop.hidden = true;
   }
   activeDrawerAppointmentId = null;
+  activeDrawerMode = 'view';
   if (activeDrawerTriggerElement && typeof activeDrawerTriggerElement.focus === 'function') {
     try { activeDrawerTriggerElement.focus(); } catch (_) {}
   }
@@ -3115,6 +3124,546 @@ function renderDrawerFooterWithTextContent(footer, canonicalStatus) {
   }
 }
 
+function getAdminActorRole() {
+  return currentAdminProfile?.membership?.role ||
+    globalThis.ownerSelfService?._state?.profile?.membership?.role ||
+    'owner';
+}
+
+function getAdminShopSlug() {
+  return currentAdminProfile?.activeShop?.slug ||
+    globalThis.ownerSelfService?._state?.profile?.activeShop?.slug ||
+    '';
+}
+
+function computeAdjustEndTime(startDateStr, startTimeStr, durationMinutes) {
+  if (!startDateStr || !startTimeStr || !Number.isFinite(durationMinutes) || durationMinutes <= 0) {
+    return '-';
+  }
+  const parts = String(startTimeStr).split(':');
+  if (parts.length < 2) return '-';
+  const hours = Number(parts[0]);
+  const minutes = Number(parts[1]);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return '-';
+
+  const totalStartMinutes = hours * 60 + minutes;
+  const totalEndMinutes = totalStartMinutes + Math.round(durationMinutes);
+
+  const endHours = Math.floor(totalEndMinutes / 60) % 24;
+  const endMins = totalEndMinutes % 60;
+  const isNextDay = totalEndMinutes >= 24 * 60;
+
+  const formatted = `${String(endHours).padStart(2, '0')}:${String(endMins).padStart(2, '0')}`;
+  return isNextDay ? `${formatted} (+1)` : formatted;
+}
+
+function renderAppointmentAdjustDrawer(appointment, canonicalStatus) {
+  const drawerTitle = safeGetElement('drawerTitle');
+  if (drawerTitle) {
+    drawerTitle.textContent = adminT('adjustAppointment');
+  }
+
+  const drawerBody = safeGetElement('drawerBody');
+  const drawerFooter = safeGetElement('drawerFooter');
+  if (!drawerBody || !drawerFooter) return;
+
+  drawerBody.replaceChildren();
+  drawerFooter.replaceChildren();
+
+  const items = Array.isArray(appointment.items) && appointment.items.length > 0 ? appointment.items : [appointment];
+  const sumItemDuration = items.reduce((sum, it) => sum + Number(it.duration_minutes_snapshot || it.duration_minutes || 0), 0);
+  const oldDurationMinutes = (appointment.start_at && appointment.end_at)
+    ? Math.round((new Date(appointment.end_at).getTime() - new Date(appointment.start_at).getTime()) / 60000)
+    : 0;
+  const effectiveDuration = sumItemDuration > 0 ? sumItemDuration : (oldDurationMinutes > 0 ? oldDurationMinutes : Number(appointment.duration_minutes || 0));
+
+  const origDate = appointment.start_at ? getSingaporeDateString(appointment.start_at) : '';
+  const origTime = appointment.start_at ? formatSingaporeHourMinute(appointment.start_at) : '';
+  const origStaffId = String(appointment.staff_id || '').trim();
+  const wasCustomerSpecified = String(appointment.staff_selection_type || '').toLowerCase() === 'specific';
+
+  const form = drawerElement('form', 'adjust-form');
+  form.setAttribute('novalidate', 'true');
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+  });
+
+  // 1. Service and price read-only display
+  const immutableBanner = drawerElement('div', 'adjust-immutable-banner');
+  const lockIcon = document.createElement('span');
+  lockIcon.setAttribute('aria-hidden', 'true');
+  lockIcon.textContent = '🔒';
+  immutableBanner.appendChild(lockIcon);
+  immutableBanner.appendChild(drawerElement('span', '', adminT('serviceAndPriceImmutableNotice')));
+  form.appendChild(immutableBanner);
+
+  const itemsSummary = drawerElement('div', 'adjust-item-summary');
+  for (const item of items) {
+    const row = drawerElement('div', 'adjust-item-row');
+    const nameSpan = drawerElement('span', 'adjust-item-name notranslate', item.service_name_snapshot || item.service_name || '-');
+    nameSpan.setAttribute('translate', 'no');
+    row.appendChild(nameSpan);
+
+    const dur = item.duration_minutes_snapshot || item.duration_minutes || '-';
+    const priceText = item.price_snapshot != null ? ` · $${Number(item.price_snapshot).toFixed(2)}` : '';
+    const metaSpan = drawerElement('span', 'adjust-item-meta notranslate', `${dur} ${adminT('minutes')}${priceText}`);
+    metaSpan.setAttribute('translate', 'no');
+    row.appendChild(metaSpan);
+    itemsSummary.appendChild(row);
+  }
+  form.appendChild(itemsSummary);
+
+  // 2. Date input
+  const dateGroup = drawerElement('div', 'adjust-field-group');
+  const dateLabel = drawerElement('label', 'adjust-label', adminT('newDate'));
+  dateLabel.setAttribute('for', 'adjustDateInput');
+  const dateInput = drawerElement('input', 'adjust-input');
+  dateInput.type = 'date';
+  dateInput.id = 'adjustDateInput';
+  dateInput.value = origDate;
+  dateInput.required = true;
+  dateGroup.appendChild(dateLabel);
+  dateGroup.appendChild(dateInput);
+  form.appendChild(dateGroup);
+
+  // 3. Time input
+  const timeGroup = drawerElement('div', 'adjust-field-group');
+  const timeLabel = drawerElement('label', 'adjust-label', adminT('newTime'));
+  timeLabel.setAttribute('for', 'adjustTimeInput');
+  const timeInput = drawerElement('input', 'adjust-input');
+  timeInput.type = 'time';
+  timeInput.id = 'adjustTimeInput';
+  timeInput.step = '900';
+  timeInput.value = origTime;
+  timeInput.required = true;
+  timeGroup.appendChild(timeLabel);
+  timeGroup.appendChild(timeInput);
+  form.appendChild(timeGroup);
+
+  // 4. Estimated End Time box
+  const endTimeBox = drawerElement('div', 'adjust-endtime-box');
+  endTimeBox.appendChild(drawerElement('span', '', adminT('estimatedEndTime')));
+  const endTimeVal = drawerElement('span', 'adjust-endtime-val notranslate', computeAdjustEndTime(origDate, origTime, effectiveDuration));
+  endTimeVal.setAttribute('translate', 'no');
+  endTimeVal.id = 'adjustEndTimeDisplay';
+  endTimeBox.appendChild(endTimeVal);
+  form.appendChild(endTimeBox);
+
+  const refreshEndTime = () => {
+    endTimeVal.textContent = computeAdjustEndTime(dateInput.value, timeInput.value, effectiveDuration);
+  };
+  dateInput.addEventListener('input', refreshEndTime);
+  timeInput.addEventListener('input', refreshEndTime);
+
+  // 5. Staff select dropdown
+  const staffGroup = drawerElement('div', 'adjust-field-group');
+  const staffLabel = drawerElement('label', 'adjust-label', adminT('selectStaff'));
+  staffLabel.setAttribute('for', 'adjustStaffSelect');
+  const staffSelect = drawerElement('select', 'adjust-select');
+  staffSelect.id = 'adjustStaffSelect';
+  const staffList = (typeof globalScope !== 'undefined' && Array.isArray(globalScope.currentStaffSnapshot) && globalScope.currentStaffSnapshot.length > 0)
+    ? globalScope.currentStaffSnapshot
+    : (Array.isArray(currentStaffSnapshot) ? currentStaffSnapshot : []);
+  const locationStaff = staffList.filter(s => {
+    if (!s || s.is_active === false) return false;
+    if (appointment.location_id && Array.isArray(s.locations) && s.locations.length > 0) {
+      return s.locations.some(l => l && String(l.id).trim() === String(appointment.location_id).trim());
+    }
+    return true;
+  });
+
+  const hasCurrentStaffInList = locationStaff.some(s => String(s.id).trim() === origStaffId);
+  if (!hasCurrentStaffInList && origStaffId) {
+    const currentStaffObj = staffList.find(s => String(s.id).trim() === origStaffId) || {
+      id: origStaffId,
+      name: appointment.staff_name || adminT('unassignedStaff')
+    };
+    locationStaff.unshift(currentStaffObj);
+  }
+
+  for (const s of locationStaff) {
+    const opt = document.createElement('option');
+    opt.value = String(s.id).trim();
+    opt.textContent = String(s.name || '').trim();
+    if (String(s.id).trim() === origStaffId) {
+      opt.selected = true;
+    }
+    staffSelect.appendChild(opt);
+  }
+  if (origStaffId) {
+    staffSelect.value = origStaffId;
+  }
+  staffGroup.appendChild(staffLabel);
+  staffGroup.appendChild(staffSelect);
+  form.appendChild(staffGroup);
+
+  // 6. Staff Skill Alert (Red)
+  const skillAlert = drawerElement('div', 'adjust-alert danger', adminT('staffSkillMismatch'));
+  skillAlert.id = 'adjustSkillAlert';
+  skillAlert.hidden = true;
+  form.appendChild(skillAlert);
+
+  // 7. Customer-specified Reassignment Box
+  const reassignmentBox = drawerElement('div', 'adjust-reassignment-box');
+  reassignmentBox.id = 'adjustReassignmentBox';
+  reassignmentBox.hidden = true;
+
+  const reassignmentTitle = drawerElement('div', 'adjust-reassignment-title', adminT('customerSpecifiedStaffNotice'));
+  reassignmentBox.appendChild(reassignmentTitle);
+
+  const reasonGroup = drawerElement('div', 'adjust-field-group');
+  const reasonLabel = drawerElement('label', 'adjust-label', adminT('reassignmentReason'));
+  reasonLabel.setAttribute('for', 'adjustReassignmentReason');
+  const reasonTextarea = drawerElement('textarea', 'adjust-textarea');
+  reasonTextarea.id = 'adjustReassignmentReason';
+  reasonTextarea.rows = 2;
+  reasonTextarea.placeholder = adminT('reassignmentReasonPlaceholder');
+  reasonGroup.appendChild(reasonLabel);
+  reasonGroup.appendChild(reasonTextarea);
+  reassignmentBox.appendChild(reasonGroup);
+
+  const notifiedRow = drawerElement('label', 'adjust-checkbox-row');
+  const notifiedCheckbox = drawerElement('input', 'adjust-checkbox');
+  notifiedCheckbox.type = 'checkbox';
+  notifiedCheckbox.id = 'adjustCustomerNotified';
+  notifiedRow.appendChild(notifiedCheckbox);
+  notifiedRow.appendChild(drawerElement('span', '', adminT('customerNotified')));
+  reassignmentBox.appendChild(notifiedRow);
+
+  const agreedRow = drawerElement('label', 'adjust-checkbox-row');
+  const agreedCheckbox = drawerElement('input', 'adjust-checkbox');
+  agreedCheckbox.type = 'checkbox';
+  agreedCheckbox.id = 'adjustCustomerAgreed';
+  agreedRow.appendChild(agreedCheckbox);
+  agreedRow.appendChild(drawerElement('span', '', adminT('customerAgreed')));
+  reassignmentBox.appendChild(agreedRow);
+
+  form.appendChild(reassignmentBox);
+
+  // 8. Conflict Box (shown on 409)
+  const conflictBox = drawerElement('div', 'adjust-conflict-box');
+  conflictBox.id = 'adjustConflictBox';
+  conflictBox.hidden = true;
+
+  const conflictMessage = drawerElement('div', 'adjust-alert');
+  conflictMessage.id = 'adjustConflictMessage';
+  conflictBox.appendChild(conflictMessage);
+
+  const overrideFields = drawerElement('div', '');
+  overrideFields.id = 'adjustOverrideFields';
+  overrideFields.hidden = true;
+
+  const overrideRow = drawerElement('label', 'adjust-checkbox-row');
+  const overrideCheckbox = drawerElement('input', 'adjust-checkbox');
+  overrideCheckbox.type = 'checkbox';
+  overrideCheckbox.id = 'adjustOverrideConflict';
+  overrideRow.appendChild(overrideCheckbox);
+  overrideRow.appendChild(drawerElement('span', '', adminT('overrideConflict')));
+  overrideFields.appendChild(overrideRow);
+
+  const conflictReasonGroup = drawerElement('div', 'adjust-field-group');
+  conflictReasonGroup.id = 'adjustConflictReasonGroup';
+  conflictReasonGroup.hidden = true;
+  const conflictReasonLabel = drawerElement('label', 'adjust-label', adminT('conflictReason'));
+  conflictReasonLabel.setAttribute('for', 'adjustConflictReason');
+  const conflictReasonTextarea = drawerElement('textarea', 'adjust-textarea');
+  conflictReasonTextarea.id = 'adjustConflictReason';
+  conflictReasonTextarea.rows = 2;
+  conflictReasonTextarea.placeholder = adminT('conflictReasonPlaceholder');
+  conflictReasonGroup.appendChild(conflictReasonLabel);
+  conflictReasonGroup.appendChild(conflictReasonTextarea);
+  overrideFields.appendChild(conflictReasonGroup);
+
+  conflictBox.appendChild(overrideFields);
+  form.appendChild(conflictBox);
+
+  drawerBody.appendChild(form);
+
+  // 9. Footer Action Buttons
+  const cancelBtn = drawerElement('button', 'drawer-status-btn btn-adjust-cancel', adminT('cancel'));
+  cancelBtn.type = 'button';
+  cancelBtn.id = 'adjustCancelBtn';
+  cancelBtn.addEventListener('click', () => {
+    activeDrawerMode = 'view';
+    renderAppointmentDrawer(appointment);
+  });
+  drawerFooter.appendChild(cancelBtn);
+
+  const saveBtn = drawerElement('button', 'drawer-status-btn btn-adjust-save', adminT('saveAdjustment'));
+  saveBtn.type = 'button';
+  saveBtn.id = 'adjustSaveBtn';
+  drawerFooter.appendChild(saveBtn);
+
+  let eligibleStaffSet = null;
+  const uniqueServiceIds = [...new Set(items.map(it => it.service_id).filter(Boolean))];
+
+  const initSkillCheck = async () => {
+    try {
+      const shopSlug = getAdminShopSlug();
+      if (!shopSlug || uniqueServiceIds.length === 0) return;
+
+      const sets = await Promise.all(uniqueServiceIds.map(async sId => {
+        if (serviceEligibleStaffCache.has(sId)) {
+          return serviceEligibleStaffCache.get(sId);
+        }
+        try {
+          const res = await fetch(`/api/booking/staff-options?shopSlug=${encodeURIComponent(shopSlug)}&serviceId=${encodeURIComponent(sId)}`, {
+            credentials: 'same-origin'
+          });
+          if (!res.ok) return null;
+          const json = await res.json();
+          if (json.success && Array.isArray(json.data)) {
+            const idSet = new Set(json.data.map(item => String(item.staffId || '').trim()));
+            serviceEligibleStaffCache.set(sId, idSet);
+            return idSet;
+          }
+        } catch (_) {}
+        return null;
+      }));
+
+      if (sets.length > 0 && sets.every(s => s instanceof Set)) {
+        const intersection = new Set();
+        for (const stId of sets[0]) {
+          if (sets.every(s => s.has(stId))) {
+            intersection.add(stId);
+          }
+        }
+        eligibleStaffSet = intersection;
+        validateStaffSkill();
+      }
+    } catch (_) {}
+  };
+
+  const validateStaffSkill = () => {
+    const selectedStaffId = String(staffSelect.value || '').trim();
+    if (!selectedStaffId) {
+      skillAlert.hidden = true;
+      updateFormValidation();
+      return;
+    }
+
+    const staffObj = staffList.find(s => String(s?.id || '').trim() === selectedStaffId);
+    if (staffObj && Array.isArray(staffObj.services)) {
+      const staffServiceIds = new Set(staffObj.services.map(s => String(s.id || s.serviceId || s.service_id || s).trim()));
+      const hasAll = uniqueServiceIds.every(sId => staffServiceIds.has(String(sId).trim()));
+      if (!hasAll) {
+        skillAlert.textContent = adminT('staffSkillMismatch');
+        skillAlert.hidden = false;
+        updateFormValidation();
+        return;
+      }
+    }
+
+    if (eligibleStaffSet instanceof Set) {
+      if (!eligibleStaffSet.has(selectedStaffId)) {
+        skillAlert.textContent = adminT('staffSkillMismatch');
+        skillAlert.hidden = false;
+      } else {
+        skillAlert.hidden = true;
+      }
+    } else {
+      skillAlert.hidden = true;
+    }
+    updateFormValidation();
+  };
+
+  const updateReassignmentVisibility = () => {
+    const selectedStaffId = String(staffSelect.value || '').trim();
+    const isReassigned = wasCustomerSpecified && selectedStaffId && selectedStaffId !== origStaffId;
+    reassignmentBox.hidden = !isReassigned;
+    updateFormValidation();
+  };
+
+  const updateFormValidation = () => {
+    if (!dateInput.value || !timeInput.value || !staffSelect.value) {
+      saveBtn.disabled = true;
+      return;
+    }
+
+    if (!skillAlert.hidden) {
+      saveBtn.disabled = true;
+      return;
+    }
+
+    if (!reassignmentBox.hidden) {
+      const reason = reasonTextarea.value.trim();
+      const notified = notifiedCheckbox.checked;
+      const agreed = agreedCheckbox.checked;
+      if (reason.length < 2 || !notified || !agreed) {
+        saveBtn.disabled = true;
+        return;
+      }
+    }
+
+    if (!conflictBox.hidden) {
+      const role = getAdminActorRole();
+      if (role === 'front_desk') {
+        saveBtn.disabled = true;
+        return;
+      }
+      if (overrideCheckbox.checked) {
+        const reason = conflictReasonTextarea.value.trim();
+        if (reason.length < 2) {
+          saveBtn.disabled = true;
+          return;
+        }
+      } else {
+        saveBtn.disabled = true;
+        return;
+      }
+    }
+
+    saveBtn.disabled = false;
+  };
+
+  staffSelect.addEventListener('change', () => {
+    validateStaffSkill();
+    updateReassignmentVisibility();
+  });
+
+  dateInput.addEventListener('change', () => {
+    if (!conflictBox.hidden) conflictBox.hidden = true;
+    updateFormValidation();
+  });
+
+  timeInput.addEventListener('change', () => {
+    if (!conflictBox.hidden) conflictBox.hidden = true;
+    updateFormValidation();
+  });
+
+  reasonTextarea.addEventListener('input', updateFormValidation);
+  notifiedCheckbox.addEventListener('change', updateFormValidation);
+  agreedCheckbox.addEventListener('change', updateFormValidation);
+
+  overrideCheckbox.addEventListener('change', () => {
+    conflictReasonGroup.hidden = !overrideCheckbox.checked;
+    updateFormValidation();
+  });
+  conflictReasonTextarea.addEventListener('input', updateFormValidation);
+
+  initSkillCheck();
+  validateStaffSkill();
+  updateReassignmentVisibility();
+  updateFormValidation();
+
+  saveBtn.addEventListener('click', async () => {
+    const newDate = dateInput.value.trim();
+    const newTime = timeInput.value.trim();
+    const newStaffId = staffSelect.value.trim();
+
+    if (!newDate || !newTime || !newStaffId) return;
+
+    if (!skillAlert.hidden) {
+      showAdminToast(adminT('staffSkillMismatch'), 'error');
+      return;
+    }
+
+    const isReassigned = wasCustomerSpecified && newStaffId !== origStaffId;
+    if (isReassigned) {
+      const reason = reasonTextarea.value.trim();
+      const notified = notifiedCheckbox.checked;
+      const agreed = agreedCheckbox.checked;
+      if (reason.length < 2) {
+        showAdminToast(adminT('reassignmentReasonRequired'), 'error');
+        return;
+      }
+      if (!notified || !agreed) {
+        showAdminToast(adminT('reassignmentConsentRequired'), 'error');
+        return;
+      }
+    }
+
+    const payload = {
+      newDate,
+      newTime,
+      newStaffId
+    };
+
+    if (isReassigned) {
+      payload.reassignmentReason = reasonTextarea.value.trim();
+      payload.customerNotified = true;
+      payload.customerAgreed = true;
+    }
+
+    if (!conflictBox.hidden && overrideCheckbox.checked) {
+      const reason = conflictReasonTextarea.value.trim();
+      if (reason.length < 2) {
+        showAdminToast(adminT('conflictReasonRequired'), 'error');
+        return;
+      }
+      payload.overrideConflict = true;
+      payload.conflictReason = reason;
+    }
+
+    saveBtn.disabled = true;
+    saveBtn.textContent = adminT('adjusting');
+    cancelBtn.disabled = true;
+    dateInput.disabled = true;
+    timeInput.disabled = true;
+    staffSelect.disabled = true;
+
+    try {
+      const response = await fetch(`/api/owner/appointments/${encodeURIComponent(appointment.id)}/adjust`, {
+        method: 'PATCH',
+        credentials: 'same-origin',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload)
+      });
+
+      const result = await response.json().catch(() => ({}));
+
+      if (response.ok && result.success) {
+        showAdminToast(adminT('appointmentAdjustedSuccess'), 'success');
+        activeDrawerMode = 'view';
+        await loadAppointments();
+        renderAppointmentDrawerById(appointment.id);
+        return;
+      }
+
+      if (response.status === 409 && result.code === 'APPOINTMENT_COLLISION') {
+        const role = getAdminActorRole();
+        conflictBox.hidden = false;
+        if (role === 'front_desk' || result.canOverride === false) {
+          conflictBox.className = 'adjust-conflict-box error-box';
+          conflictMessage.className = 'adjust-alert danger';
+          conflictMessage.textContent = adminT('conflictNoticeFrontDesk');
+          overrideFields.hidden = true;
+        } else {
+          conflictBox.className = 'adjust-conflict-box override-box';
+          conflictMessage.className = 'adjust-alert warning';
+          conflictMessage.textContent = adminT('conflictNoticeOwner');
+          overrideFields.hidden = false;
+          overrideCheckbox.checked = false;
+          conflictReasonGroup.hidden = true;
+          conflictReasonTextarea.value = '';
+        }
+        updateFormValidation();
+        return;
+      }
+
+      if (response.status === 422 && result.code === 'STAFF_SKILL_MISMATCH') {
+        skillAlert.textContent = adminT('staffSkillMismatch');
+        skillAlert.hidden = false;
+        updateFormValidation();
+        return;
+      }
+
+      showAdminToast(adminResultMessage(result, 'operationFailed'), 'error');
+    } catch (_) {
+      showAdminToast(adminT('operationFailed'), 'error');
+    } finally {
+      saveBtn.textContent = adminT('saveAdjustment');
+      cancelBtn.disabled = false;
+      dateInput.disabled = false;
+      timeInput.disabled = false;
+      staffSelect.disabled = false;
+      updateFormValidation();
+    }
+  });
+}
+
 function renderAppointmentDrawer(appointment) {
   if (!appointment) return;
   const safeId = String(appointment.id || '').trim();
@@ -3124,6 +3673,11 @@ function renderAppointmentDrawer(appointment) {
     ? globalThis.ggI18n.normalizeAppointmentStatus(rawStatus)
     : (['pending', 'confirmed', 'arrived', 'in_service', 'completed', 'no_show', 'cancelled'].includes(rawStatus) ? rawStatus : 'unknown');
   const statusClass = escapeHtml(canonicalStatus);
+
+  if (activeDrawerMode === 'adjust' && ['pending', 'confirmed'].includes(canonicalStatus)) {
+    renderAppointmentAdjustDrawer(appointment, canonicalStatus);
+    return;
+  }
 
   const customerName = (appointment.customer_name || appointment.recipient_name_snapshot || '').trim() || '-';
   const customerPhone = (appointment.customer_phone || appointment.recipient_phone_snapshot || '').trim();
@@ -3318,6 +3872,16 @@ function renderAppointmentDrawer(appointment) {
     const scheduleSection = appendDrawerSection(drawerBody, adminT('appointmentTime'));
     appendDrawerField(scheduleSection, adminT('date'), dateFormatted, 'notranslate');
     appendDrawerField(scheduleSection, adminT('time'), timeFormatted, 'notranslate');
+    if (['pending', 'confirmed'].includes(canonicalStatus)) {
+      const adjustBtn = drawerElement('button', 'drawer-adjust-btn', adminT('adjustAppointment'));
+      adjustBtn.type = 'button';
+      adjustBtn.id = 'drawerAdjustBtn';
+      adjustBtn.addEventListener('click', () => {
+        activeDrawerMode = 'adjust';
+        renderAppointmentDrawer(appointment);
+      });
+      scheduleSection.appendChild(adjustBtn);
+    }
     const serviceSection = appendDrawerSection(drawerBody, adminT('servicesAndStaff'));
     for (const item of Array.isArray(appointment.items) && appointment.items.length ? appointment.items : [appointment]) {
       const card = drawerElement('div', 'drawer-item-card');
@@ -3658,6 +4222,12 @@ globalScope.formatTelUri = formatTelUri;
 globalScope.formatWhatsAppUri = formatWhatsAppUri;
 globalScope.setupAppointmentDrawer = setupAppointmentDrawer;
 globalScope.applyAppointmentStatusChangeInPlace = applyAppointmentStatusChangeInPlace;
+globalScope.renderAppointmentAdjustDrawer = renderAppointmentAdjustDrawer;
+globalScope.computeAdjustEndTime = computeAdjustEndTime;
+globalScope.getAdminActorRole = getAdminActorRole;
+globalScope.setAdminProfile = function(profile) { currentAdminProfile = profile; };
+globalScope.getActiveDrawerMode = function() { return activeDrawerMode; };
+globalScope.setActiveDrawerMode = function(mode) { activeDrawerMode = mode; };
 
 document.addEventListener(
   'DOMContentLoaded',

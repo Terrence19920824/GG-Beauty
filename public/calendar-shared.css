@@ -1574,6 +1574,255 @@ tbody tr[data-appointment-id] {
   display: none !important;
 }
 
+/* Appointment Adjustment Form & Touch Targets */
+.drawer-adjust-btn {
+  background: #eff6ff;
+  color: #1d4ed8;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  min-height: var(--calendar-touch-min, 44px);
+  min-width: var(--calendar-touch-min, 44px);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: background 0.15s, border-color 0.15s;
+  box-sizing: border-box;
+  width: 100%;
+  margin-top: 8px;
+}
+
+.drawer-adjust-btn:hover {
+  background: #dbeafe;
+  border-color: #93c5fd;
+}
+
+.drawer-adjust-btn:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}
+
+.adjust-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.adjust-immutable-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #f3f4f6;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 0.85rem;
+  color: #4b5563;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.adjust-item-summary {
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.adjust-item-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 0.9rem;
+  color: #1f2937;
+}
+
+.adjust-item-name {
+  font-weight: 600;
+}
+
+.adjust-item-meta {
+  color: #6b7280;
+  font-size: 0.85rem;
+  text-align: right;
+}
+
+.adjust-field-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.adjust-label {
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: #374151;
+}
+
+.adjust-input,
+.adjust-select,
+.adjust-textarea {
+  width: 100%;
+  min-height: var(--calendar-touch-min, 44px);
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 0.95rem;
+  color: #111827;
+  background: #ffffff;
+  box-sizing: border-box;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.adjust-input:focus-visible,
+.adjust-select:focus-visible,
+.adjust-textarea:focus-visible {
+  outline: none;
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+}
+
+.adjust-textarea {
+  min-height: 68px;
+  resize: vertical;
+  font-family: inherit;
+  line-height: 1.4;
+}
+
+.adjust-endtime-box {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: #eff6ff;
+  border: 1px solid #dbeafe;
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 0.9rem;
+}
+
+.adjust-endtime-val {
+  font-weight: 700;
+  color: #1d4ed8;
+  font-size: 1rem;
+}
+
+.adjust-alert {
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  line-height: 1.4;
+  font-weight: 500;
+  box-sizing: border-box;
+}
+
+.adjust-alert.danger {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #b91c1c;
+  font-weight: 600;
+}
+
+.adjust-alert.warning {
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  color: #92400e;
+}
+
+.adjust-alert[hidden] {
+  display: none !important;
+}
+
+.adjust-reassignment-box {
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: 8px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.adjust-reassignment-title {
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: #92400e;
+}
+
+.adjust-checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: var(--calendar-touch-min, 44px);
+  cursor: pointer;
+  font-size: 0.9rem;
+  color: #1f2937;
+}
+
+.adjust-checkbox {
+  width: 20px;
+  height: 20px;
+  min-width: 20px;
+  min-height: 20px;
+  accent-color: #2563eb;
+  cursor: pointer;
+}
+
+.adjust-conflict-box {
+  border-radius: 8px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.adjust-conflict-box.error-box {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #b91c1c;
+  font-weight: 600;
+}
+
+.adjust-conflict-box.override-box {
+  background: #fff7ed;
+  border: 1px solid #ffedd5;
+  color: #9a3412;
+}
+
+.btn-adjust-cancel {
+  background: #f3f4f6;
+  color: #374151;
+  border: 1px solid #d1d5db;
+}
+
+.btn-adjust-cancel:hover {
+  background: #e5e7eb;
+}
+
+.btn-adjust-save {
+  background: #2563eb;
+  color: #ffffff;
+  border: 1px solid #1d4ed8;
+}
+
+.btn-adjust-save:hover:not(:disabled) {
+  background: #1d4ed8;
+}
+
+.btn-adjust-save:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background: #9ca3af;
+  border-color: #9ca3af;
+}
+
+
 /* Mobile Responsive Bottom Sheet */
 @media (max-width: 768px) {
   .appointment-drawer {
