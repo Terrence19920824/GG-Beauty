@@ -692,6 +692,7 @@
     <button id="nav-calendar" class="nav-btn active" data-i18n="calendar" onclick="ownerSelfService.showView('calendar')">日历</button>
     <button id="nav-staff" class="nav-btn" data-i18n="staff" onclick="ownerSelfService.showView('staff')">员工</button>
     <button id="nav-services" class="nav-btn" data-i18n="services" onclick="ownerSelfService.showView('services')">服务</button>
+    <button id="nav-contact" class="nav-btn" data-i18n="merchantContactSettings" onclick="ownerSelfService.showView('contact')">店铺联系方式</button>
     <button class="nav-btn" disabled data-i18n="customers" data-i18n-title="comingSoon" title="即将推出">顾客</button>
     <button class="nav-btn" disabled data-i18n="checkout" data-i18n-title="comingSoon" title="即将推出">收银</button>
     <button class="nav-btn" disabled data-i18n="more" data-i18n-title="comingSoon" title="即将推出">更多</button>
@@ -831,6 +832,17 @@
     <div class="management-grid">
       <div class="card"><div id="staffMessage" class="save-status"></div><div id="staffList" class="loading" data-i18n="loadingStaff">正在读取员工...</div></div>
       <div id="staffDetail" class="card"><div class="empty" data-i18n="chooseStaff">请选择一位员工</div></div>
+    </div>
+  </section>
+
+  <section id="contactView" class="view" hidden>
+    <div class="toolbar"><div><h2 data-i18n="merchantContactSettings">店铺联系方式</h2><div class="muted" data-i18n="merchantContactHelp">显示在顾客预约与会员页面；WhatsApp 使用国际号码。</div></div></div>
+    <div class="card panel"><div id="merchantContactMessage" class="save-status" aria-live="polite"></div>
+      <div class="form-grid">
+        <label class="field"><span data-i18n="merchantPublicPhone">公开电话</span><input id="merchantContactPhone" type="tel" placeholder="+65 6123 4567" maxlength="24"></label>
+        <label class="field"><span data-i18n="merchantWhatsAppPhone">WhatsApp 电话</span><input id="merchantWhatsAppPhone" type="tel" placeholder="+65 8123 4567" maxlength="24"></label>
+      </div>
+      <div class="form-actions"><button id="saveMerchantContactButton" class="primary-btn" type="button" data-i18n="saveMerchantContact" onclick="ownerSelfService.saveMerchantContact()">保存联系方式</button></div>
     </div>
   </section>
 

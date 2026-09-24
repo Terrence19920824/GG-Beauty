@@ -206,7 +206,7 @@
   }
 
   function showViewOnly(name) {
-    ['calendar', 'staff', 'services'].forEach(item => {
+    ['calendar', 'staff', 'services', 'contact'].forEach(item => {
       byId(`${item}View`).hidden = item !== name;
       byId(`nav-${item}`).classList.toggle('active', item === name);
     });
@@ -217,6 +217,31 @@
     if (name === 'calendar') return global.loadAppointments();
     if (name === 'services') return loadServices();
     if (name === 'staff') return loadStaff();
+    if (name === 'contact') return loadMerchantContact();
+  }
+
+  async function loadMerchantContact() {
+    const message = byId('merchantContactMessage');
+    if (message) setMessage('merchantContactMessage', '');
+    try {
+      const data = await request('/api/owner/merchant-contact');
+      byId('merchantContactPhone').value = data.contactPhone || '';
+      byId('merchantWhatsAppPhone').value = data.whatsAppPhone || '';
+      byId('saveMerchantContactButton').hidden = !canWrite();
+    } catch (error) { if (!error.sessionExpired) setMessage('merchantContactMessage', error.message, true); }
+  }
+  async function saveMerchantContact() {
+    if (!canWrite()) return;
+    const button = byId('saveMerchantContactButton'); button.disabled = true;
+    try {
+      const data = await request('/api/owner/merchant-contact', { method: 'PATCH', body: JSON.stringify({
+        contactPhone: value('merchantContactPhone').trim(), whatsAppPhone: value('merchantWhatsAppPhone').trim()
+      }) });
+      byId('merchantContactPhone').value = data.contactPhone || '';
+      byId('merchantWhatsAppPhone').value = data.whatsAppPhone || '';
+      setMessage('merchantContactMessage', t('saved'));
+    } catch (error) { if (!error.sessionExpired) setMessage('merchantContactMessage', error.message, true); }
+    finally { button.disabled = false; }
   }
 
   async function loadServices() {
@@ -618,6 +643,6 @@
     } catch (error) { if (!error.sessionExpired) setMessage('staffMessage', error.message, true); }
   }
 
-  global.ownerSelfService = { setLocale, setProfile, reset, showView, loadServices, renderCategories, openCategoryForm, closeCategoryForm, saveCategory, openServiceForm, closeServiceForm, saveService, loadStaff, openStaffForm, saveStaff, selectStaff, openStaffTab, markStaffTabDirty, toggleCapability, saveCapability, toggleLocation, saveLocations, changeScheduleLocation, saveSchedule, updateOverrideFields, saveOverride, deactivateOverride, _state: state, _request: request };
+  global.ownerSelfService = { setLocale, setProfile, reset, showView, loadServices, renderCategories, openCategoryForm, closeCategoryForm, saveCategory, openServiceForm, closeServiceForm, saveService, loadStaff, openStaffForm, saveStaff, selectStaff, openStaffTab, markStaffTabDirty, toggleCapability, saveCapability, toggleLocation, saveLocations, changeScheduleLocation, saveSchedule, updateOverrideFields, saveOverride, deactivateOverride, loadMerchantContact, saveMerchantContact, _state: state, _request: request };
   setLocale(initialLocale());
 })(globalThis);

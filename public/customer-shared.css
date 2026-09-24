@@ -56,6 +56,10 @@
   --color-info: #0288d1;
 }
 
+.merchant-contact-bar { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin:0 0 16px; padding:10px 12px; border:1px solid var(--theme-border,#ddd); border-radius:12px; background:var(--theme-surface,#fff); box-shadow:var(--shadow-xs); }
+.merchant-contact-name { width:100%; font-size:13px; color:var(--theme-text,#222); }
+.merchant-contact-action { display:inline-flex; align-items:center; min-height:44px; padding:10px 12px; border-radius:999px; background:var(--theme-surface-subtle,#eee); color:var(--theme-text,#222); font-size:13px; text-decoration:none; }
+
 /* Accessibility & Focus Rings */
 :focus-visible {
   outline: 2px solid var(--theme-primary, #111111);

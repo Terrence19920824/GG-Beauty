@@ -3,6 +3,11 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#111111">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="GG-Beauty">
+  <link id="pwaManifest" rel="manifest">
 
   <title data-i18n="customerPageTitle">GG-Beauty 在线预约</title>
   <link rel="stylesheet" href="/customer-shared.css">
@@ -332,13 +337,14 @@
 
 <div class="container">
 
-  <div class="header">
+    <div class="header">
     <div id="shopBrandBadge" class="brand-badge notranslate" translate="no" aria-hidden="true"><span id="shopBrandLogoPlaceholder">GG</span></div>
     <h1 id="shopBrandName" translate="no" class="notranslate">GG-Beauty</h1>
     <p data-i18n="onlineAppointment">在线预约</p>
     <div class="language-switch" aria-label="Language"><button id="languageZh" type="button" aria-label="中文">中</button><span class="language-divider">｜</span><button id="languageEn" type="button" aria-label="English">E</button></div>
     <div><a id="memberEntry" class="member-entry" href="/member.html" data-i18n="membershipEntry">VIP / 我的会员</a></div>
   </div>
+  <div id="merchantContactBar"></div>
 
   <div id="cartModuleRecovery" class="message error" hidden>
     <div id="cartRecoveryMessage"></div>
@@ -477,6 +483,7 @@
 <script src="/customer-category-flow.js"></script>
 <script src="/customer-multi-service-cart.js?v=2.0.0"></script>
 <script src="/customer-booking-calendar.js"></script>
+<script src="/merchant-contact-bar.js"></script>
 <script>
 /* Legacy single-service behavior is preserved server-side. This UI sends the
    canonical multi-item request even when the cart contains one item. */
@@ -1513,6 +1520,8 @@ async function initializeCustomerPage() {
     if (typeof memberEntry !== 'undefined' && memberEntry) {
       memberEntry.href = `/member.html?shop=${encodeURIComponent(customerShopSlug)}`;
     }
+    globalThis.ggMerchantContactBar?.mount({ shopSlug: customerShopSlug, host: document.getElementById('merchantContactBar') }).catch(() => {});
+    document.getElementById('pwaManifest').href = `/manifest.webmanifest?shop=${encodeURIComponent(customerShopSlug)}`;
 
     await setLocale(currentLocale);
     if (gen !== customerLoadGeneration) return;
@@ -1969,6 +1978,7 @@ document.getElementById('languageZh').addEventListener('click', () => switchLang
 document.getElementById('languageEn').addEventListener('click', () => switchLanguage('en'));
 (async () => {
   await initializeCustomerPage();
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
 })();
 
 </script>

@@ -60,8 +60,11 @@ const { createCheckoutPosRead } = require('./lib/checkout-pos-read');
 const {
   projectOwnerAppointmentCheckout
 } = require('./lib/owner-appointment-checkout-projection');
+const { validateSettings: validateMerchantContactSettings, publicPresentation: merchantContactPresentation } = require('./lib/merchant-contact');
 
 const app = express();
+const OWNER_MERCHANT_CONTACT_READ_ROLES = Object.freeze(['owner', 'manager', 'admin']);
+const OWNER_MERCHANT_CONTACT_WRITE_ROLES = Object.freeze(['owner', 'manager', 'admin']);
 
 const ADMIN_PASSWORD =
   process.env.ADMIN_PASSWORD;
@@ -85,6 +88,19 @@ app.locals.customerOtpProvider = null;
 // ==================================================
 
 app.use(express.json());
+app.get('/manifest.webmanifest', (req, res) => {
+  const shopSlug = typeof req.query.shop === 'string' ? req.query.shop.trim().toLowerCase() : '';
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(shopSlug) || shopSlug.length > 100) {
+    return res.status(400).json({ success: false, code: 'INVALID_SHOP_CONTEXT' });
+  }
+  res.set({ 'Cache-Control': 'no-store, no-cache, must-revalidate, private', Pragma: 'no-cache', Expires: '0', 'Content-Type': 'application/manifest+json' });
+  return res.json({ name: 'GG-Beauty Booking', short_name: 'GG-Beauty', start_url: `/book/${encodeURIComponent(shopSlug)}?pwa=1`, scope: '/', display: 'standalone', background_color: '#f6f6f6', theme_color: '#111111', icons: [{ src: '/icons/gg-default.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any maskable' }] });
+});
+app.get('/book/:shopSlug', (req, res) => {
+  const shopSlug = typeof req.params.shopSlug === 'string' ? req.params.shopSlug.trim().toLowerCase() : '';
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(shopSlug) || shopSlug.length > 100) return res.status(404).end();
+  return res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
 app.use(express.static('public'));
 
 const customerMemberIdentity = createCustomerMemberIdentity({
@@ -766,6 +782,69 @@ const setPublicBookingNoCacheHeaders = (res, identifier = null) => {
     res.set('X-Catalog-Revision', String(getShopCatalogRevision(identifier)));
   }
 };
+
+// Public contact data is deliberately a narrow allow-list.  It is shop-scoped
+// by the resolved active slug and never exposes owner-only settings.
+app.get('/api/customer/public-config', async (req, res) => {
+  const shopSlug = typeof req.query.shopSlug === 'string' ? req.query.shopSlug.trim().toLowerCase() : '';
+  setPublicBookingNoCacheHeaders(res, shopSlug);
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(shopSlug) || shopSlug.length > 100) {
+    return res.status(400).json({ success: false, code: 'INVALID_SHOP_CONTEXT' });
+  }
+  try {
+    const result = await app.locals.bookingPool.query(
+      `SELECT shop.name AS shop_name, settings.public_contact_phone, settings.public_whatsapp_phone
+       FROM shops AS shop
+       LEFT JOIN shop_customer_settings AS settings ON settings.shop_id = shop.id
+       WHERE shop.slug = $1 AND shop.status = 'active' LIMIT 1`, [shopSlug]
+    );
+    if (result.rows.length !== 1) return res.status(404).json({ success: false, code: 'SHOP_NOT_FOUND' });
+    return res.json({ success: true, data: merchantContactPresentation(result.rows[0]) });
+  } catch (error) {
+    console.error('Public merchant contact read error:', safeStaffAuthErrorCode(error));
+    return res.status(500).json({ success: false, code: 'MERCHANT_CONTACT_UNAVAILABLE' });
+  }
+});
+
+app.get('/api/owner/merchant-contact', requireOwnerAuth, requireOwnerRole(OWNER_MERCHANT_CONTACT_READ_ROLES), async (req, res) => {
+  setPublicBookingNoCacheHeaders(res);
+  try {
+    const result = await app.locals.ownerAuthPool.query(
+      `SELECT public_contact_phone, public_whatsapp_phone
+       FROM shop_customer_settings WHERE shop_id = $1 LIMIT 1`, [req.ownerAuth.shopId]
+    );
+    const row = result.rows[0] || {};
+    return res.json({ success: true, data: {
+      contactPhone: row.public_contact_phone || '', whatsAppPhone: row.public_whatsapp_phone || ''
+    }});
+  } catch (error) {
+    console.error('Owner merchant contact read error:', safeStaffAuthErrorCode(error));
+    return res.status(500).json({ success: false, code: 'MERCHANT_CONTACT_UNAVAILABLE' });
+  }
+});
+
+app.patch('/api/owner/merchant-contact', requireOwnerAuth, requireOwnerRole(OWNER_MERCHANT_CONTACT_WRITE_ROLES), async (req, res) => {
+  setPublicBookingNoCacheHeaders(res);
+  const validation = validateMerchantContactSettings(req.body);
+  if (validation.error) return res.status(400).json({ success: false, code: validation.error });
+  const fields = Object.entries(validation.values);
+  const assignments = fields.map(([column], index) => `${column} = $${index + 2}`).join(', ');
+  try {
+    const result = await app.locals.ownerAuthPool.query(
+      `INSERT INTO shop_customer_settings (shop_id) VALUES ($1)
+       ON CONFLICT (shop_id) DO UPDATE SET ${assignments}
+       RETURNING public_contact_phone, public_whatsapp_phone`,
+      [req.ownerAuth.shopId, ...fields.map(([, value]) => value)]
+    );
+    const row = result.rows[0];
+    return res.json({ success: true, data: {
+      contactPhone: row.public_contact_phone || '', whatsAppPhone: row.public_whatsapp_phone || ''
+    }});
+  } catch (error) {
+    console.error('Owner merchant contact write error:', safeStaffAuthErrorCode(error));
+    return res.status(500).json({ success: false, code: 'MERCHANT_CONTACT_UPDATE_FAILED' });
+  }
+});
 
 const ownerStaffManagement = createOwnerStaffManagement({
   pool: {
@@ -5009,6 +5088,7 @@ if (require.main === module) {
 
 module.exports = {
   app,
+  OWNER_MERCHANT_CONTACT_WRITE_ROLES,
   filterBookableCandidateSlots,
   filterAnyStaffCandidateSlots,
   loadEligibleBookingStaff,
