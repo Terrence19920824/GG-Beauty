@@ -61,6 +61,11 @@ const {
   projectOwnerAppointmentCheckout
 } = require('./lib/owner-appointment-checkout-projection');
 const { validateSettings: validateMerchantContactSettings, publicPresentation: merchantContactPresentation } = require('./lib/merchant-contact');
+const {
+  checkRateLimit,
+  normalizeCustomerQueryPhone,
+  queryCustomerBookings
+} = require('./lib/customer-booking-query');
 
 const app = express();
 const OWNER_MERCHANT_CONTACT_READ_ROLES = Object.freeze(['owner', 'manager', 'admin']);
@@ -803,6 +808,75 @@ app.get('/api/customer/public-config', async (req, res) => {
   } catch (error) {
     console.error('Public merchant contact read error:', safeStaffAuthErrorCode(error));
     return res.status(500).json({ success: false, code: 'MERCHANT_CONTACT_UNAVAILABLE' });
+  }
+});
+
+app.post('/api/customer/my-bookings', async (req, res) => {
+  setPublicBookingNoCacheHeaders(res);
+
+  if (req.query.phone || req.query.phoneNumber || req.query.mobile) {
+    return res.status(400).json({ success: false, code: 'INVALID_QUERY_TRANSPORT', message: 'Phone must not be sent via query parameters' });
+  }
+
+  const { shopSlug, countryCode, phone } = req.body || {};
+  const normalizedSlug = typeof shopSlug === 'string' ? shopSlug.trim().toLowerCase() : '';
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(normalizedSlug) || normalizedSlug.length > 100) {
+    return res.status(400).json({ success: false, code: 'INVALID_SHOP_CONTEXT' });
+  }
+
+  const clientIp = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket.remoteAddress || 'unknown';
+  const rawPhone = typeof phone === 'string' ? phone.trim() : '';
+  const phoneNormalized = normalizeCustomerQueryPhone(countryCode, rawPhone);
+
+  const ipLimit = checkRateLimit(`ip:${clientIp}`, { maxRequests: 20, windowMs: 60000 });
+  if (!ipLimit.allowed) {
+    res.setHeader('Retry-After', String(ipLimit.retryAfterSeconds));
+    return res.status(429).json({ success: false, code: 'TOO_MANY_REQUESTS', message: 'Too many requests. Please try again later.' });
+  }
+
+  if (phoneNormalized) {
+    const phoneLimit = checkRateLimit(`phone:${normalizedSlug}:${phoneNormalized}`, { maxRequests: 10, windowMs: 60000 });
+    if (!phoneLimit.allowed) {
+      res.setHeader('Retry-After', String(phoneLimit.retryAfterSeconds));
+      return res.status(429).json({ success: false, code: 'TOO_MANY_REQUESTS', message: 'Too many requests. Please try again later.' });
+    }
+  }
+
+  try {
+    const shopResult = await app.locals.bookingPool.query(
+      `SELECT shop.id, shop.name AS shop_name, settings.public_contact_phone, settings.public_whatsapp_phone
+       FROM shops AS shop
+       LEFT JOIN shop_customer_settings AS settings ON settings.shop_id = shop.id
+       WHERE shop.slug = $1 AND shop.status = 'active' LIMIT 1`, [normalizedSlug]
+    );
+
+    if (shopResult.rows.length !== 1) {
+      return res.status(404).json({ success: false, code: 'SHOP_NOT_FOUND' });
+    }
+
+    const shopRow = shopResult.rows[0];
+    const shopContact = merchantContactPresentation(shopRow);
+
+    if (!phoneNormalized && !rawPhone) {
+      return res.json({ success: true, data: { shop: shopContact, appointments: [] } });
+    }
+
+    const appointments = await queryCustomerBookings(app.locals.bookingPool, {
+      shopId: shopRow.id,
+      phoneNormalized,
+      rawPhone
+    });
+
+    return res.json({
+      success: true,
+      data: {
+        shop: shopContact,
+        appointments
+      }
+    });
+  } catch (error) {
+    console.error('Customer my-bookings query error:', safeStaffAuthErrorCode(error));
+    return res.status(500).json({ success: false, code: 'BOOKINGS_QUERY_UNAVAILABLE' });
   }
 });
 

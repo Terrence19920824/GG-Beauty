@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#111111">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="GG-Beauty">
+  <link id="pwaManifest" rel="manifest">
+  <title data-i18n="myBookings">我的预约</title>
+  <link rel="stylesheet" href="/customer-shared.css">
+  <style>
+    * { box-sizing: border-box; }
+    :root {
+      --theme-primary: #111;
+      --theme-primary-hover: #2b2b2b;
+      --theme-primary-contrast: #fff;
+      --theme-bg: #f5f5f5;
+      --theme-surface: #fff;
+      --theme-surface-subtle: #eee;
+      --theme-text: #161616;
+      --theme-text-muted: #666;
+      --theme-border: #ddd;
+    }
+    body {
+      margin: 0;
+      background: var(--theme-bg, #f5f5f5);
+      color: var(--theme-text, #161616);
+      font-family: Arial, "PingFang SC", sans-serif;
+    }
+    .shell {
+      max-width: 520px;
+      margin: auto;
+      padding: 18px 18px 48px;
+    }
+    .top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin: 0 0 20px;
+      transform: translateY(-10px);
+    }
+    .back {
+      color: #222;
+      text-decoration: none;
+      font-size: 14px;
+      font-weight: 500;
+    }
+    .language-switch {
+      display: inline-flex;
+      align-items: center;
+      padding: 3px 5px;
+      border: 1px solid rgba(80,80,80,.16);
+      border-radius: 999px;
+      background: rgba(255,255,255,.66);
+      backdrop-filter: blur(9px);
+      -webkit-backdrop-filter: blur(9px);
+      color: #aaa;
+    }
+    .language-switch button {
+      border: 0;
+      border-radius: 999px;
+      background: transparent;
+      color: #999;
+      padding: 4px 7px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .language-switch button:disabled {
+      opacity: 1;
+      color: #222;
+      background: rgba(255,255,255,.72);
+      box-shadow: 0 1px 5px rgba(0,0,0,.07);
+    }
+    .language-divider {
+      font-size: 11px;
+      color: #bbb;
+    }
+    .panel {
+      background: var(--theme-surface, #fff);
+      border-radius: 18px;
+      padding: 20px;
+      box-shadow: 0 5px 22px rgba(0,0,0,.06);
+      margin-bottom: 14px;
+    }
+    h1 {
+      font-size: 24px;
+      margin: 0 0 7px;
+    }
+    p {
+      color: var(--theme-text-muted, #666);
+      line-height: 1.5;
+      margin: 0 0 16px;
+      font-size: 14px;
+    }
+    label {
+      display: block;
+      font-weight: 600;
+      margin: 14px 0 6px;
+      font-size: 14px;
+    }
+    input, select {
+      width: 100%;
+      padding: 13px;
+      border: 1px solid var(--theme-border, #ddd);
+      border-radius: 11px;
+      background: var(--theme-surface, #fff);
+      color: var(--theme-text, #161616);
+      font-size: 16px;
+    }
+    .phone-row {
+      display: grid;
+      grid-template-columns: 145px 1fr;
+      gap: 8px;
+    }
+    button.primary-btn {
+      width: 100%;
+      border: 0;
+      border-radius: 12px;
+      padding: 14px;
+      margin-top: 16px;
+      background: var(--theme-primary, #111);
+      color: var(--theme-primary-contrast, #fff);
+      font-size: 16px;
+      font-weight: 650;
+      cursor: pointer;
+      transition: opacity 0.15s ease;
+    }
+    button.primary-btn:disabled {
+      opacity: .5;
+      cursor: not-allowed;
+    }
+    .message {
+      min-height: 20px;
+      margin-top: 14px;
+      text-align: center;
+      font-size: 14px;
+    }
+    .message.error {
+      color: #b42318;
+    }
+    .message.info {
+      color: var(--theme-text-muted, #666);
+    }
+    .bookings-list {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      margin-top: 18px;
+    }
+    .booking-card {
+      background: var(--theme-surface, #fff);
+      border: 1px solid var(--theme-border, #ddd);
+      border-radius: 14px;
+      padding: 18px;
+      box-shadow: 0 2px 8px rgba(0,0,0,.04);
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .booking-card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--theme-surface-subtle, #eee);
+      padding-bottom: 10px;
+    }
+    .booking-no {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--theme-text-muted, #666);
+    }
+    .status-badge {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .status-pending { background: #fef3c7; color: #92400e; }
+    .status-confirmed { background: #dcfce7; color: #166534; }
+    .status-arrived { background: #e0e7ff; color: #3730a3; }
+    .status-in_service { background: #e0f2fe; color: #075985; }
+    .status-completed { background: #f3f4f6; color: #374151; }
+    .status-cancelled { background: #fee2e2; color: #991b1b; }
+    .status-no_show { background: #fee2e2; color: #991b1b; }
+    .booking-time {
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--theme-text, #111);
+    }
+    .booking-services {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .booking-service-item {
+      display: flex;
+      justify-content: space-between;
+      font-size: 14px;
+      line-height: 1.4;
+    }
+    .service-staff {
+      color: var(--theme-text-muted, #666);
+      font-size: 13px;
+    }
+    .booking-contact-actions {
+      display: flex;
+      gap: 10px;
+      margin-top: 6px;
+      padding-top: 10px;
+      border-top: 1px solid var(--theme-surface-subtle, #eee);
+    }
+    .action-link {
+      flex: 1;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      padding: 9px 12px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      text-decoration: none;
+      background: var(--theme-surface-subtle, #eee);
+      color: var(--theme-text, #222);
+      border: 1px solid var(--theme-border, #ddd);
+      transition: background 0.15s ease;
+    }
+    .action-link.whatsapp {
+      background: #25d366;
+      color: #fff;
+      border-color: #25d366;
+    }
+    .empty-state {
+      text-align: center;
+      padding: 32px 16px;
+      color: var(--theme-text-muted, #666);
+      font-size: 15px;
+    }
+    [hidden] { display: none !important; }
+    @media (max-width: 380px) {
+      .phone-row { grid-template-columns: 125px 1fr; }
+    }
+  </style>
+</head>
+<body>
+<main class="shell">
+  <div class="top">
+    <a id="backLink" class="back" href="/" data-i18n="backToBooking">← 返回预约</a>
+    <div class="language-switch" aria-label="Language">
+      <button id="languageZh" type="button" aria-label="中文">中</button>
+      <span class="language-divider">｜</span>
+      <button id="languageEn" type="button" aria-label="English">E</button>
+    </div>
+  </div>
+
+  <div id="merchantContactBar"></div>
+
+  <section class="panel">
+    <div id="shopBrandHeading" class="notranslate" translate="no" style="font-size: 13px; font-weight: 700; color: var(--theme-text-muted, #666); margin-bottom: 6px;"></div>
+    <h1 data-i18n="myBookings">我的预约</h1>
+    <p data-i18n="enterPhoneToView">输入预约手机号查看预约</p>
+
+    <label data-i18n="countryRegion">国家 / 地区</label>
+    <div class="phone-row">
+      <select id="countryCode" aria-label="Country or region"></select>
+      <input id="queryPhone" type="tel" data-i18n-placeholder="enterPhone" placeholder="请输入手机号码" autocomplete="tel">
+    </div>
+
+    <button id="queryBtn" class="primary-btn" type="button" data-i18n="searchBookings">查询预约</button>
+
+    <div id="queryMessage" class="message" aria-live="polite"></div>
+  </section>
+
+  <section id="bookingsSection" class="bookings-list" hidden></section>
+</main>
+
+<script src="/shared-i18n.js"></script>
+<script src="/customer-shop-context.js"></script>
+<script src="/customer-theme.js"></script>
+<script src="/merchant-contact-bar.js"></script>
+<script src="/customer-my-bookings.js"></script>
+<script>
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/sw.js').catch(() => {});
+  }
+</script>
+</body>
+</html>

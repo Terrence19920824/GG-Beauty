@@ -259,6 +259,15 @@
     .language-switch button:disabled { opacity:1;color:#222;background:rgba(255,255,255,.72);box-shadow:0 1px 5px rgba(0,0,0,.07); }
     .language-divider{font-size:11px;color:#bbb}
     .member-entry { display: inline-block; margin-top: 12px; padding: 9px 14px; border-radius: 999px; background: var(--theme-primary, #111); color: var(--theme-primary-contrast, #fff); text-decoration: none; font-size: 13px; font-weight: 700; }
+    .my-bookings-entry { display: inline-block; margin-top: 12px; margin-left: 8px; padding: 8px 13px; border-radius: 999px; background: var(--theme-surface-subtle, #eee); color: var(--theme-text, #222); text-decoration: none; font-size: 13px; font-weight: 700; border: 1px solid var(--theme-border, #ddd); }
+    .success-staff-info { margin-top: 6px; font-size: 13px; color: #166534; font-weight: 500; }
+    .success-contact-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+    .success-action-link { display: inline-flex; align-items: center; justify-content: center; padding: 7px 12px; border-radius: 8px; text-decoration: none; font-size: 13px; font-weight: 600; background: #fff; color: #166534; border: 1px solid #bbf7d0; }
+    .success-action-link.whatsapp { background: #25d366; color: #fff; border-color: #25d366; }
+    .success-actions-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 14px; }
+    .success-btn { display: inline-flex; align-items: center; justify-content: center; padding: 12px 14px; border-radius: 10px; font-size: 14px; font-weight: 700; text-decoration: none; cursor: pointer; border: 0; box-sizing: border-box; text-align: center; }
+    .success-btn.primary { background: var(--theme-primary, #111); color: var(--theme-primary-contrast, #fff); }
+    .success-btn.secondary { background: var(--theme-surface-subtle, #eee); color: var(--theme-text, #222); border: 1px solid var(--theme-border, #ddd); }
 
     .staff-item-card {
       border: 1px solid var(--theme-border, #ddd);
@@ -329,7 +338,7 @@
     <h1 id="shopBrandName" translate="no" class="notranslate">GG-Beauty</h1>
     <p data-i18n="onlineAppointment">在线预约</p>
     <div class="language-switch" aria-label="Language"><button id="languageZh" type="button" aria-label="中文">中</button><span class="language-divider">｜</span><button id="languageEn" type="button" aria-label="English">E</button></div>
-    <div><a id="memberEntry" class="member-entry" href="/member.html" data-i18n="membershipEntry">VIP / 我的会员</a></div>
+    <div><a id="memberEntry" class="member-entry" href="/member.html" data-i18n="membershipEntry">VIP / 我的会员</a><a id="myBookingsEntry" class="my-bookings-entry" href="/my-bookings.html" data-i18n="myBookings">我的预约</a></div>
   </div>
   <div id="merchantContactBar"></div>
 
@@ -572,6 +581,7 @@ let selectedCategoryId = '';
 let cart = cartApi.create();
 let bookingFor = 'myself';
 let bookingSucceeded = false;
+let cachedMerchantContact = null;
 let calendarMonth = '';
 let calendarAvailability = new Map();
 let servicesRequestId = 0;
@@ -1525,6 +1535,13 @@ async function initializeCustomerPage() {
     if (typeof memberEntry !== 'undefined' && memberEntry) {
       memberEntry.href = `/member.html?shop=${encodeURIComponent(customerShopSlug)}`;
     }
+    const myBookingsEntry = typeof document !== 'undefined' && typeof document.getElementById === 'function' ? document.getElementById('myBookingsEntry') : null;
+    if (myBookingsEntry) {
+      myBookingsEntry.href = `/my-bookings.html?shop=${encodeURIComponent(customerShopSlug)}`;
+    }
+    fetchJsonWithTimeout(`/api/customer/public-config?shopSlug=${encodeURIComponent(customerShopSlug)}`, { signal })
+      .then(cfg => { if (cfg && cfg.success && cfg.data) cachedMerchantContact = cfg.data; })
+      .catch(() => {});
     globalThis.ggMerchantContactBar?.mount({ shopSlug: customerShopSlug, host: document.getElementById('merchantContactBar') }).catch(() => {});
     document.getElementById('pwaManifest').href = `/manifest.webmanifest?shop=${encodeURIComponent(customerShopSlug)}`;
 
@@ -1959,6 +1976,72 @@ document
           .filter(Boolean);
         servicesDiv.textContent = serviceNames.join(' · ');
         messageBox.appendChild(servicesDiv);
+
+        const staffDiv = document.createElement('div');
+        staffDiv.className = 'success-staff-info';
+        const staffLines = cart.map(item => {
+          const s = serviceById(item.serviceId);
+          const staffObj = staffByItem.get(item.clientItemKey);
+          const staffName = staffObj?.staffId ? staffObj.name : customerT('unassignedStaff');
+          return `${s?.name || ''}: 👤 ${staffName}`;
+        }).filter(Boolean);
+        staffDiv.textContent = staffLines.join(' | ');
+        messageBox.appendChild(staffDiv);
+
+        const contactRow = document.createElement('div');
+        contactRow.className = 'success-contact-row';
+        if (cachedMerchantContact?.contactPhone) {
+          const callA = document.createElement('a');
+          callA.className = 'success-action-link';
+          callA.href = `tel:${cachedMerchantContact.contactPhone}`;
+          callA.textContent = `📞 ${cachedMerchantContact.contactPhone}`;
+          contactRow.appendChild(callA);
+        }
+        if (cachedMerchantContact?.whatsAppUrl) {
+          const waA = document.createElement('a');
+          waA.className = 'success-action-link whatsapp';
+          waA.href = cachedMerchantContact.whatsAppUrl;
+          waA.target = '_blank';
+          waA.rel = 'noopener noreferrer';
+          waA.textContent = `💬 WhatsApp`;
+          contactRow.appendChild(waA);
+        }
+        if (contactRow.children.length > 0) {
+          messageBox.appendChild(contactRow);
+        }
+
+        const actionsRow = document.createElement('div');
+        actionsRow.className = 'success-actions-row';
+
+        const myBookingsBtn = document.createElement('a');
+        myBookingsBtn.className = 'success-btn primary';
+        myBookingsBtn.id = 'successMyBookingsBtn';
+        const bookerPhoneVal = typeof phone === 'string' ? phone.trim() : '';
+        myBookingsBtn.href = `/my-bookings.html?shop=${encodeURIComponent(customerShopSlug)}${bookerPhoneVal ? `&phone=${encodeURIComponent(bookerPhoneVal)}` : ''}`;
+        myBookingsBtn.textContent = customerT('viewMyBookings');
+        actionsRow.appendChild(myBookingsBtn);
+
+        const bookAgainBtn = document.createElement('button');
+        bookAgainBtn.type = 'button';
+        bookAgainBtn.className = 'success-btn secondary';
+        bookAgainBtn.id = 'bookAgainBtn';
+        bookAgainBtn.textContent = customerT('bookAgain');
+        bookAgainBtn.addEventListener('click', () => {
+          bookingSucceeded = false;
+          messageBox.className = 'message';
+          messageBox.textContent = '';
+          cart = cartApi.create();
+          staffByItem.clear();
+          latestStaffRequests.clear();
+          clearStaleTime();
+          submitBtn.disabled = false;
+          submitBtn.textContent = customerT('bookAppointment');
+          renderCart();
+          if (bookingStep) bookingStep.scrollIntoView({ behavior: 'smooth' });
+        });
+        actionsRow.appendChild(bookAgainBtn);
+
+        messageBox.appendChild(actionsRow);
 
         submitBtn.disabled = true;
         submitBtn.textContent = customerT('bookingConfirmed');
