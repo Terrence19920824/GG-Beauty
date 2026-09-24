@@ -1465,7 +1465,7 @@ const startLiveLineTimer = () => {
   if (typeof setInterval === 'function') {
     liveLineTimerId = setInterval(() => {
       updateLiveLineAndLateBadges();
-    }, 30000);
+    }, 60000);
     if (liveLineTimerId && typeof liveLineTimerId.unref === 'function') {
       liveLineTimerId.unref();
     }
@@ -2054,7 +2054,7 @@ const renderAppointmentsView = () => {
     if (unassignedAppointments.length > 0 || columnsToRender.length === 0) {
       const unassignedCol = {
         id: '__unassigned__',
-        name: adminT('unassignedStaff'),
+        name: (adminT('unassigned') === '未分配' ? '未分配员工' : 'Unassigned Staff'),
         isUnassignedCol: true
       };
       columnsToRender.push(unassignedCol);
@@ -2160,7 +2160,7 @@ const renderAppointmentsView = () => {
           : '';
 
         const overlapBadgeHtml = layout.hasOverlap
-          ? `<span class="calendar-card-conflict">${escapeHtml(adminT('appointmentOverlap'))}</span>`
+          ? `<div class="calendar-card-conflict-wrap"><span class="calendar-card-conflict"><svg class="conflict-icon" viewBox="0 0 16 16" width="10" height="10" fill="currentColor" aria-hidden="true"><path d="M7.938 2.016a.13.13 0 0 1 .125 0l6.857 11.856c.026.045.026.1 0 .145a.13.13 0 0 1-.125.073H1.205a.13.13 0 0 1-.125-.073.13.13 0 0 1 0-.145L7.938 2.016zM8 5c-.535 0-.954.462-.9.995l.35 3.507a.552.552 0 0 0 1.1 0l.35-3.507A.905.905 0 0 0 8 5zm.002 6a1 1 0 1 0 0 2 1 1 0 0 0 0-2z"/></svg>${escapeHtml(adminT('appointmentOverlap'))}</span></div>`
           : '';
 
         const timeDisplay = `${formatSingaporeHourMinute(item.start_at)} - ${formatSingaporeHourMinute(item.end_at)}`;
@@ -2193,10 +2193,10 @@ const renderAppointmentsView = () => {
               </span>
             </div>
             ${lateBadgeHtml}
+            ${overlapBadgeHtml}
             <div class="calendar-card-customer notranslate" translate="no">${escapeHtml(item.customer_name || '-')}</div>
             <div class="calendar-card-service notranslate" translate="no">${escapeHtml(serviceSummary)}</div>
             ${assistantHtml}
-            ${overlapBadgeHtml}
             ${getCheckoutBadgeHtml(checkoutFinancialState)}
             ${(statusBtnsHtml || checkoutBtnHtml) ? `<div class="calendar-card-actions">${statusBtnsHtml}${checkoutBtnHtml}</div>` : ''}
           </div>

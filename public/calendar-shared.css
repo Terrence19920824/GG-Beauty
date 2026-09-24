@@ -840,7 +840,16 @@ a:focus-visible {
 }
 
 .owner-calendar-appointment.has-overlap {
-  border-right: 2px dashed rgba(220, 38, 38, 0.4);
+  border-right: 2px dashed rgba(220, 38, 38, 0.45);
+  box-shadow: 0 1px 4px rgba(220, 38, 38, 0.08);
+}
+
+.owner-calendar-appointment.has-overlap:hover,
+.owner-calendar-appointment.has-overlap:focus-visible,
+.owner-calendar-appointment.has-overlap:focus-within {
+  z-index: 10;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.16);
+  border-color: #ef4444;
 }
 
 /* Status variants */
@@ -938,10 +947,30 @@ a:focus-visible {
   white-space: nowrap;
 }
 
+.calendar-card-conflict-wrap {
+  display: flex;
+  align-items: center;
+  margin: 1px 0;
+  line-height: 1;
+}
+
 .calendar-card-conflict {
-  font-size: 0.68rem;
-  color: #b91c1c;
-  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  background: #fef2f2;
+  color: #dc2626;
+  border: 1px solid #fecaca;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 4px;
+  white-space: nowrap;
+  letter-spacing: 0.02em;
+}
+
+.calendar-card-conflict .conflict-icon {
+  flex-shrink: 0;
 }
 
 .calendar-card-actions {
@@ -984,7 +1013,20 @@ a:focus-visible {
    Authoritative Live Time Line & 15-Min Late Indicator
    ================================================== */
 
-.owner-calendar-live-line,
+.owner-calendar-live-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  width: 100%;
+  height: 2px;
+  background-color: #10b981;
+  z-index: 25;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  transform: translateY(-50%);
+}
+
 .staff-timeline-live-line {
   position: absolute;
   left: 0;
@@ -999,19 +1041,27 @@ a:focus-visible {
   transform: translateY(-50%);
 }
 
+.owner-calendar-live-line,
+.owner-calendar-live-line *,
+.staff-timeline-live-line,
+.staff-timeline-live-line * {
+  pointer-events: none !important;
+}
+
 .live-line-dot {
   width: 10px;
   height: 10px;
   border-radius: 50%;
-  background-color: #ef4444;
-  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.25);
+  background-color: #10b981;
+  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.25);
   margin-left: 2px;
   flex-shrink: 0;
   animation: live-line-pulse 2s infinite ease-in-out;
+  pointer-events: none;
 }
 
 .live-line-badge {
-  background-color: #ef4444;
+  background-color: #10b981;
   color: #ffffff;
   font-size: 11px;
   font-weight: 700;
@@ -1021,11 +1071,26 @@ a:focus-visible {
   flex-shrink: 0;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
   letter-spacing: 0.02em;
+  pointer-events: none;
 }
 
 .live-line-rule {
   flex: 1;
   height: 2px;
+  background-color: #10b981;
+  pointer-events: none;
+}
+
+.staff-timeline-live-line .live-line-dot {
+  background-color: #ef4444;
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.25);
+}
+
+.staff-timeline-live-line .live-line-badge {
+  background-color: #ef4444;
+}
+
+.staff-timeline-live-line .live-line-rule {
   background-color: #ef4444;
 }
 
