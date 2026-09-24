@@ -52,7 +52,7 @@ test('merchant contact migrations require E.164 values with one escaped plus and
   assert.equal(e164Phone.test('+6581234567'), true);
   assert.equal(schema.includes("'" + expectedPattern + "'"), true);
   assert.equal(schema.includes("'" + incorrectDoubleEscapedPattern + "'"), false);
-  assert.match(verification, /pg_get_constraintdef\(oid\) LIKE/);
+  assert.equal(verification.includes("position('" + expectedPattern + "' in pg_get_constraintdef(oid)) > 0"), true);
   assert.equal(verification.includes("'" + expectedPattern + "'"), true);
   assert.equal(verification.includes("'" + incorrectDoubleEscapedPattern + "'"), false);
 });
