@@ -46,6 +46,13 @@ function makeMockElement(id = '', tag = 'DIV') {
       this.children = children;
       this._textContent = '';
     },
+    _innerHTML: '',
+    get innerHTML() {
+      return this._innerHTML;
+    },
+    set innerHTML(val) {
+      this._innerHTML = String(val || '');
+    },
     hidden: false,
     disabled: false,
     maxLength: 0,
@@ -101,6 +108,15 @@ function createMockAdminContext(options = {}) {
     'todayCount',
     'adminLanguageZh',
     'adminLanguageEn',
+    'appointmentsToolbar',
+    'calendarDateNav',
+    'calendarPrevDayBtn',
+    'calendarNextDayBtn',
+    'calendarTodayBtn',
+    'calendarDatePicker',
+    'calendarCurrentDateLabel',
+    'owner-view-list',
+    'owner-view-calendar',
     'content',
     'appointmentDrawer',
     'appointmentDrawerBackdrop',
@@ -117,6 +133,11 @@ function createMockAdminContext(options = {}) {
 
   const alerts = [];
   const requests = [];
+
+  const storageMap = new Map([
+    ['gg_beauty_owner_view', 'calendar'],
+    ['gg_beauty_admin_view', 'calendar']
+  ]);
 
   const context = {
     console,
@@ -136,6 +157,12 @@ function createMockAdminContext(options = {}) {
     Map,
     Promise,
     ggI18n: i18n,
+    localStorage: {
+      getItem(k) { return storageMap.get(k) || null; },
+      setItem(k, v) { storageMap.set(k, String(v)); },
+      removeItem(k) { storageMap.delete(k); },
+      clear() { storageMap.clear(); }
+    },
     ownerSelfService: {
       _state: { locale: options.locale || 'zh-CN', role: options.role || 'owner' },
       setLocale(loc) { this._state.locale = loc; },
@@ -150,11 +177,48 @@ function createMockAdminContext(options = {}) {
         const customRes = await options.fetchHandler(url, opts);
         if (customRes) return customRes;
       }
+      if (url.includes('/api/owner/staff')) {
+        return {
+          status: 200,
+          ok: true,
+          async json() {
+            return {
+              success: true,
+              data: options.initialStaff || [
+                { id: '11111111-1111-4000-8000-000000000001', name: 'Alice Staff', is_active: true }
+              ]
+            };
+          }
+        };
+      }
+      if (url.includes('/api/owner/calendar-context')) {
+        return {
+          status: 200,
+          ok: true,
+          async json() {
+            return {
+              success: true,
+              server_now: '2026-09-23T02:00:00.000Z',
+              timezone: 'Asia/Singapore',
+              location_id: '55555555-5555-4555-8555-555555555555'
+            };
+          }
+        };
+      }
+      if (url.includes('/api/appointments-db')) {
+        return {
+          status: 200,
+          ok: true,
+          async json() {
+            return { success: true, data: options.initialAppointments || [] };
+          }
+        };
+      }
       return {
         status: 200,
         ok: true,
         async json() {
-          return { success: true, data: options.initialAppointments || [] };
+          return { success: true, data: [] };
         }
       };
     },
@@ -165,8 +229,8 @@ function createMockAdminContext(options = {}) {
       createElement(tag) {
         return makeMockElement('', tag);
       },
-      querySelector() { return null; },
-      querySelectorAll() { return []; },
+      querySelector(sel) { return null; },
+      querySelectorAll(sel) { return []; },
       addEventListener() {}
     }
   };
@@ -579,4 +643,113 @@ test('K. CSS: Responsive short card rules hide phone and actions when card is co
   assert.match(calendarSharedCss, /\.owner-calendar-appointment\.is-short\s*\.calendar-card-assistant/);
   assert.match(calendarSharedCss, /\.owner-calendar-appointment\.is-short\s*\.calendar-card-actions/);
   assert.match(calendarSharedCss, /\.owner-calendar-appointment\.is-ultra-short\s*\.calendar-card-member-badge[\s\S]*?display:\s*none/);
+  assert.match(calendarSharedCss, /\.owner-calendar-appointment\.is-compact\s*\.calendar-card-actions/);
+});
+
+// =========================================================================
+// L. Compact Card Information Priority & Responsiveness Tests
+// =========================================================================
+test('L1. 60-Minute Card Priority: typical 60-minute card displays customer name + service + phone with is-compact class', async () => {
+  const staffId = '11111111-1111-4000-8000-000000000001';
+  const sixtyMinAppt = {
+    id: '00000000-0000-4000-8000-000000000060',
+    staff_id: staffId,
+    staff_name: 'Alice Staff',
+    recipient_name_snapshot: 'Sarah Customer',
+    recipient_phone_snapshot: '+65 9123 4567',
+    service_name: 'Deep Facial',
+    start_at: '2026-09-23T02:00:00.000Z', // 10:00 SGT
+    end_at: '2026-09-23T03:00:00.000Z',   // 11:00 SGT (60 minutes -> 75px)
+    status: 'confirmed'
+  };
+
+  const { context, elements } = createMockAdminContext({
+    initialAppointments: [sixtyMinAppt],
+    initialStaff: [{ id: staffId, name: 'Alice Staff', is_active: true }]
+  });
+
+  await context.loadAppointments();
+  const contentHtml = elements.get('content').innerHTML;
+
+  // 1. Must have is-compact class (height < 105px)
+  assert.match(contentHtml, /class="[^"]*owner-calendar-appointment[^"]*is-compact[^"]*"/, '60-minute card must have is-compact class');
+  // 2. Must NOT have is-short or is-ultra-short
+  assert.doesNotMatch(contentHtml, /is-ultra-short/, '60-minute card must NOT have is-ultra-short class');
+  assert.doesNotMatch(contentHtml, /is-short\b/, '60-minute card must NOT have is-short class');
+  // 3. Must display recipient/customer name
+  assert.match(contentHtml, /class="calendar-card-customer[^"]*"[^>]*>Sarah Customer<\/span>/, 'Must display customer name');
+  // 4. Must display service summary
+  assert.match(contentHtml, /class="calendar-card-service[^"]*"[^>]*>Deep Facial<\/div>/, 'Must display service name');
+  // 5. Must display customer phone
+  assert.match(contentHtml, /class="calendar-card-phone[^"]*"[^>]*>\+65 9123 4567<\/div>/, 'Must display customer phone');
+});
+
+test('L2. Multi-Service Card: displays first service +N on the calendar card', async () => {
+  const staffId = '11111111-1111-4000-8000-000000000001';
+  const multiAppt = {
+    id: '00000000-0000-4000-8000-000000000061',
+    staff_id: staffId,
+    staff_name: 'Alice Staff',
+    recipient_name_snapshot: 'Grace Multi',
+    recipient_phone_snapshot: '+65 9888 7777',
+    start_at: '2026-09-23T02:00:00.000Z',
+    end_at: '2026-09-23T03:30:00.000Z', // 90 minutes
+    status: 'confirmed',
+    items: [
+      { sequence_no: 1, service_name_snapshot: 'Luxury Facial' },
+      { sequence_no: 2, service_name_snapshot: 'Eye Spa' },
+      { sequence_no: 3, service_name_snapshot: 'Neck Massage' }
+    ]
+  };
+
+  const { context, elements } = createMockAdminContext({
+    initialAppointments: [multiAppt],
+    initialStaff: [{ id: staffId, name: 'Alice Staff', is_active: true }]
+  });
+
+  await context.loadAppointments();
+  const contentHtml = elements.get('content').innerHTML;
+
+  assert.match(contentHtml, /Luxury Facial \+2/, 'Multi-service must display first service + remaining count');
+});
+
+test('L3. Extremely Short Card: degrades safely, preserves time/status, customer name, and service, hides phone', async () => {
+  const staffId = '11111111-1111-4000-8000-000000000001';
+  const shortAppt = {
+    id: '00000000-0000-4000-8000-000000000030',
+    staff_id: staffId,
+    staff_name: 'Alice Staff',
+    recipient_name_snapshot: 'Quick Customer',
+    recipient_phone_snapshot: '+65 9000 0000',
+    service_name: 'Eyebrow Trim',
+    start_at: '2026-09-23T02:00:00.000Z',
+    end_at: '2026-09-23T02:30:00.000Z', // 30 minutes -> clamped to 44px min-height
+    status: 'confirmed'
+  };
+
+  const { context, elements } = createMockAdminContext({
+    initialAppointments: [shortAppt],
+    initialStaff: [{ id: staffId, name: 'Alice Staff', is_active: true }]
+  });
+
+  await context.loadAppointments();
+  const contentHtml = elements.get('content').innerHTML;
+
+  // 1. Must have is-ultra-short and is-short classes
+  assert.match(contentHtml, /is-ultra-short/, 'Extremely short card must have is-ultra-short class');
+  assert.match(contentHtml, /is-short/, 'Extremely short card must have is-short class');
+  // 2. Must preserve time, customer name, and service summary
+  assert.match(contentHtml, /Quick Customer/, 'Must preserve customer name');
+  assert.match(contentHtml, /Eyebrow Trim/, 'Must preserve service name');
+  assert.match(contentHtml, /calendar-card-time/, 'Must preserve time');
+  // 3. CSS rule hides phone for .is-short
+  assert.match(calendarSharedCss, /\.owner-calendar-appointment\.is-short\s*\.calendar-card-phone[\s\S]*?display:\s*none/);
+});
+
+test('L4. Mobile & Drawer Touch Usability: clicking card opens drawer with >= 44px touch targets', () => {
+  // Verify CSS touch target rules for drawer interactive controls
+  assert.match(calendarSharedCss, /\.drawer-close-btn[\s\S]*?min-height:\s*(?:var\(--calendar-touch-min,\s*44px\)|44px)/);
+  assert.match(calendarSharedCss, /\.drawer-action-link[\s\S]*?min-height:\s*(?:var\(--calendar-touch-min,\s*44px\)|44px)/);
+  assert.match(calendarSharedCss, /\.drawer-status-btn[\s\S]*?min-height:\s*(?:var\(--calendar-touch-min,\s*44px\)|44px)/);
+  assert.match(calendarSharedCss, /\.owner-calendar-appointment[\s\S]*?min-height:\s*44px/);
 });

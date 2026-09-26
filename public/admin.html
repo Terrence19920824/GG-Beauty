@@ -2186,9 +2186,17 @@ const renderAppointmentsView = () => {
           ? `<div class="calendar-card-phone notranslate" translate="no">${escapeHtml(recipientPhone)}</div>`
           : '';
 
-        const isShortCard = heightPx < 70;
-        const isUltraShortCard = heightPx < 52;
-        const heightClass = isUltraShortCard ? ' is-ultra-short' : (isShortCard ? ' is-short' : '');
+        const isUltraShortCard = heightPx < 50;
+        const isShortCard = heightPx < 65;
+        const isCompactCard = heightPx < 105;
+        let heightClass = '';
+        if (isUltraShortCard) {
+          heightClass = ' is-ultra-short is-short is-compact';
+        } else if (isShortCard) {
+          heightClass = ' is-short is-compact';
+        } else if (isCompactCard) {
+          heightClass = ' is-compact';
+        }
 
         const assistants = item._resolvedAssistants || [];
         const assistantHtml = assistants.length > 0

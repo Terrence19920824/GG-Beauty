@@ -903,6 +903,7 @@ a:focus-visible {
   font-size: 0.72rem;
   font-weight: 750;
   color: var(--text, #1e293b);
+  flex-shrink: 0;
 }
 
 .calendar-card-time {
@@ -928,6 +929,7 @@ a:focus-visible {
   justify-content: space-between;
   gap: 4px;
   min-width: 0;
+  flex-shrink: 0;
 }
 
 .calendar-card-customer {
@@ -963,20 +965,7 @@ a:focus-visible {
   text-overflow: ellipsis;
   white-space: nowrap;
   letter-spacing: 0.01em;
-}
-
-/* Deliberate compact-height responsiveness for short cards */
-.owner-calendar-appointment.is-short .calendar-card-phone,
-.owner-calendar-appointment.is-short .calendar-card-assistant,
-.owner-calendar-appointment.is-short .calendar-card-actions {
-  display: none !important;
-}
-
-.owner-calendar-appointment.is-ultra-short .calendar-card-phone,
-.owner-calendar-appointment.is-ultra-short .calendar-card-assistant,
-.owner-calendar-appointment.is-ultra-short .calendar-card-actions,
-.owner-calendar-appointment.is-ultra-short .calendar-card-member-badge {
-  display: none !important;
+  flex-shrink: 0;
 }
 
 .calendar-card-service {
@@ -985,6 +974,62 @@ a:focus-visible {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* Deliberate compact-height responsiveness for short cards */
+.owner-calendar-appointment.is-compact {
+  padding: 4px 6px;
+  gap: 2px;
+}
+
+.owner-calendar-appointment.is-compact .calendar-card-actions,
+.owner-calendar-appointment.is-compact .calendar-card-assistant,
+.owner-calendar-appointment.is-compact .calendar-card-member-badge,
+.owner-calendar-appointment.is-compact .calendar-card-conflict-wrap,
+.owner-calendar-appointment.is-compact .owner-calendar-late-badge,
+.owner-calendar-appointment.is-compact .calendar-card-checkout-badge {
+  display: none !important;
+}
+
+.owner-calendar-appointment.is-short .calendar-card-phone,
+.owner-calendar-appointment.is-short .calendar-card-assistant,
+.owner-calendar-appointment.is-short .calendar-card-actions,
+.owner-calendar-appointment.is-short .calendar-card-member-badge,
+.owner-calendar-appointment.is-short .calendar-card-conflict-wrap,
+.owner-calendar-appointment.is-short .owner-calendar-late-badge,
+.owner-calendar-appointment.is-short .calendar-card-checkout-badge {
+  display: none !important;
+}
+
+.owner-calendar-appointment.is-ultra-short {
+  padding: 2px 6px;
+  gap: 1px;
+}
+
+.owner-calendar-appointment.is-ultra-short .calendar-card-header {
+  font-size: 0.68rem;
+  line-height: 1.15;
+}
+
+.owner-calendar-appointment.is-ultra-short .calendar-card-customer {
+  font-size: 0.74rem;
+  line-height: 1.15;
+}
+
+.owner-calendar-appointment.is-ultra-short .calendar-card-service {
+  font-size: 0.70rem;
+  line-height: 1.15;
+}
+
+.owner-calendar-appointment.is-ultra-short .calendar-card-phone,
+.owner-calendar-appointment.is-ultra-short .calendar-card-assistant,
+.owner-calendar-appointment.is-ultra-short .calendar-card-actions,
+.owner-calendar-appointment.is-ultra-short .calendar-card-member-badge,
+.owner-calendar-appointment.is-ultra-short .calendar-card-conflict-wrap,
+.owner-calendar-appointment.is-ultra-short .owner-calendar-late-badge,
+.owner-calendar-appointment.is-ultra-short .calendar-card-checkout-badge {
+  display: none !important;
 }
 
 .calendar-card-assistant {
