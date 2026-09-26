@@ -1595,6 +1595,10 @@ tbody tr[data-appointment-id] {
 .drawer-internal-notes-save { min-height: var(--calendar-touch-min, 44px); margin-top: 8px; }
 .drawer-internal-notes-status { min-height: 1.25em; margin-top: 6px; }
 
+.drawer-profile-notes-input { box-sizing: border-box; width: 100%; min-height: 96px; padding: 10px 12px; border: 1px solid #d1d5db; border-radius: 6px; font: inherit; resize: vertical; }
+.drawer-profile-notes-save { min-height: var(--calendar-touch-min, 44px); margin-top: 8px; }
+.drawer-profile-notes-status { min-height: 1.25em; margin-top: 6px; }
+
 .drawer-footer {
   padding: 16px 20px;
   border-top: 1px solid #e5e7eb;

@@ -75,6 +75,9 @@ const OWNER_MERCHANT_CONTACT_READ_ROLES = Object.freeze(['owner', 'manager', 'ad
 const OWNER_MERCHANT_CONTACT_WRITE_ROLES = Object.freeze(['owner', 'manager', 'admin']);
 const OWNER_APPOINTMENT_INTERNAL_NOTES_WRITE_ROLES = Object.freeze(['owner', 'manager']);
 const OWNER_APPOINTMENT_INTERNAL_NOTES_MAX_LENGTH = 4000;
+const OWNER_CUSTOMER_PROFILE_NOTES_WRITE_ROLES = Object.freeze(['owner', 'manager']);
+const OWNER_CUSTOMER_PROFILE_NOTES_READ_ROLES = Object.freeze(['owner', 'manager', 'admin', 'front_desk']);
+const OWNER_CUSTOMER_PROFILE_NOTES_MAX_LENGTH = 4000;
 
 const ADMIN_PASSWORD =
   process.env.ADMIN_PASSWORD;
@@ -746,6 +749,53 @@ app.patch('/api/owner/appointments/:appointmentId/internal-notes', requireOwnerA
   } catch (error) {
     console.error('Owner appointment internal notes update error:', safeStaffAuthErrorCode(error));
     return res.status(500).json({ success: false, code: 'INTERNAL_NOTES_UPDATE_FAILED', message: '内部备注保存失败' });
+  }
+});
+
+app.get('/api/owner/customers/:customerId/profile-notes', requireOwnerAuth, requireOwnerRole(OWNER_CUSTOMER_PROFILE_NOTES_READ_ROLES), async (req, res) => {
+  const customerId = typeof req.params.customerId === 'string' ? req.params.customerId.trim() : '';
+  if (!isUuid(customerId)) return res.status(400).json({ success: false, code: 'INVALID_CUSTOMER_ID', message: '顾客ID不正确' });
+  try {
+    const result = await app.locals.ownerAuthPool.query(
+      `SELECT id, profile_notes FROM customers WHERE id = $1 AND shop_id = $2`,
+      [customerId, req.ownerAuth.shopId]
+    );
+    if (result.rows.length !== 1) return res.status(404).json({ success: false, code: 'CUSTOMER_NOT_FOUND', message: '未找到该顾客' });
+    const row = result.rows[0];
+    return res.json({ success: true, data: { customerId: row.id, profileNotes: row.profile_notes || '', profile_notes: row.profile_notes || '' } });
+  } catch (error) {
+    console.error('Owner customer profile notes read error:', safeStaffAuthErrorCode(error));
+    return res.status(500).json({ success: false, code: 'PROFILE_NOTES_READ_FAILED', message: '读取顾客档案备注失败' });
+  }
+});
+
+app.patch('/api/owner/customers/:customerId/profile-notes', requireOwnerAuth, requireOwnerRole(OWNER_CUSTOMER_PROFILE_NOTES_WRITE_ROLES), async (req, res) => {
+  const customerId = typeof req.params.customerId === 'string' ? req.params.customerId.trim() : '';
+  const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : null;
+  if (!isUuid(customerId)) return res.status(400).json({ success: false, code: 'INVALID_CUSTOMER_ID', message: '顾客ID不正确' });
+  if (!body) return res.status(400).json({ success: false, code: 'INVALID_PROFILE_NOTES', message: '顾客档案备注格式不正确' });
+  const rawNotes = Object.prototype.hasOwnProperty.call(body, 'profileNotes')
+    ? body.profileNotes
+    : (Object.prototype.hasOwnProperty.call(body, 'profile_notes') ? body.profile_notes : undefined);
+  if (rawNotes === undefined || (rawNotes !== null && typeof rawNotes !== 'string')) {
+    return res.status(400).json({ success: false, code: 'INVALID_PROFILE_NOTES', message: '顾客档案备注格式不正确' });
+  }
+  const trimmed = typeof rawNotes === 'string' ? rawNotes.trim() : '';
+  if (trimmed.length > OWNER_CUSTOMER_PROFILE_NOTES_MAX_LENGTH) {
+    return res.status(400).json({ success: false, code: 'PROFILE_NOTES_TOO_LONG', message: '顾客档案备注不能超过4000个字符' });
+  }
+  const profileNotesValue = trimmed || null;
+  try {
+    const result = await app.locals.ownerAuthPool.query(
+      `UPDATE customers SET profile_notes = $1 WHERE id = $2 AND shop_id = $3 RETURNING id, profile_notes`,
+      [profileNotesValue, customerId, req.ownerAuth.shopId]
+    );
+    if (result.rows.length !== 1) return res.status(404).json({ success: false, code: 'CUSTOMER_NOT_FOUND', message: '未找到该顾客' });
+    const row = result.rows[0];
+    return res.json({ success: true, data: { customerId: row.id, profileNotes: row.profile_notes || '', profile_notes: row.profile_notes || '' } });
+  } catch (error) {
+    console.error('Owner customer profile notes update error:', safeStaffAuthErrorCode(error));
+    return res.status(500).json({ success: false, code: 'PROFILE_NOTES_UPDATE_FAILED', message: '顾客档案备注保存失败' });
   }
 });
 
@@ -2115,6 +2165,7 @@ app.get(
         c.email AS customer_email,
         c.member_code,
         c.identity_status,
+        c.profile_notes,
 
         s.name AS service_name,
         s.duration_minutes,

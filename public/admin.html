@@ -3958,6 +3958,69 @@ function renderAppointmentDrawer(appointment) {
       internalNotesSection.appendChild(saveInternalNotes);
     }
 
+    // Section: Customer Profile Notes / 顾客档案备注
+    const customerProfileNotesSection = appendDrawerSection(drawerBody, adminT('customerProfileNotes'));
+    customerProfileNotesSection.appendChild(drawerElement('div', 'drawer-field-label', adminT('customerProfileNotesHelp')));
+    const customerProfileNotesInput = drawerElement('textarea', 'drawer-profile-notes-input notranslate');
+    customerProfileNotesInput.id = 'drawerCustomerProfileNotesInput';
+    customerProfileNotesInput.maxLength = 4000;
+    customerProfileNotesInput.value = typeof appointment.profile_notes === 'string'
+      ? appointment.profile_notes
+      : (typeof appointment.customer_profile_notes === 'string' ? appointment.customer_profile_notes : '');
+    customerProfileNotesInput.setAttribute('aria-label', adminT('customerProfileNotes'));
+    customerProfileNotesSection.appendChild(customerProfileNotesInput);
+    const canWriteCustomerProfileNotes = ['owner', 'manager'].includes(String(getAdminActorRole() || '').toLowerCase());
+    customerProfileNotesInput.disabled = !canWriteCustomerProfileNotes;
+    const customerProfileNotesStatus = drawerElement('div', 'drawer-profile-notes-status', '');
+    customerProfileNotesStatus.id = 'drawerCustomerProfileNotesStatus';
+    customerProfileNotesStatus.setAttribute('role', 'status');
+    customerProfileNotesSection.appendChild(customerProfileNotesStatus);
+    if (canWriteCustomerProfileNotes) {
+      customerProfileNotesInput.addEventListener('input', () => {
+        if (customerProfileNotesStatus.textContent) {
+          customerProfileNotesStatus.textContent = '';
+        }
+      });
+      const saveCustomerProfileNotes = drawerElement('button', 'drawer-profile-notes-save primary-btn', adminT('customerProfileNotesSave'));
+      saveCustomerProfileNotes.type = 'button';
+      saveCustomerProfileNotes.addEventListener('click', async () => {
+        const targetCustomerId = appointment.recipient_customer_id || appointment.customer_id;
+        if (!targetCustomerId) {
+          customerProfileNotesStatus.textContent = adminT('customerProfileNotesSaveFailed');
+          return;
+        }
+        const originalLabel = adminT('customerProfileNotesSave');
+        saveCustomerProfileNotes.disabled = true;
+        customerProfileNotesInput.disabled = true;
+        saveCustomerProfileNotes.textContent = adminT('customerProfileNotesSaving');
+        customerProfileNotesStatus.textContent = adminT('customerProfileNotesSaving');
+        try {
+          const response = await fetch(`/api/owner/customers/${encodeURIComponent(String(targetCustomerId))}/profile-notes`, {
+            method: 'PATCH', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ profileNotes: customerProfileNotesInput.value })
+          });
+          const result = await response.json();
+          if (!response.ok || !result?.success || !result?.data) throw new Error('save failed');
+          const savedNotes = typeof result.data.profileNotes === 'string'
+            ? result.data.profileNotes
+            : (typeof result.data.profile_notes === 'string' ? result.data.profile_notes : '');
+          appointment.profile_notes = savedNotes;
+          if (appointment.customer_profile_notes !== undefined) {
+            appointment.customer_profile_notes = savedNotes;
+          }
+          customerProfileNotesInput.value = savedNotes;
+          customerProfileNotesStatus.textContent = adminT('customerProfileNotesSaved');
+        } catch (_) {
+          customerProfileNotesStatus.textContent = adminT('customerProfileNotesSaveFailed');
+        } finally {
+          saveCustomerProfileNotes.disabled = false;
+          customerProfileNotesInput.disabled = false;
+          saveCustomerProfileNotes.textContent = originalLabel;
+        }
+      });
+      customerProfileNotesSection.appendChild(saveCustomerProfileNotes);
+    }
+
     // Section F: Checkout / 收银 (read-only projection when available)
     if (appointment.checkout && appointment.checkout.exists) {
       const checkoutSection = appendDrawerSection(drawerBody, adminT('checkout'));
