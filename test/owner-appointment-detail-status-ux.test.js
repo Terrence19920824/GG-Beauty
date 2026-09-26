@@ -33,6 +33,12 @@ test('1. i18n: all appointment detail and status keys are defined in zh-CN and e
     'bookerSameAsRecipient',
     'notes',
     'noNotes',
+    'internalNotes',
+    'internalNotesVisibility',
+    'internalNotesSave',
+    'internalNotesSaving',
+    'internalNotesSaved',
+    'internalNotesSaveFailed',
     'callCustomer',
     'openWhatsApp',
     'servicesAndStaff',
@@ -92,6 +98,14 @@ test('3. HTML: admin.html includes drawer backdrop, aside dialog, and toast cont
   assert.match(adminHtml, /class="drawer-close-btn"/);
   assert.match(adminHtml, /<div\s+[^>]*id="drawerBody"/);
   assert.match(adminHtml, /id="drawerFooter"/);
+});
+
+test('3a. Internal notes UI is localized, safely rendered, and uses the protected owner endpoint', () => {
+  assert.match(adminHtml, /drawerInternalNotesInput/);
+  assert.match(adminHtml, /internal_notes/);
+  assert.match(adminHtml, /\/api\/owner\/appointments\/\$\{encodeURIComponent\(String\(appointment\.id/);
+  assert.match(adminHtml, /textContent = adminT\('internalNotesSaveFailed'\)/);
+  assert.match(calendarSharedCss, /\.drawer-internal-notes-save[\s\S]*?min-height:\s*var\(--calendar-touch-min,\s*44px\)/);
 });
 
 // Helper to create test context with DOM mocks
@@ -413,6 +427,7 @@ test('7. Security: drawer escapes HTML payloads in all fields', () => {
     booker_name_snapshot: xssPayload,
     recipient_name_snapshot: xssPayload,
     notes: xssPayload,
+    internal_notes: xssPayload,
     items: [
       {
         service_name_snapshot: xssPayload,

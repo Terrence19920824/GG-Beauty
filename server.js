@@ -73,6 +73,8 @@ const {
 const app = express();
 const OWNER_MERCHANT_CONTACT_READ_ROLES = Object.freeze(['owner', 'manager', 'admin']);
 const OWNER_MERCHANT_CONTACT_WRITE_ROLES = Object.freeze(['owner', 'manager', 'admin']);
+const OWNER_APPOINTMENT_INTERNAL_NOTES_WRITE_ROLES = Object.freeze(['owner', 'manager']);
+const OWNER_APPOINTMENT_INTERNAL_NOTES_MAX_LENGTH = 4000;
 
 const ADMIN_PASSWORD =
   process.env.ADMIN_PASSWORD;
@@ -728,6 +730,24 @@ app.patch(
   requireOwnerRole(['owner', 'manager', 'admin', 'front_desk']),
   ownerAppointmentEdit.adjustAppointment
 );
+
+app.patch('/api/owner/appointments/:appointmentId/internal-notes', requireOwnerAuth, requireOwnerRole(OWNER_APPOINTMENT_INTERNAL_NOTES_WRITE_ROLES), async (req, res) => {
+  const appointmentId = typeof req.params.appointmentId === 'string' ? req.params.appointmentId.trim() : '';
+  const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : null;
+  if (!isUuid(appointmentId)) return res.status(400).json({ success: false, code: 'INVALID_APPOINTMENT_ID', message: '预约ID不正确' });
+  if (!body || !Object.prototype.hasOwnProperty.call(body, 'internalNotes') || typeof body.internalNotes !== 'string') return res.status(400).json({ success: false, code: 'INVALID_INTERNAL_NOTES', message: '内部备注格式不正确' });
+  const internalNotes = body.internalNotes.trim();
+  if (internalNotes.length > OWNER_APPOINTMENT_INTERNAL_NOTES_MAX_LENGTH) return res.status(400).json({ success: false, code: 'INTERNAL_NOTES_TOO_LONG', message: '内部备注不能超过4000个字符' });
+  try {
+    const result = await app.locals.ownerAuthPool.query(`UPDATE appointments SET internal_notes = $1, updated_at = NOW() WHERE id = $2 AND shop_id = $3 RETURNING id, internal_notes, updated_at`, [internalNotes || null, appointmentId, req.ownerAuth.shopId]);
+    if (result.rows.length !== 1) return res.status(404).json({ success: false, code: 'APPOINTMENT_NOT_FOUND', message: '未找到该预约' });
+    const row = result.rows[0];
+    return res.json({ success: true, data: { appointmentId: row.id, internalNotes: row.internal_notes || '', updatedAt: row.updated_at } });
+  } catch (error) {
+    console.error('Owner appointment internal notes update error:', safeStaffAuthErrorCode(error));
+    return res.status(500).json({ success: false, code: 'INTERNAL_NOTES_UPDATE_FAILED', message: '内部备注保存失败' });
+  }
+});
 
 const QUALIFIED_SERVICE_STAFF_EXISTS_SQL = `
   EXISTS (
@@ -2078,6 +2098,7 @@ app.get(
         a.end_at,
         a.status,
         a.booking_source,
+        a.internal_notes,
 
         c.name AS customer_name,
         c.phone AS customer_phone,

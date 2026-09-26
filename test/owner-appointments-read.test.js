@@ -41,6 +41,7 @@ const appointmentRow = {
   service_name: 'Shop A Service',
   duration_minutes: 60,
   price: '100.00',
+  internal_notes: 'Owner-only note',
   staff_name: 'Shop A Staff',
   staff_code: 'A1'
 };
@@ -168,6 +169,7 @@ for (const role of ['owner', 'manager', 'admin', 'front_desk']) {
       const payload = await response.json();
       assert.deepEqual(payload.data, [projectedAppointmentRow]);
       assert.equal(payload.data[0].customer_phone, appointmentRow.customer_phone);
+      assert.equal(payload.data[0].internal_notes, 'Owner-only note');
     });
   });
 }

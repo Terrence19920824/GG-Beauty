@@ -3903,6 +3903,50 @@ function renderAppointmentDrawer(appointment) {
     }
     const notesSection = appendDrawerSection(drawerBody, adminT('notes'));
     notesSection.appendChild(drawerElement('div', 'drawer-notes-box notranslate', notesText.trim() || adminT('noNotes')));
+
+    const internalNotesSection = appendDrawerSection(drawerBody, adminT('internalNotes'));
+    internalNotesSection.appendChild(drawerElement('div', 'drawer-field-label', adminT('internalNotesVisibility')));
+    const internalNotesInput = drawerElement('textarea', 'drawer-internal-notes-input notranslate');
+    internalNotesInput.id = 'drawerInternalNotesInput';
+    internalNotesInput.maxLength = 4000;
+    internalNotesInput.value = typeof appointment.internal_notes === 'string' ? appointment.internal_notes : '';
+    internalNotesInput.setAttribute('aria-label', adminT('internalNotes'));
+    internalNotesSection.appendChild(internalNotesInput);
+    const canWriteInternalNotes = ['owner', 'manager'].includes(String(currentAdminProfile?.role || '').toLowerCase());
+    internalNotesInput.disabled = !canWriteInternalNotes;
+    const internalNotesStatus = drawerElement('div', 'drawer-internal-notes-status', '');
+    internalNotesStatus.id = 'drawerInternalNotesStatus';
+    internalNotesStatus.setAttribute('role', 'status');
+    internalNotesSection.appendChild(internalNotesStatus);
+    if (canWriteInternalNotes) {
+      const saveInternalNotes = drawerElement('button', 'drawer-internal-notes-save primary-btn', adminT('internalNotesSave'));
+      saveInternalNotes.type = 'button';
+      saveInternalNotes.addEventListener('click', async () => {
+        const originalLabel = adminT('internalNotesSave');
+        saveInternalNotes.disabled = true;
+        internalNotesInput.disabled = true;
+        saveInternalNotes.textContent = adminT('internalNotesSaving');
+        internalNotesStatus.textContent = adminT('internalNotesSaving');
+        try {
+          const response = await fetch(`/api/owner/appointments/${encodeURIComponent(String(appointment.id || ''))}/internal-notes`, {
+            method: 'PATCH', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ internalNotes: internalNotesInput.value })
+          });
+          const result = await response.json();
+          if (!response.ok || !result?.success || !result?.data) throw new Error('save failed');
+          appointment.internal_notes = result.data.internalNotes;
+          internalNotesInput.value = result.data.internalNotes;
+          internalNotesStatus.textContent = adminT('internalNotesSaved');
+        } catch (_) {
+          internalNotesStatus.textContent = adminT('internalNotesSaveFailed');
+        } finally {
+          saveInternalNotes.disabled = false;
+          internalNotesInput.disabled = false;
+          saveInternalNotes.textContent = originalLabel;
+        }
+      });
+      internalNotesSection.appendChild(saveInternalNotes);
+    }
   }
 
   const drawerFooter = safeGetElement('drawerFooter');
