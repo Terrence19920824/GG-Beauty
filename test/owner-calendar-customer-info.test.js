@@ -738,12 +738,15 @@ test('L3. Extremely Short Card: degrades safely, preserves time/status, customer
   // 1. Must have is-ultra-short and is-short classes
   assert.match(contentHtml, /is-ultra-short/, 'Extremely short card must have is-ultra-short class');
   assert.match(contentHtml, /is-short/, 'Extremely short card must have is-short class');
-  // 2. Must preserve time, customer name, and service summary
+  // 2. Must preserve time/status and customer name in DOM
   assert.match(contentHtml, /Quick Customer/, 'Must preserve customer name');
-  assert.match(contentHtml, /Eyebrow Trim/, 'Must preserve service name');
   assert.match(contentHtml, /calendar-card-time/, 'Must preserve time');
-  // 3. CSS rule hides phone for .is-short
+  // 3. For 44px ultra-short card: CSS hides service and phone to prevent clipping (does not force 3 rows into 44px)
+  assert.match(calendarSharedCss, /\.owner-calendar-appointment\.is-ultra-short\s*\.calendar-card-service[\s\S]*?display:\s*none/);
+  assert.match(calendarSharedCss, /\.owner-calendar-appointment\.is-ultra-short\s*\.calendar-card-phone[\s\S]*?display:\s*none/);
+  // 4. For short card (<65px but >=50px): .is-short hides phone but does not hide service
   assert.match(calendarSharedCss, /\.owner-calendar-appointment\.is-short\s*\.calendar-card-phone[\s\S]*?display:\s*none/);
+  assert.doesNotMatch(calendarSharedCss, /\.owner-calendar-appointment\.is-short\s*\.calendar-card-service[\s\S]*?display:\s*none/);
 });
 
 test('L4. Mobile & Drawer Touch Usability: clicking card opens drawer with >= 44px touch targets', () => {

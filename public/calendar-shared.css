@@ -1003,8 +1003,8 @@ a:focus-visible {
 }
 
 .owner-calendar-appointment.is-ultra-short {
-  padding: 2px 6px;
-  gap: 1px;
+  padding: 3px 6px;
+  gap: 2px;
 }
 
 .owner-calendar-appointment.is-ultra-short .calendar-card-header {
@@ -1017,11 +1017,7 @@ a:focus-visible {
   line-height: 1.15;
 }
 
-.owner-calendar-appointment.is-ultra-short .calendar-card-service {
-  font-size: 0.70rem;
-  line-height: 1.15;
-}
-
+.owner-calendar-appointment.is-ultra-short .calendar-card-service,
 .owner-calendar-appointment.is-ultra-short .calendar-card-phone,
 .owner-calendar-appointment.is-ultra-short .calendar-card-assistant,
 .owner-calendar-appointment.is-ultra-short .calendar-card-actions,
