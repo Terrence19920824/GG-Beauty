@@ -75,14 +75,18 @@ test('owner appointment checkout projection executes once on PostgreSQL and isol
     db = await connectWhenReady(url);
     await db.query(`
       CREATE TABLE locations (id uuid PRIMARY KEY, shop_id uuid NOT NULL, name text, is_active boolean NOT NULL, UNIQUE(shop_id,id));
-      CREATE TABLE customers (id uuid PRIMARY KEY, shop_id uuid NOT NULL, name text, phone text, email text, UNIQUE(shop_id,id));
+      CREATE TABLE customers (id uuid PRIMARY KEY, shop_id uuid NOT NULL, name text, phone text, email text, member_code text, identity_status text, UNIQUE(shop_id,id));
       CREATE TABLE services (id uuid PRIMARY KEY, shop_id uuid NOT NULL, name text, duration_minutes integer, price numeric, UNIQUE(shop_id,id));
       CREATE TABLE staff (id uuid PRIMARY KEY, shop_id uuid NOT NULL, name text, staff_code text, UNIQUE(shop_id,id));
       CREATE TABLE appointments (
         id uuid PRIMARY KEY, shop_id uuid NOT NULL, location_id uuid NOT NULL,
         customer_id uuid NOT NULL, service_id uuid NOT NULL, staff_id uuid NOT NULL,
         appointment_no text, start_at timestamptz, end_at timestamptz,
-        status text, booking_source text, internal_notes text NULL, UNIQUE(shop_id,id), UNIQUE(shop_id,location_id,id)
+        status text, booking_source text, internal_notes text NULL,
+        booker_customer_id uuid NULL, recipient_customer_id uuid NULL,
+        booker_name_snapshot text NULL, booker_phone_snapshot text NULL, booker_email_snapshot text NULL,
+        recipient_name_snapshot text NULL, recipient_phone_snapshot text NULL, recipient_email_snapshot text NULL,
+        UNIQUE(shop_id,id), UNIQUE(shop_id,location_id,id)
       );
       CREATE TABLE appointment_items (
         id uuid PRIMARY KEY, shop_id uuid NOT NULL, location_id uuid NOT NULL,
@@ -131,12 +135,18 @@ test('owner appointment checkout projection executes once on PostgreSQL and isol
       );
     `);
     await db.query(`INSERT INTO locations VALUES ($1,$2,'A',true),($3,$4,'B',true)`, [ID.locationA, ID.shopA, ID.locationB, ID.shopB]);
-    await db.query(`INSERT INTO customers VALUES ($1,$2,'A Customer','0000','a@example.invalid'),($3,$4,'B Customer','9999','b@example.invalid')`, [ID.customerA, ID.shopA, ID.customerB, ID.shopB]);
+    await db.query(`INSERT INTO customers (id, shop_id, name, phone, email, member_code, identity_status) VALUES ($1,$2,'A Customer','0000','a@example.invalid','MEM001','verified_member'),($3,$4,'B Customer','9999','b@example.invalid',NULL,NULL)`, [ID.customerA, ID.shopA, ID.customerB, ID.shopB]);
     await db.query(`INSERT INTO services VALUES ($1,$2,'A Service',60,60),($3,$4,'B Service',60,80)`, [ID.serviceA, ID.shopA, ID.serviceB, ID.shopB]);
     await db.query(`INSERT INTO staff VALUES ($1,$2,'A Staff','A1'),($3,$4,'B Staff','B1')`, [ID.staffA, ID.shopA, ID.staffB, ID.shopB]);
-    await db.query(`INSERT INTO appointments VALUES
-      ($1,$2,$3,$4,$5,$6,'A-1','2030-01-01T02:00Z','2030-01-01T04:00Z','in_service','online',NULL),
-      ($7,$8,$9,$10,$11,$12,'B-1','2030-01-02T02:00Z','2030-01-02T03:00Z','in_service','online',NULL)`, [
+    await db.query(`INSERT INTO appointments (
+        id, shop_id, location_id, customer_id, service_id, staff_id,
+        appointment_no, start_at, end_at, status, booking_source, internal_notes,
+        booker_customer_id, recipient_customer_id,
+        booker_name_snapshot, booker_phone_snapshot, booker_email_snapshot,
+        recipient_name_snapshot, recipient_phone_snapshot, recipient_email_snapshot
+      ) VALUES
+      ($1,$2,$3,$4,$5,$6,'A-1','2030-01-01T02:00Z','2030-01-01T04:00Z','in_service','online',NULL,$4,$4,'A Customer','0000','a@example.invalid','A Customer','0000','a@example.invalid'),
+      ($7,$8,$9,$10,$11,$12,'B-1','2030-01-02T02:00Z','2030-01-02T03:00Z','in_service','online',NULL,$10,$10,'B Customer','9999','b@example.invalid','B Customer','9999','b@example.invalid')`, [
       ID.appointmentA, ID.shopA, ID.locationA, ID.customerA, ID.serviceA, ID.staffA,
       ID.appointmentB, ID.shopB, ID.locationB, ID.customerB, ID.serviceB, ID.staffB
     ]);
@@ -195,8 +205,14 @@ test('owner appointment checkout projection executes once on PostgreSQL and isol
     [ID.shopB, ID.checkoutA, ID.appointmentB]);
     await db.query('COMMIT');
 
-    await db.query(`INSERT INTO appointments VALUES
-      ($1,$2,$3,$4,$5,$6,'A-TIME','2030-01-03T02:00Z','2030-01-03T03:00Z','in_service','online',NULL)`,
+    await db.query(`INSERT INTO appointments (
+        id, shop_id, location_id, customer_id, service_id, staff_id,
+        appointment_no, start_at, end_at, status, booking_source, internal_notes,
+        booker_customer_id, recipient_customer_id,
+        booker_name_snapshot, booker_phone_snapshot, booker_email_snapshot,
+        recipient_name_snapshot, recipient_phone_snapshot, recipient_email_snapshot
+      ) VALUES
+      ($1,$2,$3,$4,$5,$6,'A-TIME','2030-01-03T02:00Z','2030-01-03T03:00Z','in_service','online',NULL,$4,$4,'A Customer','0000','a@example.invalid','A Customer','0000','a@example.invalid')`,
     [ID.appointmentTime, ID.shopA, ID.locationA, ID.customerA, ID.serviceA, ID.staffA]);
     await db.query(`INSERT INTO appointment_items VALUES
       ($1,$2,$3,$4,$5,1,'A Service','en',60,60,'2030-01-03T02:00:00.000000Z','2030-01-03T03:00:00.000000Z','in_service')`,

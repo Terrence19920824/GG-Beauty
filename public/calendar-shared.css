@@ -922,6 +922,14 @@ a:focus-visible {
   height: 6px;
 }
 
+.calendar-card-customer-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  min-width: 0;
+}
+
 .calendar-card-customer {
   font-size: 0.82rem;
   font-weight: 700;
@@ -929,6 +937,46 @@ a:focus-visible {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.calendar-card-member-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 5px;
+  font-size: 10px;
+  font-weight: 700;
+  border-radius: 4px;
+  background: #fef3c7;
+  color: #92400e;
+  border: 1px solid #fde68a;
+  white-space: nowrap;
+  line-height: 1.2;
+  flex-shrink: 0;
+}
+
+.calendar-card-phone {
+  font-size: 0.72rem;
+  color: #64748b;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  letter-spacing: 0.01em;
+}
+
+/* Deliberate compact-height responsiveness for short cards */
+.owner-calendar-appointment.is-short .calendar-card-phone,
+.owner-calendar-appointment.is-short .calendar-card-assistant,
+.owner-calendar-appointment.is-short .calendar-card-actions {
+  display: none !important;
+}
+
+.owner-calendar-appointment.is-ultra-short .calendar-card-phone,
+.owner-calendar-appointment.is-ultra-short .calendar-card-assistant,
+.owner-calendar-appointment.is-ultra-short .calendar-card-actions,
+.owner-calendar-appointment.is-ultra-short .calendar-card-member-badge {
+  display: none !important;
 }
 
 .calendar-card-service {
@@ -1362,6 +1410,58 @@ tbody tr[data-appointment-id] {
   font-weight: 600;
   text-align: right;
   word-break: break-word;
+}
+
+.drawer-member-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  font-size: 11px;
+  font-weight: 700;
+  border-radius: 4px;
+  background: #fef3c7;
+  color: #92400e;
+  border: 1px solid #fde68a;
+  margin-left: 6px;
+  vertical-align: middle;
+  line-height: 1.3;
+}
+
+.drawer-member-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  color: #0369a1;
+}
+
+.drawer-booker-subsection {
+  margin-top: 6px;
+  padding-top: 8px;
+  border-top: 1px dashed #e5e7eb;
+}
+
+.drawer-booker-title {
+  font-size: 0.76rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: #6b7280;
+  margin-bottom: 6px;
+  letter-spacing: 0.04em;
+}
+
+.drawer-item-roles {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 6px;
+  font-size: 0.85rem;
+}
+
+.drawer-item-role-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  color: #4b5563;
 }
 
 .drawer-contact-actions {

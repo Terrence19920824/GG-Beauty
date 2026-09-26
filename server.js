@@ -2100,9 +2100,21 @@ app.get(
         a.booking_source,
         a.internal_notes,
 
+        a.customer_id,
+        a.booker_customer_id,
+        a.recipient_customer_id,
+        a.booker_name_snapshot,
+        a.booker_phone_snapshot,
+        a.booker_email_snapshot,
+        a.recipient_name_snapshot,
+        a.recipient_phone_snapshot,
+        a.recipient_email_snapshot,
+
         c.name AS customer_name,
         c.phone AS customer_phone,
         c.email AS customer_email,
+        c.member_code,
+        c.identity_status,
 
         s.name AS service_name,
         s.duration_minutes,
