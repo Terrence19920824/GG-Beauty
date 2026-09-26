@@ -69,6 +69,7 @@ const {
 const {
   createOwnerAppointmentEdit
 } = require('./lib/owner-appointment-edit');
+const { CUSTOMER_READ_ROLES, listCustomers, getCustomer } = require('./lib/owner-customer-profile');
 
 const app = express();
 const OWNER_MERCHANT_CONTACT_READ_ROLES = Object.freeze(['owner', 'manager', 'admin']);
@@ -749,6 +750,29 @@ app.patch('/api/owner/appointments/:appointmentId/internal-notes', requireOwnerA
   } catch (error) {
     console.error('Owner appointment internal notes update error:', safeStaffAuthErrorCode(error));
     return res.status(500).json({ success: false, code: 'INTERNAL_NOTES_UPDATE_FAILED', message: '内部备注保存失败' });
+  }
+});
+
+app.get('/api/owner/customers', requireOwnerAuth, requireOwnerRole(CUSTOMER_READ_ROLES), async (req, res) => {
+  try {
+    const data = await listCustomers(app.locals.ownerAuthPool, { shopId: req.ownerAuth.shopId, query: req.query });
+    return res.set('Cache-Control', 'no-store').json({ success: true, data });
+  } catch (error) {
+    console.error('Owner customer list error:', safeStaffAuthErrorCode(error));
+    return res.status(500).json({ success: false, code: 'CUSTOMER_LIST_READ_FAILED' });
+  }
+});
+
+app.get('/api/owner/customers/:customerId', requireOwnerAuth, requireOwnerRole(CUSTOMER_READ_ROLES), async (req, res) => {
+  try {
+    const data = await getCustomer(app.locals.ownerAuthPool, {
+      shopId: req.ownerAuth.shopId, customerId: typeof req.params.customerId === 'string' ? req.params.customerId.trim() : ''
+    });
+    if (!data) return res.status(404).json({ success: false, code: 'CUSTOMER_NOT_FOUND' });
+    return res.set('Cache-Control', 'no-store').json({ success: true, data });
+  } catch (error) {
+    console.error('Owner customer detail error:', safeStaffAuthErrorCode(error));
+    return res.status(500).json({ success: false, code: 'CUSTOMER_DETAIL_READ_FAILED' });
   }
 });
 

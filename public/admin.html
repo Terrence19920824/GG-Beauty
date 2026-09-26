@@ -121,6 +121,17 @@
       background: #eee;
     }
 
+    .customer-layout { display: grid; grid-template-columns: minmax(280px, .8fr) minmax(420px, 1.4fr); gap: 16px; }
+    .customer-row { width: 100%; text-align: left; border: 1px solid #e5e5e5; background: #fff; border-radius: 10px; padding: 13px; margin: 0 0 9px; cursor: pointer; font: inherit; }
+    .customer-row:hover, .customer-row:focus-visible { border-color: #111; }
+    .customer-row-name { display: block; font-weight: 700; margin-bottom: 4px; }
+    .customer-meta { color: #666; font-size: 13px; display: flex; gap: 8px; flex-wrap: wrap; }
+    .customer-profile-section { border-top: 1px solid #eee; padding: 15px 0; }
+    .customer-profile-section:first-child { border-top: 0; padding-top: 0; }
+    .customer-visit { border: 1px solid #eee; border-radius: 9px; padding: 11px; margin: 9px 0; }
+    .customer-notes { min-height: 110px; resize: vertical; }
+    @media (max-width: 767px) { .customer-layout { grid-template-columns: 1fr; } }
+
     .view[hidden],
     .panel[hidden] {
       display: none;
@@ -646,7 +657,7 @@
     <button id="nav-staff" class="nav-btn" data-i18n="staff" onclick="ownerSelfService.showView('staff')">员工</button>
     <button id="nav-services" class="nav-btn" data-i18n="services" onclick="ownerSelfService.showView('services')">服务</button>
     <button id="nav-contact" class="nav-btn" data-i18n="merchantContactSettings" onclick="ownerSelfService.showView('contact')">店铺联系方式</button>
-    <button class="nav-btn" disabled data-i18n="customers" data-i18n-title="comingSoon" title="即将推出">顾客</button>
+    <button id="nav-customers" class="nav-btn" data-i18n="customers">顾客</button>
     <button class="nav-btn" disabled data-i18n="checkout" data-i18n-title="comingSoon" title="即将推出">收银</button>
     <button class="nav-btn" disabled data-i18n="more" data-i18n-title="comingSoon" title="即将推出">更多</button>
   </nav>
@@ -770,6 +781,19 @@
         </label>
       </div>
       <div class="form-actions"><button id="saveMerchantContactButton" class="primary-btn" type="button" data-i18n="saveMerchantContact" onclick="ownerSelfService.saveMerchantContact()">保存联系方式</button></div>
+    </div>
+  </section>
+
+  <section id="customersView" class="view" hidden>
+    <div class="toolbar"><div><h2 data-i18n="customerDirectory">顾客</h2><div class="hint" data-i18n="customerDirectoryHelp">搜索顾客并查看档案</div></div></div>
+    <div class="customer-layout">
+      <div class="card panel">
+        <label class="field"><span data-i18n="searchCustomers">搜索顾客</span><input id="customerSearchInput" type="search" data-i18n-placeholder="searchCustomersPlaceholder" placeholder="姓名、电话或会员编号"></label>
+        <div id="customerListStatus" class="hint" aria-live="polite"></div>
+        <div id="customerList"></div>
+        <div class="form-actions"><button id="customerPrevButton" type="button" class="secondary-btn" data-i18n="previousPage">上一页</button><button id="customerNextButton" type="button" class="secondary-btn" data-i18n="nextPage">下一页</button></div>
+      </div>
+      <div class="card panel" id="customerProfilePanel"><div class="empty" data-i18n="selectCustomer">请选择一位顾客查看档案</div></div>
     </div>
   </section>
 

@@ -69,11 +69,12 @@ const owner = { membership: { role: 'owner' } };
 const manager = { membership: { role: 'manager' } };
 const admin = { membership: { role: 'admin' } };
 
-test('navigation exposes calendar, staff and services with later modules disabled', () => {
+test('navigation exposes the enabled customer foundation and later modules remain disabled', () => {
   assert.match(html, /id="nav-calendar"[^>]*>日历/);
   assert.match(html, /id="nav-staff"[^>]*>员工/);
   assert.match(html, /id="nav-services"[^>]*>服务/);
-  assert.match(html, /disabled[^>]*data-i18n="customers"/);
+  assert.match(html, /id="nav-customers"[^>]*data-i18n="customers"/);
+  assert.match(source, /nav-customers[\s\S]*showView\('customers'\)/);
 });
 
 test('service list loads safe management fields and has no delete action', async () => {

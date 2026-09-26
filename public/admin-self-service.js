@@ -23,6 +23,7 @@
     authoritativeLocationIds: new Set(),
     authoritativeSchedule: null,
     authoritativeOverrides: []
+    , customerPage: 1, customerHasMore: false, customerQuery: '', selectedCustomerId: null
   };
 
   const byId = id => document.getElementById(id);
@@ -206,7 +207,7 @@
   }
 
   function showViewOnly(name) {
-    ['calendar', 'staff', 'services', 'contact'].forEach(item => {
+    ['calendar', 'customers', 'staff', 'services', 'contact'].forEach(item => {
       byId(`${item}View`).hidden = item !== name;
       byId(`nav-${item}`).classList.toggle('active', item === name);
     });
@@ -218,6 +219,66 @@
     if (name === 'services') return loadServices();
     if (name === 'staff') return loadStaff();
     if (name === 'contact') return loadMerchantContact();
+    if (name === 'customers') return loadCustomers();
+  }
+
+  const formatDateTime = value => value ? new Intl.DateTimeFormat(state.locale === 'zh-CN' ? 'zh-CN' : 'en-SG', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Singapore' }).format(new Date(value)) : '-';
+  const roleCanWriteProfileNotes = () => ['owner', 'manager'].includes(state.profile?.membership?.role);
+  const statusText = status => t(status === 'no_show' ? 'noShow' : status || 'unknownStatus');
+  const identityStatusText = value => t(value === 'verified_member' ? 'verifiedMember' : value === 'unverified_contact' ? 'unverifiedContact' : 'notSpecified');
+  function renderCustomerProfile(data) {
+    const host = byId('customerProfilePanel'); if (!host) return;
+    const customer = data.customer;
+    const notesWritable = roleCanWriteProfileNotes();
+    const visits = data.visits || [];
+    const visitHtml = visits.length ? visits.map(visit => {
+      const services = (visit.items || []).map(item => {
+        const staff = (item.staffAssignments || []).map(a => `${a.role === 'assistant' ? t('assistantStaff') : t('primaryStaff')}: ${escapeHtml(a.staffName || '-')}`).join(' · ');
+        return `<div><strong>${escapeHtml(item.serviceName || '-')}</strong>${item.durationMinutes ? ` · ${escapeHtml(String(item.durationMinutes))} ${escapeHtml(t('minutes'))}` : ''}<div class="hint">${staff}</div></div>`;
+      }).join('');
+      return `<article class="customer-visit"><strong>${escapeHtml(formatDateTime(visit.startAt))}</strong> · ${escapeHtml(statusText(visit.status))}<div class="hint">${escapeHtml(visit.bookingSource || '')}</div>${services}</article>`;
+    }).join('') : `<div class="empty">${escapeHtml(t('noCustomerVisits'))}</div>`;
+    const gender = customer.gender ? t(`genderValue_${customer.gender}`) : t('notSpecified');
+    host.innerHTML = `<div class="customer-profile-section"><h2>${escapeHtml(customer.name)}</h2><div class="customer-meta"><span>${escapeHtml(customer.phone)}</span>${customer.memberCode ? `<span>${escapeHtml(customer.memberCode)}</span>` : ''}</div></div>
+      <section class="customer-profile-section"><h3>${escapeHtml(t('overview'))}</h3><div class="customer-meta"><span>${escapeHtml(t('email'))}: ${escapeHtml(customer.email || t('emailNotProvided'))}</span><span>${escapeHtml(t('dateOfBirth'))}: ${escapeHtml(customer.dateOfBirth || t('notSpecified'))}</span><span>${escapeHtml(t('genderOptional'))}: ${escapeHtml(gender)}</span><span>${escapeHtml(t('identityStatus'))}: ${escapeHtml(identityStatusText(customer.identityStatus))}</span></div></section>
+      <section class="customer-profile-section"><h3>${escapeHtml(t('customerProfileNotes'))}</h3><textarea id="customerProfileNotesInput" class="customer-notes" maxlength="4000" ${notesWritable ? '' : 'disabled'}>${escapeHtml(customer.profileNotes || '')}</textarea>${notesWritable ? `<div class="form-actions"><button id="saveCustomerProfileNotesButton" class="primary-btn" type="button">${escapeHtml(t('save'))}</button></div>` : `<div class="hint">${escapeHtml(t('readOnly'))}</div>`}</section>
+      <section class="customer-profile-section"><h3>${escapeHtml(t('visits'))}</h3>${visitHtml}</section>
+      <section class="customer-profile-section"><h3>${escapeHtml(t('serviceHistory'))}</h3><div class="hint">${escapeHtml(t('serviceHistoryHelp'))}</div>${visitHtml}</section>`;
+    if (notesWritable) byId('saveCustomerProfileNotesButton')?.addEventListener('click', () => saveCustomerProfileNotes(customer.id));
+  }
+  async function selectCustomer(id) {
+    state.selectedCustomerId = id;
+    const host = byId('customerProfilePanel'); if (host) host.textContent = t('loading');
+    try { renderCustomerProfile(await request(`/api/owner/customers/${encodeURIComponent(id)}`)); }
+    catch (error) { if (!error.sessionExpired && host) host.textContent = error.message; }
+  }
+  async function saveCustomerProfileNotes(customerId) {
+    const input = byId('customerProfileNotesInput'); if (!input) return;
+    try { await request(`/api/owner/customers/${encodeURIComponent(customerId)}/profile-notes`, { method: 'PATCH', body: JSON.stringify({ profileNotes: input.value }) }); await selectCustomer(customerId); }
+    catch (error) { if (!error.sessionExpired) alert(error.message); }
+  }
+  function renderCustomerList(data) {
+    state.customerHasMore = data.hasMore === true;
+    const host = byId('customerList'); if (!host) return;
+    host.innerHTML = data.customers.length ? data.customers.map(customer => `<button class="customer-row" type="button" data-customer-id="${escapeHtml(customer.id)}"><span class="customer-row-name">${escapeHtml(customer.name)}</span><span class="customer-meta"><span>${escapeHtml(customer.phone)}</span>${customer.memberCode ? `<span>${escapeHtml(customer.memberCode)}</span>` : ''}${customer.lastVisitAt ? `<span>${escapeHtml(t('lastServiceVisit'))}: ${escapeHtml(formatDateTime(customer.lastVisitAt))}</span>` : ''}</span></button>`).join('') : `<div class="empty">${escapeHtml(t('noCustomersFound'))}</div>`;
+    host.querySelectorAll('[data-customer-id]').forEach(button => button.addEventListener('click', () => selectCustomer(button.dataset.customerId)));
+    byId('customerPrevButton').disabled = state.customerPage <= 1;
+    byId('customerNextButton').disabled = !state.customerHasMore;
+  }
+  async function loadCustomers() {
+    const status = byId('customerListStatus'); if (status) status.textContent = t('loading');
+    try { const data = await request(`/api/owner/customers?page=${state.customerPage}&pageSize=25&q=${encodeURIComponent(state.customerQuery)}`); renderCustomerList(data); if (status) status.textContent = ''; }
+    catch (error) { if (!error.sessionExpired && status) status.textContent = error.message; }
+  }
+  function initializeCustomerUi() {
+    const nav = byId('nav-customers');
+    if (typeof nav?.addEventListener === 'function') nav.addEventListener('click', () => showView('customers'));
+    const search = byId('customerSearchInput'); let timer = null;
+    if (typeof search?.addEventListener === 'function') search.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(() => { state.customerQuery = search.value.trim(); state.customerPage = 1; loadCustomers(); }, 250); });
+    const previous = byId('customerPrevButton');
+    const next = byId('customerNextButton');
+    if (typeof previous?.addEventListener === 'function') previous.addEventListener('click', () => { if (state.customerPage > 1) { state.customerPage--; loadCustomers(); } });
+    if (typeof next?.addEventListener === 'function') next.addEventListener('click', () => { if (state.customerHasMore) { state.customerPage++; loadCustomers(); } });
   }
 
   async function loadMerchantContact() {
@@ -658,6 +719,7 @@
     } catch (error) { if (!error.sessionExpired) setMessage('staffMessage', error.message, true); }
   }
 
-  global.ownerSelfService = { setLocale, setProfile, reset, showView, loadServices, renderCategories, openCategoryForm, closeCategoryForm, saveCategory, openServiceForm, closeServiceForm, saveService, loadStaff, openStaffForm, saveStaff, selectStaff, openStaffTab, markStaffTabDirty, toggleCapability, saveCapability, toggleLocation, saveLocations, changeScheduleLocation, saveSchedule, updateOverrideFields, saveOverride, deactivateOverride, loadMerchantContact, saveMerchantContact, _state: state, _request: request };
+  initializeCustomerUi();
+  global.ownerSelfService = { setLocale, setProfile, reset, showView, loadServices, renderCategories, openCategoryForm, closeCategoryForm, saveCategory, openServiceForm, closeServiceForm, saveService, loadStaff, openStaffForm, saveStaff, selectStaff, openStaffTab, markStaffTabDirty, toggleCapability, saveCapability, toggleLocation, saveLocations, changeScheduleLocation, saveSchedule, updateOverrideFields, saveOverride, deactivateOverride, loadMerchantContact, saveMerchantContact, loadCustomers, selectCustomer, _state: state, _request: request };
   setLocale(initialLocale());
 })(globalThis);
