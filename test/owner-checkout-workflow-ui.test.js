@@ -257,25 +257,25 @@ const createPageContext = (customElements = {}) => {
 };
 
 // 1. Front Desk Stepper Foundation Tests
-test('owner admin HTML defines front desk workflow stepper with 5-stage progression', () => {
-  assert.match(html, /class="frontdesk-workflow-bar"/);
-  assert.match(html, /class="workflow-stepper"/);
-  assert.match(html, /data-i18n="frontDeskWorkflow"/);
-  assert.match(html, /data-i18n="workflowAppointment"/);
-  assert.match(html, /data-i18n="workflowArrived"/);
-  assert.match(html, /data-i18n="workflowInService"/);
-  assert.match(html, /data-i18n="workflowCheckout"/);
-  assert.match(html, /data-i18n="workflowPaid"/);
+test('owner admin HTML omits persistent front desk workflow strip to reclaim calendar space', () => {
+  assert.doesNotMatch(html, /class="frontdesk-workflow-bar"/);
+  assert.doesNotMatch(html, /class="workflow-stepper"/);
+  assert.doesNotMatch(html, /data-i18n="frontDeskWorkflow"/);
+  assert.doesNotMatch(html, /data-i18n="workflowAppointment"/);
+  assert.doesNotMatch(html, /data-i18n="workflowArrived"/);
+  assert.doesNotMatch(html, /data-i18n="workflowInService"/);
+  assert.doesNotMatch(html, /data-i18n="workflowCheckout"/);
+  assert.doesNotMatch(html, /data-i18n="workflowPaid"/);
 
   const arrowCount = (html.match(/class="step-arrow"/g) || []).length;
-  assert.strictEqual(arrowCount, 4, 'There should be 4 step transitions connecting 5 stages');
+  assert.strictEqual(arrowCount, 0, 'No step transitions should remain');
 });
 
-test('front desk workflow bar is isolated from appointment list content container', () => {
+test('calendar card immediately follows summary cards with no workflow bar gap', () => {
   const contentDivIndex = html.indexOf('<div id="content"');
   const workflowBarIndex = html.indexOf('class="frontdesk-workflow-bar"');
-  assert.ok(workflowBarIndex > 0, 'workflow bar must exist');
-  assert.ok(contentDivIndex > workflowBarIndex, 'workflow bar must be placed above #content');
+  assert.strictEqual(workflowBarIndex, -1, 'workflow bar must be absent');
+  assert.ok(contentDivIndex > 0, '#content container must exist');
 });
 
 // 2. Authoritative Payment Source & Status Tests (Requirements 53-59)

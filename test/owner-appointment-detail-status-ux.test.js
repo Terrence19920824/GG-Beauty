@@ -383,7 +383,7 @@ test('4. URI formatters: formatTelUri and formatWhatsAppUri handle Singapore num
 });
 
 // 5. Drawer rendering content tests
-test('5. Drawer rendering: displays customer, unmasked phone, email (when present), booker vs recipient, services, staff, date/time, and notes', () => {
+test('5. Drawer rendering: displays customer, unmasked phone, email (when present), booker vs recipient, services, staff, date/time, and omits legacy notes', () => {
   const { context, elements } = createMockAdminContext({ locale: 'zh-CN' });
 
   const appt = {
@@ -440,8 +440,9 @@ test('5. Drawer rendering: displays customer, unmasked phone, email (when presen
   assert.match(drawerText, /Bob Tan/, 'Staff 2 name must be rendered');
   assert.match(drawerText, /30 分钟/, 'Service 2 duration must be rendered');
 
-  // Notes
-  assert.match(drawerText, /Allergic to lavender/, 'Customer notes must be displayed');
+  // Legacy notes presentation is removed from drawer
+  assert.doesNotMatch(drawerText, /Allergic to lavender/, 'Legacy booking notes must not be displayed in drawer');
+  assert.strictEqual(findDescendant(drawerBody, el => el.className?.includes('drawer-notes-box')), null, 'Legacy notes box must be absent');
 
   // Status badge
   assert.ok(findDescendant(drawerBody, el => String(el.className).includes('status-confirmed')), 'Status confirmed badge must be displayed');
@@ -479,8 +480,9 @@ test('6. Drawer rendering: when booker and recipient are same, displays bookerSa
   assert.match(drawerBody, /预约人同实际顾客/, 'Must show same person message');
   // Email field should NOT be rendered when empty
   assert.doesNotMatch(drawerBody, /Email/, 'Email row should be omitted when empty');
-  // Empty notes should show '无'
-  assert.match(drawerBody, /无/, 'Empty notes should show "无" in zh-CN');
+  // Empty notes section is removed from drawer
+  assert.strictEqual(findDescendant(elements.get('drawerBody'), el => el.className?.includes('drawer-notes-box')), null, 'Legacy notes box must be absent');
+  assert.doesNotMatch(drawerBody, /无/, 'Empty notes section should not be present in drawer');
 });
 
 // 7. XSS sanitization in drawer

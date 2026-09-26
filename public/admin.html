@@ -514,53 +514,6 @@
       color: #ffffff;
     }
 
-    .frontdesk-workflow-bar {
-      background: #ffffff;
-      border: 1px solid #e5e7eb;
-      border-radius: 12px;
-      padding: 14px 16px;
-      margin: 16px 0;
-      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
-    }
-
-    .workflow-stepper {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      overflow-x: auto;
-      gap: 8px;
-      margin-top: 10px;
-      padding-bottom: 4px;
-    }
-
-    .workflow-step {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      font-size: 13px;
-      color: #555;
-      white-space: nowrap;
-    }
-
-    .step-num {
-      width: 22px;
-      height: 22px;
-      border-radius: 50%;
-      background: #f3f4f6;
-      border: 1px solid #d1d5db;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 11px;
-      font-weight: 700;
-    }
-
-    .step-arrow {
-      color: #9ca3af;
-      font-size: 14px;
-      user-select: none;
-    }
-
     :focus-visible {
       outline: 2px solid #111;
       outline-offset: 2px;
@@ -717,39 +670,6 @@
       <div class="number" id="todayCount">0</div>
     </div>
 
-  </div>
-
-  <div class="frontdesk-workflow-bar" role="region" aria-label="Front Desk Workflow Guide">
-    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
-      <strong data-i18n="frontDeskWorkflow" style="font-size:14px; color:#1f2937;">前台接待与收银流程</strong>
-      <span class="muted" data-i18n="workflowFeaturePreview" style="font-size:12px; background:#f3f4f6; padding:2px 8px; border-radius:6px;">工作流展示</span>
-    </div>
-    <div class="workflow-stepper" aria-hidden="true">
-      <div class="workflow-step">
-        <span class="step-num">1</span>
-        <span data-i18n="workflowAppointment">预约</span>
-      </div>
-      <span class="step-arrow">→</span>
-      <div class="workflow-step">
-        <span class="step-num">2</span>
-        <span data-i18n="workflowArrived">到店</span>
-      </div>
-      <span class="step-arrow">→</span>
-      <div class="workflow-step">
-        <span class="step-num">3</span>
-        <span data-i18n="workflowInService">服务中</span>
-      </div>
-      <span class="step-arrow">→</span>
-      <div class="workflow-step">
-        <span class="step-num" style="background:var(--status-checkout-soft); color:var(--status-checkout); border-color:var(--status-checkout);">4</span>
-        <strong style="color:var(--status-checkout);" data-i18n="workflowCheckout">去结账</strong>
-      </div>
-      <span class="step-arrow">→</span>
-      <div class="workflow-step">
-        <span class="step-num" style="background:var(--status-paid-soft); color:var(--status-paid); border-color:var(--status-paid);">5</span>
-        <strong style="color:var(--status-paid);" data-i18n="workflowPaid">已结账</strong>
-      </div>
-    </div>
   </div>
 
   <div class="card">
@@ -3902,11 +3822,6 @@ function renderAppointmentDrawer(appointment) {
       card.appendChild(rolesBox);
       serviceSection.appendChild(card);
     }
-
-    // Section D: Notes / 备注
-    const notesText = appointment.notes || appointment.remark || '';
-    const notesSection = appendDrawerSection(drawerBody, adminT('notes'));
-    notesSection.appendChild(drawerElement('div', 'drawer-notes-box notranslate', notesText.trim() || adminT('noNotes')));
 
     // Section E: Internal Notes / 内部备注
     const internalNotesSection = appendDrawerSection(drawerBody, adminT('internalNotes'));
