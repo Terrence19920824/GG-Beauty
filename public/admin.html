@@ -3912,13 +3912,18 @@ function renderAppointmentDrawer(appointment) {
     internalNotesInput.value = typeof appointment.internal_notes === 'string' ? appointment.internal_notes : '';
     internalNotesInput.setAttribute('aria-label', adminT('internalNotes'));
     internalNotesSection.appendChild(internalNotesInput);
-    const canWriteInternalNotes = ['owner', 'manager'].includes(String(currentAdminProfile?.role || '').toLowerCase());
+    const canWriteInternalNotes = ['owner', 'manager'].includes(String(getAdminActorRole() || '').toLowerCase());
     internalNotesInput.disabled = !canWriteInternalNotes;
     const internalNotesStatus = drawerElement('div', 'drawer-internal-notes-status', '');
     internalNotesStatus.id = 'drawerInternalNotesStatus';
     internalNotesStatus.setAttribute('role', 'status');
     internalNotesSection.appendChild(internalNotesStatus);
     if (canWriteInternalNotes) {
+      internalNotesInput.addEventListener('input', () => {
+        if (internalNotesStatus.textContent) {
+          internalNotesStatus.textContent = '';
+        }
+      });
       const saveInternalNotes = drawerElement('button', 'drawer-internal-notes-save primary-btn', adminT('internalNotesSave'));
       saveInternalNotes.type = 'button';
       saveInternalNotes.addEventListener('click', async () => {

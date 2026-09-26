@@ -296,6 +296,75 @@ function findDescendant(element, predicate) {
   return null;
 }
 
+test('3b. Internal notes UI permissions: owner/manager can edit and save, admin/front_desk cannot, status clears on input', () => {
+  assert.doesNotMatch(adminHtml, /currentAdminProfile\??\.(?:\$|)?role\b/);
+  assert.match(adminHtml, /getAdminActorRole\(\)/);
+
+  const appt = {
+    id: '00000000-0000-4000-8000-000000000001',
+    status: 'confirmed',
+    internal_notes: 'Initial internal note'
+  };
+
+  // Test owner role
+  {
+    const { context, elements } = createMockAdminContext();
+    context.setAdminProfile({ membership: { role: 'owner' } });
+    context.renderAppointmentDrawer(appt);
+    const drawerBody = elements.get('drawerBody');
+    const textarea = findDescendant(drawerBody, el => el.id === 'drawerInternalNotesInput');
+    const saveBtn = findDescendant(drawerBody, el => String(el.className || '').includes('drawer-internal-notes-save'));
+    const status = findDescendant(drawerBody, el => el.id === 'drawerInternalNotesStatus');
+    assert.ok(textarea, 'textarea must be rendered');
+    assert.strictEqual(textarea.disabled, false, 'owner must be able to edit internal notes');
+    assert.ok(saveBtn, 'save button must be present for owner');
+
+    // Test input clears status
+    status.textContent = '内部备注已保存';
+    textarea.dispatchEvent({ type: 'input', target: textarea });
+    assert.strictEqual(status.textContent, '', 'editing textarea must clear stale saved status');
+  }
+
+  // Test manager role
+  {
+    const { context, elements } = createMockAdminContext();
+    context.setAdminProfile({ membership: { role: 'manager' } });
+    context.renderAppointmentDrawer(appt);
+    const drawerBody = elements.get('drawerBody');
+    const textarea = findDescendant(drawerBody, el => el.id === 'drawerInternalNotesInput');
+    const saveBtn = findDescendant(drawerBody, el => String(el.className || '').includes('drawer-internal-notes-save'));
+    assert.ok(textarea);
+    assert.strictEqual(textarea.disabled, false, 'manager must be able to edit internal notes');
+    assert.ok(saveBtn, 'save button must be present for manager');
+  }
+
+  // Test admin role (read-only for internal notes)
+  {
+    const { context, elements } = createMockAdminContext();
+    context.setAdminProfile({ membership: { role: 'admin' } });
+    context.renderAppointmentDrawer(appt);
+    const drawerBody = elements.get('drawerBody');
+    const textarea = findDescendant(drawerBody, el => el.id === 'drawerInternalNotesInput');
+    const saveBtn = findDescendant(drawerBody, el => String(el.className || '').includes('drawer-internal-notes-save'));
+    assert.ok(textarea);
+    assert.strictEqual(textarea.disabled, true, 'admin must not be able to edit internal notes');
+    assert.strictEqual(saveBtn, null, 'save button must not be rendered for admin');
+  }
+
+  // Test front_desk role (read-only for internal notes)
+  {
+    const { context, elements } = createMockAdminContext();
+    context.setAdminProfile({ membership: { role: 'front_desk' } });
+    context.renderAppointmentDrawer(appt);
+    const drawerBody = elements.get('drawerBody');
+    const textarea = findDescendant(drawerBody, el => el.id === 'drawerInternalNotesInput');
+    const saveBtn = findDescendant(drawerBody, el => String(el.className || '').includes('drawer-internal-notes-save'));
+    assert.ok(textarea);
+    assert.strictEqual(textarea.disabled, true, 'front_desk must not be able to edit internal notes');
+    assert.strictEqual(saveBtn, null, 'save button must not be rendered for front_desk');
+  }
+});
+
 // 4. URI Formatter tests (tel: and wa.me)
 test('4. URI formatters: formatTelUri and formatWhatsAppUri handle Singapore numbers correctly', () => {
   const { context } = createMockAdminContext();

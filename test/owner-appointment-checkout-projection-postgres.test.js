@@ -82,7 +82,7 @@ test('owner appointment checkout projection executes once on PostgreSQL and isol
         id uuid PRIMARY KEY, shop_id uuid NOT NULL, location_id uuid NOT NULL,
         customer_id uuid NOT NULL, service_id uuid NOT NULL, staff_id uuid NOT NULL,
         appointment_no text, start_at timestamptz, end_at timestamptz,
-        status text, booking_source text, UNIQUE(shop_id,id), UNIQUE(shop_id,location_id,id)
+        status text, booking_source text, internal_notes text NULL, UNIQUE(shop_id,id), UNIQUE(shop_id,location_id,id)
       );
       CREATE TABLE appointment_items (
         id uuid PRIMARY KEY, shop_id uuid NOT NULL, location_id uuid NOT NULL,
@@ -135,8 +135,8 @@ test('owner appointment checkout projection executes once on PostgreSQL and isol
     await db.query(`INSERT INTO services VALUES ($1,$2,'A Service',60,60),($3,$4,'B Service',60,80)`, [ID.serviceA, ID.shopA, ID.serviceB, ID.shopB]);
     await db.query(`INSERT INTO staff VALUES ($1,$2,'A Staff','A1'),($3,$4,'B Staff','B1')`, [ID.staffA, ID.shopA, ID.staffB, ID.shopB]);
     await db.query(`INSERT INTO appointments VALUES
-      ($1,$2,$3,$4,$5,$6,'A-1','2030-01-01T02:00Z','2030-01-01T04:00Z','in_service','online'),
-      ($7,$8,$9,$10,$11,$12,'B-1','2030-01-02T02:00Z','2030-01-02T03:00Z','in_service','online')`, [
+      ($1,$2,$3,$4,$5,$6,'A-1','2030-01-01T02:00Z','2030-01-01T04:00Z','in_service','online',NULL),
+      ($7,$8,$9,$10,$11,$12,'B-1','2030-01-02T02:00Z','2030-01-02T03:00Z','in_service','online',NULL)`, [
       ID.appointmentA, ID.shopA, ID.locationA, ID.customerA, ID.serviceA, ID.staffA,
       ID.appointmentB, ID.shopB, ID.locationB, ID.customerB, ID.serviceB, ID.staffB
     ]);
@@ -196,7 +196,7 @@ test('owner appointment checkout projection executes once on PostgreSQL and isol
     await db.query('COMMIT');
 
     await db.query(`INSERT INTO appointments VALUES
-      ($1,$2,$3,$4,$5,$6,'A-TIME','2030-01-03T02:00Z','2030-01-03T03:00Z','in_service','online')`,
+      ($1,$2,$3,$4,$5,$6,'A-TIME','2030-01-03T02:00Z','2030-01-03T03:00Z','in_service','online',NULL)`,
     [ID.appointmentTime, ID.shopA, ID.locationA, ID.customerA, ID.serviceA, ID.staffA]);
     await db.query(`INSERT INTO appointment_items VALUES
       ($1,$2,$3,$4,$5,1,'A Service','en',60,60,'2030-01-03T02:00:00.000000Z','2030-01-03T03:00:00.000000Z','in_service')`,

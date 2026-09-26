@@ -36,8 +36,14 @@ test('authorized owner saves tenant-scoped internal notes without status or chec
   assert.deepEqual(fixture.state.writes[0].params, ['VIP: avoid lavender', ID.appointment, ID.shopA]);
   assert.doesNotMatch(fixture.state.writes[0].sql, /status|checkout|payment/i);
 });
-test('admin and unauthenticated callers cannot save internal notes', async () => {
+test('authorized manager can save internal notes', async () => {
+  const fixture = pool({ role: 'manager' }); const result = await request(fixture, { internalNotes: 'Manager note' });
+  assert.equal(result.status, 200); assert.equal(result.json.data.internalNotes, 'Manager note');
+  assert.equal(fixture.state.writes.length, 1);
+});
+test('admin, front_desk, and unauthenticated callers cannot save internal notes', async () => {
   const admin = pool({ role: 'admin' }); assert.equal((await request(admin, { internalNotes: 'x' })).status, 403); assert.equal(admin.state.writes.length, 0);
+  const frontDesk = pool({ role: 'front_desk' }); assert.equal((await request(frontDesk, { internalNotes: 'x' })).status, 403); assert.equal(frontDesk.state.writes.length, 0);
   app.locals.ownerAuthPool = pool();
   const server = http.createServer(app); await new Promise(resolve => server.listen(0, resolve));
   try { assert.equal((await fetch(`http://127.0.0.1:${server.address().port}/api/owner/appointments/${ID.appointment}/internal-notes`, { method: 'PATCH' })).status, 401); } finally { await new Promise(resolve => server.close(resolve)); }
@@ -47,12 +53,18 @@ test('cross-shop appointment and invalid note payload fail without a write', asy
   const invalid = pool(); assert.equal((await request(invalid, { internalNotes: 42 })).status, 400); assert.equal(invalid.state.writes.length, 0);
 });
 
-test('migration chain adds a separate bounded internal_notes column with a read-only verifier', () => {
+test('migration chain adds a separate bounded internal_notes column with a read-only verifier and data-safe rollback', () => {
   const root = path.resolve(__dirname, '..', 'migrations');
   const schema = fs.readFileSync(path.join(root, '064_appointment_internal_notes_schema.sql'), 'utf8');
   const verify = fs.readFileSync(path.join(root, '065_appointment_internal_notes_verification_readonly.sql'), 'utf8');
+  const rollback = fs.readFileSync(path.join(root, 'rollback', '064_appointment_internal_notes_rollback.sql'), 'utf8');
   assert.match(schema, /ADD COLUMN IF NOT EXISTS internal_notes TEXT NULL/);
   assert.match(schema, /char_length\(internal_notes\) <= 4000/);
   assert.match(verify, /^BEGIN TRANSACTION READ ONLY;/);
   assert.doesNotMatch(verify, /\b(INSERT|UPDATE|DELETE|CREATE|ALTER|DROP)\b/i);
+  assert.match(rollback, /WHERE internal_notes IS NOT NULL/);
+  assert.match(rollback, /RAISE EXCEPTION/);
+  assert.match(rollback, /DROP CONSTRAINT IF EXISTS appointments_internal_notes_length_check/);
+  assert.match(rollback, /DROP COLUMN IF EXISTS internal_notes/);
+  assert.match(rollback, /lock_timeout/);
 });
