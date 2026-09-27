@@ -2125,6 +2125,9 @@ const renderAppointmentsView = () => {
         const memberBadgeHtml = isVerifiedMember
           ? `<span class="calendar-card-member-badge" role="status" aria-label="${escapeHtml(adminT('member'))}">${escapeHtml(adminT('member'))}</span>`
           : '';
+        const returningCustomerHtml = item.is_returning_customer === true
+          ? `<span class="calendar-card-returning-signal" role="img" aria-label="${escapeHtml(adminT('returningCustomer'))}" title="${escapeHtml(adminT('returningCustomer'))}">❤️</span>`
+          : '';
 
         const phoneHtml = recipientPhone
           ? `<div class="calendar-card-phone notranslate" translate="no">${escapeHtml(recipientPhone)}</div>`
@@ -2189,6 +2192,7 @@ const renderAppointmentsView = () => {
             ${lateBadgeHtml}
             ${overlapBadgeHtml}
             <div class="calendar-card-customer-row">
+              ${returningCustomerHtml}
               <span class="calendar-card-customer notranslate" translate="no">${escapeHtml(recipientName)}</span>
               ${memberBadgeHtml}
             </div>

@@ -958,6 +958,14 @@ a:focus-visible {
   flex-shrink: 0;
 }
 
+.calendar-card-returning-signal {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  font-size: 0.9rem;
+  line-height: 1;
+}
+
 .calendar-card-phone {
   font-size: 0.72rem;
   color: #64748b;
@@ -1001,6 +1009,7 @@ a:focus-visible {
 .owner-calendar-appointment.is-compact .calendar-card-actions,
 .owner-calendar-appointment.is-compact .calendar-card-assistant,
 .owner-calendar-appointment.is-compact .calendar-card-member-badge,
+.owner-calendar-appointment.is-compact .calendar-card-returning-signal,
 .owner-calendar-appointment.is-compact .calendar-card-special-request-badge,
 .owner-calendar-appointment.is-compact .calendar-card-conflict-wrap,
 .owner-calendar-appointment.is-compact .owner-calendar-late-badge,
@@ -1012,6 +1021,7 @@ a:focus-visible {
 .owner-calendar-appointment.is-short .calendar-card-assistant,
 .owner-calendar-appointment.is-short .calendar-card-actions,
 .owner-calendar-appointment.is-short .calendar-card-member-badge,
+.owner-calendar-appointment.is-short .calendar-card-returning-signal,
 .owner-calendar-appointment.is-short .calendar-card-special-request-badge,
 .owner-calendar-appointment.is-short .calendar-card-conflict-wrap,
 .owner-calendar-appointment.is-short .owner-calendar-late-badge,
@@ -1039,6 +1049,7 @@ a:focus-visible {
 .owner-calendar-appointment.is-ultra-short .calendar-card-assistant,
 .owner-calendar-appointment.is-ultra-short .calendar-card-actions,
 .owner-calendar-appointment.is-ultra-short .calendar-card-member-badge,
+.owner-calendar-appointment.is-ultra-short .calendar-card-returning-signal,
 .owner-calendar-appointment.is-ultra-short .calendar-card-special-request-badge,
 .owner-calendar-appointment.is-ultra-short .calendar-card-conflict-wrap,
 .owner-calendar-appointment.is-ultra-short .owner-calendar-late-badge,

@@ -2202,6 +2202,15 @@ app.get(
         a.recipient_phone_snapshot,
         a.recipient_email_snapshot,
 
+        EXISTS (
+          SELECT 1 FROM appointments previous
+          WHERE previous.shop_id = a.shop_id
+            AND previous.recipient_customer_id = a.recipient_customer_id
+            AND previous.status IN ('arrived', 'in_service', 'completed')
+            AND previous.start_at < a.start_at
+            AND previous.id <> a.id
+        ) AS is_returning_customer,
+
         c.name AS customer_name,
         c.phone AS customer_phone,
         c.email AS customer_email,

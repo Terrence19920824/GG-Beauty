@@ -9,6 +9,7 @@
   const STORAGE_KEY = 'gg_beauty_locale';
   const dictionaries = {
     'zh-CN': {
+      returningCustomer: '回头客',
       calendar: '日历', staff: '员工', services: '服务', customers: '顾客', checkout: '收银', more: '更多',
       save: '保存', saveProfile: '保存基本资料', saving: '保存中...', saved: '已保存', saveFailed: '保存失败', savedReloadFailed: '已保存，但重新读取失败，请重试', unsavedChanges: '有未保存更改', discardUnsavedChanges: '有未保存更改。放弃更改并继续吗？', profileSaveDiscardsUnsaved: '其他设置有未保存更改。保存基本资料会重新读取员工设置，是否放弃这些更改并继续？', cancel: '取消', edit: '编辑', add: '新增', confirm: '确认', complete: '完成', retry: '重试',
       pending: '待确认', confirmed: '已确认', arrived: '已到店', in_service: '服务中', completed: '已完成', cancelled: '已取消', noShow: '未到店', no_show: '未到店', unknownStatus: '状态未知',
@@ -38,6 +39,7 @@
       , customerDirectory: '顾客', customerDirectoryHelp: '搜索顾客并查看档案', searchCustomers: '搜索顾客', searchCustomersPlaceholder: '姓名、电话或会员编号', previousPage: '上一页', nextPage: '下一页', selectCustomer: '请选择一位顾客查看档案', noCustomersFound: '未找到顾客', lastServiceVisit: '最近服务到访', overview: '概览', identityStatus: '身份状态', verifiedMember: '已验证会员', unverifiedContact: '未验证联系方式', readOnly: '只读', visits: '到访记录', serviceHistory: '服务历史', serviceHistoryHelp: '按每次到访显示服务项目与员工', noCustomerVisits: '暂无到访记录', customerTransactions: '交易记录', noCustomerTransactions: '暂无交易记录', loadMore: '加载更多', transactionLoadFailed: '读取交易记录失败', transactionReference: '交易编号', transactionQuote: '报价', transactionActual: '实际金额', transactionDiscount: '折扣', transactionRefund: '退款', transactionNetPaid: '净支付', transactionPayments: '支付方式', transactionStaff: '员工归属', transactionReconciliation: '财务对账', transactionReconciliationValid: '对账有效', transactionReconciliationError: '对账异常 / 财务状态不可用'
     },
     en: {
+      returningCustomer: 'Returning customer',
       calendar: 'Calendar', staff: 'Staff', services: 'Services', customers: 'Customers', checkout: 'Checkout', more: 'More',
       save: 'Save', saveProfile: 'Save Profile', saving: 'Saving...', saved: 'Saved', saveFailed: 'Save failed', savedReloadFailed: 'Saved, but failed to reload the latest data. Please retry.', unsavedChanges: 'Unsaved changes', discardUnsavedChanges: 'You have unsaved changes. Discard them and continue?', profileSaveDiscardsUnsaved: 'Other staff settings have unsaved changes. Saving the profile reloads staff settings. Discard those changes and continue?', cancel: 'Cancel', edit: 'Edit', add: 'Add', confirm: 'Confirm', complete: 'Complete', retry: 'Retry',
       pending: 'Pending', confirmed: 'Confirmed', arrived: 'Arrived', in_service: 'In Service', completed: 'Completed', cancelled: 'Cancelled', noShow: 'No Show', no_show: 'No Show', unknownStatus: 'Unknown Status',
