@@ -5,7 +5,7 @@ SET LOCAL statement_timeout = '30s';
 
 -- 1. Merchant feature toggles on shop_customer_settings
 ALTER TABLE public.shop_customer_settings
-  ADD COLUMN membership_enabled boolean NOT NULL DEFAULT true,
+  ADD COLUMN membership_enabled boolean NOT NULL DEFAULT false,
   ADD COLUMN points_enabled boolean NOT NULL DEFAULT false,
   ADD COLUMN stored_value_enabled boolean NOT NULL DEFAULT false,
   ADD COLUMN packages_enabled boolean NOT NULL DEFAULT false,

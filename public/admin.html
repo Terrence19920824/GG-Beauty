@@ -790,20 +790,20 @@
     <div class="card panel"><div id="customerSettingsMessage" class="save-status" aria-live="polite"></div>
       <div style="display:flex;flex-direction:column;gap:18px;max-width:540px;margin-top:8px;">
         <label style="display:flex;align-items:flex-start;gap:12px;cursor:pointer;">
-          <input id="settingMembershipEnabled" type="checkbox" checked style="width:20px;height:20px;margin-top:2px;cursor:pointer;">
+          <input id="settingMembershipEnabled" type="checkbox" style="width:20px;height:20px;margin-top:2px;cursor:pointer;">
           <div><strong data-i18n="membershipModule">会员</strong><div class="muted" style="font-size:13px;margin-top:2px;" data-i18n="membershipHelp">新顾客注册后自动激活普通会员资格。</div></div>
         </label>
-        <label style="display:flex;align-items:flex-start;gap:12px;cursor:pointer;">
-          <input id="settingPointsEnabled" type="checkbox" style="width:20px;height:20px;margin-top:2px;cursor:pointer;">
-          <div><strong data-i18n="pointsModule">积分</strong><div class="muted" style="font-size:13px;margin-top:2px;" data-i18n="pointsHelp">顾客消费积分功能（积分引擎开发中）。</div></div>
+        <label style="display:flex;align-items:flex-start;gap:12px;cursor:not-allowed;opacity:0.75;">
+          <input id="settingPointsEnabled" type="checkbox" disabled style="width:20px;height:20px;margin-top:2px;cursor:not-allowed;">
+          <div><div style="display:flex;align-items:center;gap:6px;"><strong data-i18n="pointsModule">积分</strong><span style="font-size:11px;padding:2px 6px;border-radius:4px;background:#eee;color:#666;" data-i18n="comingSoon">即将推出</span></div><div class="muted" style="font-size:13px;margin-top:2px;" data-i18n="pointsHelp">顾客消费积分功能（积分引擎开发中）。</div></div>
         </label>
-        <label style="display:flex;align-items:flex-start;gap:12px;cursor:pointer;">
-          <input id="settingStoredValueEnabled" type="checkbox" style="width:20px;height:20px;margin-top:2px;cursor:pointer;">
-          <div><strong data-i18n="storedValueModule">储值</strong><div class="muted" style="font-size:13px;margin-top:2px;" data-i18n="storedValueHelp">顾客储值钱包功能（储值引擎开发中）。</div></div>
+        <label style="display:flex;align-items:flex-start;gap:12px;cursor:not-allowed;opacity:0.75;">
+          <input id="settingStoredValueEnabled" type="checkbox" disabled style="width:20px;height:20px;margin-top:2px;cursor:not-allowed;">
+          <div><div style="display:flex;align-items:center;gap:6px;"><strong data-i18n="storedValueModule">储值</strong><span style="font-size:11px;padding:2px 6px;border-radius:4px;background:#eee;color:#666;" data-i18n="comingSoon">即将推出</span></div><div class="muted" style="font-size:13px;margin-top:2px;" data-i18n="storedValueHelp">顾客储值钱包功能（储值引擎开发中）。</div></div>
         </label>
-        <label style="display:flex;align-items:flex-start;gap:12px;cursor:pointer;">
-          <input id="settingPackagesEnabled" type="checkbox" style="width:20px;height:20px;margin-top:2px;cursor:pointer;">
-          <div><strong data-i18n="packagesModule">配套</strong><div class="muted" style="font-size:13px;margin-top:2px;" data-i18n="packagesHelp">次卡与服务配套功能（配套引擎开发中）。</div></div>
+        <label style="display:flex;align-items:flex-start;gap:12px;cursor:not-allowed;opacity:0.75;">
+          <input id="settingPackagesEnabled" type="checkbox" disabled style="width:20px;height:20px;margin-top:2px;cursor:not-allowed;">
+          <div><div style="display:flex;align-items:center;gap:6px;"><strong data-i18n="packagesModule">配套</strong><span style="font-size:11px;padding:2px 6px;border-radius:4px;background:#eee;color:#666;" data-i18n="comingSoon">即将推出</span></div><div class="muted" style="font-size:13px;margin-top:2px;" data-i18n="packagesHelp">次卡与服务配套功能（配套引擎开发中）。</div></div>
         </label>
       </div>
       <div class="form-actions" style="margin-top:24px;"><button id="saveCustomerSettingsButton" class="primary-btn" type="button" data-i18n="saveSettings" onclick="ownerSelfService.saveCustomerSettings()">保存设置</button></div>

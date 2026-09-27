@@ -1127,10 +1127,10 @@ app.get('/api/owner/customer-settings', requireOwnerAuth, requireOwnerRole(OWNER
     return res.json({
       success: true,
       data: {
-        membershipEnabled: settings.membership_enabled !== false,
-        pointsEnabled: settings.points_enabled === true,
-        storedValueEnabled: settings.stored_value_enabled === true,
-        packagesEnabled: settings.packages_enabled === true
+        membershipEnabled: settings.membership_enabled === true,
+        pointsEnabled: false,
+        storedValueEnabled: false,
+        packagesEnabled: false
       }
     });
   } catch (error) {
@@ -1142,19 +1142,19 @@ app.get('/api/owner/customer-settings', requireOwnerAuth, requireOwnerRole(OWNER
 app.patch('/api/owner/customer-settings', requireOwnerAuth, requireOwnerRole(OWNER_CUSTOMER_SETTINGS_ROLES), async (req, res) => {
   setPublicBookingNoCacheHeaders(res);
   try {
+    if (req.body?.pointsEnabled === true || req.body?.storedValueEnabled === true || req.body?.packagesEnabled === true) {
+      return res.status(400).json({ success: false, code: 'UNSUPPORTED_MODULE' });
+    }
     const updated = await resolveCustomerAccountService().updateShopSettings(req.ownerAuth.shopId, {
-      membership_enabled: req.body?.membershipEnabled,
-      points_enabled: req.body?.pointsEnabled,
-      stored_value_enabled: req.body?.storedValueEnabled,
-      packages_enabled: req.body?.packagesEnabled
+      membership_enabled: req.body?.membershipEnabled
     });
     return res.json({
       success: true,
       data: {
-        membershipEnabled: updated.membership_enabled !== false,
-        pointsEnabled: updated.points_enabled === true,
-        storedValueEnabled: updated.stored_value_enabled === true,
-        packagesEnabled: updated.packages_enabled === true
+        membershipEnabled: updated.membership_enabled === true,
+        pointsEnabled: false,
+        storedValueEnabled: false,
+        packagesEnabled: false
       }
     });
   } catch (error) {

@@ -176,15 +176,26 @@ test('Customer Account & Membership Foundation (PostgreSQL 17)', { timeout: 1200
     // 5. Test CustomerAccountService business logic against real PostgreSQL
     const service = createCustomerAccountService({ pool: db });
 
-    // Shop settings initial values
+    // Shop settings initial values: default membership_enabled is FALSE
     const settingsA = await service.getShopSettings(shopAId);
-    assert.equal(settingsA.membership_enabled, true);
+    assert.equal(settingsA.membership_enabled, false);
     assert.equal(settingsA.points_enabled, false);
     assert.equal(settingsA.stored_value_enabled, false);
     assert.equal(settingsA.packages_enabled, false);
     assert.equal(settingsA.auto_free_membership, true);
 
-    // Register customer in Shop A without OTP (phone present != verified phone)
+    // Newly provisioned shop C after migration 082 also defaults to false
+    const settingsC = await service.getShopSettings(shopCId);
+    assert.equal(settingsC.membership_enabled, false);
+
+    // Reject / ignore enabling unsupported modules at service layer
+    await service.updateShopSettings(shopAId, { points_enabled: true, stored_value_enabled: true, packages_enabled: true });
+    const settingsAAfterModules = await service.getShopSettings(shopAId);
+    assert.equal(settingsAAfterModules.points_enabled, false);
+    assert.equal(settingsAAfterModules.stored_value_enabled, false);
+    assert.equal(settingsAAfterModules.packages_enabled, false);
+
+    // Register customer in Shop A without OTP while membership_enabled = false
     const regResult = await service.signInWithPhone({
       shopSlug: 'shop-a',
       countryCode: '+65',
@@ -201,6 +212,7 @@ test('Customer Account & Membership Foundation (PostgreSQL 17)', { timeout: 1200
     assert.equal(custRow.phone_normalized, '+6591234567');
     assert.equal(custRow.phone_verified_at, null);
     assert.equal(custRow.identity_status, 'unverified_contact');
+    assert.equal(custRow.email, 'alice@example.com');
     assert.ok(custRow.member_code.startsWith('MEM-'));
 
     // Check account row: active
@@ -209,23 +221,93 @@ test('Customer Account & Membership Foundation (PostgreSQL 17)', { timeout: 1200
     assert.equal(acctRow.phone_normalized, '+6591234567');
     assert.equal(acctRow.created_by_role, 'customer');
 
-    // Check membership: auto-activated without owner approval
+    // Check membership: NOT created because membership_enabled is false
+    const initialMemCount = (await db.query(`SELECT count(*) FROM public.customer_memberships WHERE customer_id = $1`, [regResult.customerId])).rows[0].count;
+    assert.equal(initialMemCount, '0');
+
+    // Check summary with unverified phone privacy data minimization
+    const summaryUnverified = await service.getCustomerSummary({ shopId: shopAId, customerId: regResult.customerId });
+    assert.equal(summaryUnverified.isPhoneVerified, false);
+    assert.equal(summaryUnverified.account.status, 'active');
+    assert.equal(summaryUnverified.membership, null);
+    assert.equal(summaryUnverified.modules.membership, false);
+    assert.equal(summaryUnverified.modules.points, false);
+    assert.equal(summaryUnverified.modules.storedValue, false);
+    assert.equal(summaryUnverified.modules.packages, false);
+    // Data minimization asserts:
+    assert.equal(summaryUnverified.phone, null);
+    assert.equal(summaryUnverified.email, null);
+    assert.equal(summaryUnverified.dateOfBirth, null);
+    assert.equal(summaryUnverified.gender, null);
+    assert.equal(summaryUnverified.phoneNormalized, '+6591234567');
+
+    // Repeated signInWithPhone idempotency test (while membership is OFF)
+    const regRepeat = await service.signInWithPhone({
+      shopSlug: 'shop-a',
+      countryCode: '+65',
+      phone: '91234567',
+      name: 'Alice Tan Updated'
+    });
+    assert.equal(regRepeat.customerId, regResult.customerId);
+    const custCountAfterRepeat = (await db.query(`SELECT count(*) FROM public.customers WHERE shop_id = $1 AND phone_normalized = '+6591234567'`, [shopAId])).rows[0].count;
+    assert.equal(custCountAfterRepeat, '1');
+    const acctCountAfterRepeat = (await db.query(`SELECT count(*) FROM public.customer_accounts WHERE customer_id = $1`, [regResult.customerId])).rows[0].count;
+    assert.equal(acctCountAfterRepeat, '1');
+    const memCountAfterRepeat = (await db.query(`SELECT count(*) FROM public.customer_memberships WHERE customer_id = $1`, [regResult.customerId])).rows[0].count;
+    assert.equal(memCountAfterRepeat, '0');
+
+    // Cross-shop tier FK rejection at database level:
+    // Attempting to insert a membership for Shop A customer with a tier belonging to Shop B
+    const shopBTier = (await db.query(`SELECT id FROM public.membership_tiers WHERE shop_id = $1`, [shopBId])).rows[0];
+    await assert.rejects(
+      db.query(`
+        INSERT INTO public.customer_memberships (shop_id, customer_id, tier_id, activated_by)
+        VALUES ($1, $2, $3, 'manual_grant')
+      `, [shopAId, regResult.customerId, shopBTier.id]),
+      err => {
+        assert.equal(err.code, '23503'); // foreign key violation
+        return true;
+      }
+    );
+    await db.query('ROLLBACK').catch(() => {});
+
+    // Merchant enables membership module:
+    await service.updateShopSettings(shopAId, { membership_enabled: true });
+    const settingsAEnabled = await service.getShopSettings(shopAId);
+    assert.equal(settingsAEnabled.membership_enabled, true);
+
+    // Customer signs in again now that membership is enabled -> auto-provisions ordinary membership
+    const regWithMem = await service.signInWithPhone({
+      shopSlug: 'shop-a',
+      countryCode: '+65',
+      phone: '91234567',
+      name: 'Alice Tan'
+    });
+    assert.equal(regWithMem.customerId, regResult.customerId);
+
+    // Membership: auto-activated without owner approval
     const memRow = (await db.query(`SELECT * FROM public.customer_memberships WHERE customer_id = $1`, [regResult.customerId])).rows[0];
     assert.equal(memRow.status, 'active');
     assert.equal(memRow.activated_by, 'auto_free');
     assert.equal(memRow.expires_at, null); // permanent
 
-    // Check summary
-    const summary = await service.getCustomerSummary({ shopId: shopAId, customerId: regResult.customerId });
-    assert.equal(summary.isPhoneVerified, false);
-    assert.equal(summary.account.status, 'active');
-    assert.equal(summary.membership.isActive, true);
-    assert.equal(summary.membership.tierCode, 'ordinary');
-    assert.equal(summary.membership.tierName, '普通会员');
-    assert.equal(summary.modules.membership, true);
-    assert.equal(summary.modules.points, false);
-    assert.equal(summary.modules.storedValue, false);
-    assert.equal(summary.modules.packages, false);
+    // Check summary with active membership
+    const summaryWithMem = await service.getCustomerSummary({ shopId: shopAId, customerId: regResult.customerId });
+    assert.equal(summaryWithMem.account.status, 'active');
+    assert.equal(summaryWithMem.membership.isActive, true);
+    assert.equal(summaryWithMem.membership.tierCode, 'ordinary');
+    assert.equal(summaryWithMem.membership.tierName, '普通会员');
+    assert.equal(summaryWithMem.modules.membership, true);
+
+    // Repeated signInWithPhone idempotency when membership is ON (no duplicate memberships)
+    await service.signInWithPhone({
+      shopSlug: 'shop-a',
+      countryCode: '+65',
+      phone: '91234567',
+      name: 'Alice Tan'
+    });
+    const memCountWhenOn = (await db.query(`SELECT count(*) FROM public.customer_memberships WHERE customer_id = $1`, [regResult.customerId])).rows[0].count;
+    assert.equal(memCountWhenOn, '1');
 
     // 6. Multi-tenant isolation test
     // Customer registered in Shop A cannot fetch summary in Shop B
@@ -233,14 +315,13 @@ test('Customer Account & Membership Foundation (PostgreSQL 17)', { timeout: 1200
     assert.equal(crossSummary, null);
 
     // Settings update in Shop A does not leak to Shop B
-    await service.updateShopSettings(shopAId, { points_enabled: true, packages_enabled: true });
+    await service.updateShopSettings(shopAId, { membership_enabled: true });
+    await service.updateShopSettings(shopBId, { membership_enabled: false });
     const settingsAUpdated = await service.getShopSettings(shopAId);
-    assert.equal(settingsAUpdated.points_enabled, true);
-    assert.equal(settingsAUpdated.packages_enabled, true);
+    assert.equal(settingsAUpdated.membership_enabled, true);
 
     const settingsB = await service.getShopSettings(shopBId);
-    assert.equal(settingsB.points_enabled, false);
-    assert.equal(settingsB.packages_enabled, false);
+    assert.equal(settingsB.membership_enabled, false);
 
     // 7. Off != Delete test: disabling membership module hides it in summary but preserves database row
     await service.updateShopSettings(shopAId, { membership_enabled: false });
@@ -251,6 +332,19 @@ test('Customer Account & Membership Foundation (PostgreSQL 17)', { timeout: 1200
 
     const dbMembershipCount = (await db.query(`SELECT count(*) FROM public.customer_memberships WHERE customer_id = $1`, [regResult.customerId])).rows[0].count;
     assert.equal(dbMembershipCount, '1'); // Row preserved in database!
+
+    // Re-enabling reuses existing membership without duplicate
+    await service.updateShopSettings(shopAId, { membership_enabled: true });
+    await service.signInWithPhone({
+      shopSlug: 'shop-a',
+      countryCode: '+65',
+      phone: '91234567'
+    });
+    const dbMembershipCountReenabled = (await db.query(`SELECT count(*) FROM public.customer_memberships WHERE customer_id = $1`, [regResult.customerId])).rows[0].count;
+    assert.equal(dbMembershipCountReenabled, '1'); // No duplicate created!
+    const summaryReenabled = await service.getCustomerSummary({ shopId: shopAId, customerId: regResult.customerId });
+    assert.equal(summaryReenabled.modules.membership, true);
+    assert.equal(summaryReenabled.membership.isActive, true);
 
     // 8. Registering when membership module is disabled creates account WITHOUT membership
     await service.updateShopSettings(shopBId, { membership_enabled: false });

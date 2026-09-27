@@ -16,7 +16,7 @@
   function renderDynamicSections(){const host=$('memberDynamicSections');if(!host)return;const modules=state.config?.memberModules||state.member?.modules||{};const items=[];if(modules.points===true)items.push(`<div class="module-card"><div><strong>${t('pointsModule')}</strong><div class="hint">${t('pointsHelp')}</div></div><span class="module-badge">${t('comingSoonNotice')}</span></div>`);if(modules.storedValue===true)items.push(`<div class="module-card"><div><strong>${t('storedValueModule')}</strong><div class="hint">${t('storedValueHelp')}</div></div><span class="module-badge">${t('comingSoonNotice')}</span></div>`);if(modules.packages===true)items.push(`<div class="module-card"><div><strong>${t('packagesModule')}</strong><div class="hint">${t('packagesHelp')}</div></div><span class="module-badge">${t('comingSoonNotice')}</span></div>`);if(items.length>0){host.innerHTML=items.join('');host.hidden=false;}else{host.innerHTML='';host.hidden=true;}}
   function renderMember(){const m=state.member;if(!m)return;const panel=$('memberPanel');panel.dataset.shop=state.shopSlug;panel.dataset.memberTheme=state.config?.memberTheme?.key||'premium-black';if(root.ggCustomerTheme&&typeof root.ggCustomerTheme.resolveTheme==='function'){const theme=root.ggCustomerTheme.resolveTheme(state.shopSlug,{shopName:m.shop_name||m.shopName||state.config?.shopName});if(root.document&&root.document.documentElement)root.ggCustomerTheme.applyTheme(root.document.documentElement,theme);}$('shopName').textContent=m.shop_name||m.shopName||state.config?.shopName||'';$('shopLogo').textContent=(m.shop_name||m.shopName||'GG').split(/\s+/).map(x=>x[0]).join('').slice(0,2).toUpperCase();$('memberName').textContent=m.name||'';$('memberCode').textContent=m.member_code||m.memberCode||'';
     const modules=state.config?.memberModules||m.modules||{};
-    const hasMembership=modules.membershipTier!==false&&(modules.membership!==false);
+    const hasMembership=Boolean(modules.membershipTier||modules.membership);
     const isMemberActive=Boolean(m.membership&&m.membership.isActive);
     const allOff=!hasMembership&&!modules.points&&!modules.storedValue&&!modules.packages;
     if($('accountDisabledNotice'))$('accountDisabledNotice').hidden=!allOff;
@@ -29,9 +29,17 @@
     const verifyBadge=m.isPhoneVerified?`<span class="verified-badge">${t('phoneVerified')}</span>`:`<span class="unverified-badge">${t('phoneUnverified')}</span>`;
     $('memberVerifiedPhone').innerHTML=`${phoneVal} ${verifyBadge}`;
     if($('profilePhone'))$('profilePhone').innerHTML=`${t('phone')}: ${phoneVal} ${verifyBadge}`;
-    $('profileEmail').textContent=`${t('email')}: ${m.email||'—'}`;
-    $('profileDob').textContent=`${t('dateOfBirth')}: ${m.date_of_birth||m.dateOfBirth?String(m.date_of_birth||m.dateOfBirth).slice(0,10):'—'}`;
-    $('profileGender').textContent=`${t('genderOptional')}: ${m.gender?t(`genderValue_${m.gender}`):t('notSpecified')}`;
+    const isVerified=Boolean(m.isPhoneVerified);
+    show('profileEmail',isVerified);
+    show('profileDob',isVerified);
+    show('profileGender',isVerified);
+    show('editMemberProfile',isVerified);
+    if(!isVerified)show('profileEdit',false);
+    if(isVerified){
+      $('profileEmail').textContent=`${t('email')}: ${m.email||'—'}`;
+      $('profileDob').textContent=`${t('dateOfBirth')}: ${m.date_of_birth||m.dateOfBirth?String(m.date_of_birth||m.dateOfBirth).slice(0,10):'—'}`;
+      $('profileGender').textContent=`${t('genderOptional')}: ${m.gender?t(`genderValue_${m.gender}`):t('notSpecified')}`;
+    }
     renderDynamicSections();
   }
   async function phoneSignIn(isRegistration){
@@ -56,7 +64,7 @@
   }
   async function sendCode(){message('authMessage','');$('sendCode').disabled=true;try{const data=await api('/api/customer/auth/otp/request',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({shopSlug:state.shopSlug,countryCode:$('countryCode').value,phone:$('memberPhone').value})});state.challengeId=data.challengeId;state.resendUntil=Date.now()+60000;show('codeStep',true);show('registrationStep',false);message('authMessage','otpSentGeneric');renderResend();}catch(error){message('authMessage',authError(error));}finally{$('sendCode').disabled=false;}}
   async function verify(profile){message('authMessage','');if(!state.challengeId){return phoneSignIn(profile);}const body={challengeId:state.challengeId,code:$('otpCode').value};if(profile)Object.assign(body,{name:$('registrationName').value,email:$('registrationEmail').value,dateOfBirth:$('registrationDob').value,gender:$('registrationGender').value});try{await api('/api/customer/auth/otp/verify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});await loadMember();}catch(error){if(['CUSTOMER_NAME_REQUIRED','DOB_REQUIRED'].includes(error.code)){show('registrationStep',true);$('dobLabel').textContent=`${t('dateOfBirth')}${state.config?.dobRequirement==='required'?' *':` (${t('optional')})`}`;}message('authMessage',authError(error));}}
-  function editProfile(){const m=state.member;$('profileName').value=m.name||'';$('profileEmailInput').value=m.email||'';$('profileDobInput').value=m.date_of_birth||m.dateOfBirth?String(m.date_of_birth||m.dateOfBirth).slice(0,10):'';$('profileGenderInput').value=m.gender||'';show('profileEdit',true);}
+  function editProfile(){const m=state.member;if(!m||!m.isPhoneVerified)return;$('profileName').value=m.name||'';$('profileEmailInput').value=m.email||'';$('profileDobInput').value=m.date_of_birth||m.dateOfBirth?String(m.date_of_birth||m.dateOfBirth).slice(0,10):'';$('profileGenderInput').value=m.gender||'';show('profileEdit',true);}
   async function saveProfile(){try{state.member=await api('/api/customer/me',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:$('profileName').value,email:$('profileEmailInput').value,dateOfBirth:$('profileDobInput').value,gender:$('profileGenderInput').value})});show('profileEdit',false);renderMember();message('memberMessage','profileSaved');}catch(error){message('memberMessage',authError(error));}}
   function showPhoneChange(){show('phoneChangePanel',true);show('phoneChangeVerify',false);$('changePhone').value='';$('phoneChangeCode').value='';renderCountries();message('memberMessage','');}
   async function requestPhoneChange(){try{const data=await api('/api/customer/phone-change/request',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({countryCode:$('changeCountryCode').value,phone:$('changePhone').value})});state.phoneChangeChallengeId=data.challengeId;show('phoneChangeVerify',true);message('memberMessage','otpSentGeneric');}catch(error){message('memberMessage',authError(error));}}

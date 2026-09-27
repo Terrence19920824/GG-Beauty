@@ -368,15 +368,22 @@
     if (message) setMessage('customerSettingsMessage', '');
     try {
       const data = await request('/api/owner/customer-settings');
-      if (byId('settingMembershipEnabled')) byId('settingMembershipEnabled').checked = data.membershipEnabled !== false;
-      if (byId('settingPointsEnabled')) byId('settingPointsEnabled').checked = data.pointsEnabled === true;
-      if (byId('settingStoredValueEnabled')) byId('settingStoredValueEnabled').checked = data.storedValueEnabled === true;
-      if (byId('settingPackagesEnabled')) byId('settingPackagesEnabled').checked = data.packagesEnabled === true;
+      if (byId('settingMembershipEnabled')) byId('settingMembershipEnabled').checked = data.membershipEnabled === true;
+      if (byId('settingPointsEnabled')) {
+        byId('settingPointsEnabled').checked = false;
+        byId('settingPointsEnabled').disabled = true;
+      }
+      if (byId('settingStoredValueEnabled')) {
+        byId('settingStoredValueEnabled').checked = false;
+        byId('settingStoredValueEnabled').disabled = true;
+      }
+      if (byId('settingPackagesEnabled')) {
+        byId('settingPackagesEnabled').checked = false;
+        byId('settingPackagesEnabled').disabled = true;
+      }
       const canEdit = canWriteCustomerSettings();
       if (byId('saveCustomerSettingsButton')) byId('saveCustomerSettingsButton').hidden = !canEdit;
-      ['settingMembershipEnabled', 'settingPointsEnabled', 'settingStoredValueEnabled', 'settingPackagesEnabled'].forEach(id => {
-        if (byId(id)) byId(id).disabled = !canEdit;
-      });
+      if (byId('settingMembershipEnabled')) byId('settingMembershipEnabled').disabled = !canEdit;
     } catch (error) {
       if (!error.sessionExpired) setMessage('customerSettingsMessage', error.message, true);
     }
@@ -387,16 +394,22 @@
     setBusy('saveCustomerSettingsButton', true);
     try {
       const payload = {
-        membershipEnabled: Boolean(byId('settingMembershipEnabled')?.checked),
-        pointsEnabled: Boolean(byId('settingPointsEnabled')?.checked),
-        storedValueEnabled: Boolean(byId('settingStoredValueEnabled')?.checked),
-        packagesEnabled: Boolean(byId('settingPackagesEnabled')?.checked)
+        membershipEnabled: Boolean(byId('settingMembershipEnabled')?.checked)
       };
       const data = await request('/api/owner/customer-settings', { method: 'PATCH', body: JSON.stringify(payload) });
-      if (byId('settingMembershipEnabled')) byId('settingMembershipEnabled').checked = data.membershipEnabled !== false;
-      if (byId('settingPointsEnabled')) byId('settingPointsEnabled').checked = data.pointsEnabled === true;
-      if (byId('settingStoredValueEnabled')) byId('settingStoredValueEnabled').checked = data.storedValueEnabled === true;
-      if (byId('settingPackagesEnabled')) byId('settingPackagesEnabled').checked = data.packagesEnabled === true;
+      if (byId('settingMembershipEnabled')) byId('settingMembershipEnabled').checked = data.membershipEnabled === true;
+      if (byId('settingPointsEnabled')) {
+        byId('settingPointsEnabled').checked = false;
+        byId('settingPointsEnabled').disabled = true;
+      }
+      if (byId('settingStoredValueEnabled')) {
+        byId('settingStoredValueEnabled').checked = false;
+        byId('settingStoredValueEnabled').disabled = true;
+      }
+      if (byId('settingPackagesEnabled')) {
+        byId('settingPackagesEnabled').checked = false;
+        byId('settingPackagesEnabled').disabled = true;
+      }
       setMessage('customerSettingsMessage', t('saved'));
     } catch (error) {
       if (!error.sessionExpired) setMessage('customerSettingsMessage', error.message, true);

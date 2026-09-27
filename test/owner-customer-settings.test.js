@@ -30,7 +30,7 @@ const makeMockPool = ({
 } = {}) => {
   const store = settingsStore || {
     [ID.shopA]: {
-      membership_enabled: true,
+      membership_enabled: false,
       points_enabled: false,
       stored_value_enabled: false,
       packages_enabled: false
@@ -48,7 +48,7 @@ const makeMockPool = ({
       if (/SELECT[\s\S]+FROM shop_customer_settings/.test(normalized)) {
         const sid = params[0];
         const s = store[sid] || {
-          membership_enabled: true,
+          membership_enabled: false,
           points_enabled: false,
           stored_value_enabled: false,
           packages_enabled: false
@@ -58,7 +58,7 @@ const makeMockPool = ({
       if (/INSERT INTO shop_customer_settings[\s\S]+ON CONFLICT/.test(normalized)) {
         const sid = params[0];
         const current = store[sid] || {
-          membership_enabled: true,
+          membership_enabled: false,
           points_enabled: false,
           stored_value_enabled: false,
           packages_enabled: false
@@ -139,7 +139,7 @@ for (const role of ['owner', 'manager', 'admin']) {
   test(`${role} can read and update customer settings`, async () => {
     const store = {
       [ID.shopA]: {
-        membership_enabled: true,
+        membership_enabled: false,
         points_enabled: false,
         stored_value_enabled: false,
         packages_enabled: false
@@ -154,26 +154,38 @@ for (const role of ['owner', 'manager', 'admin']) {
       assert.equal(getRes.status, 200);
       const getJson = await getRes.json();
       assert.equal(getJson.success, true);
-      assert.equal(getJson.data.membershipEnabled, true);
+      assert.equal(getJson.data.membershipEnabled, false);
       assert.equal(getJson.data.pointsEnabled, false);
+      assert.equal(getJson.data.storedValueEnabled, false);
+      assert.equal(getJson.data.packagesEnabled, false);
 
-      // 2. Update settings
+      // 2. Update settings: enable membership
       const patchRes = await request(baseUrl, '/api/owner/customer-settings', {
         method: 'PATCH',
         body: {
-          membershipEnabled: true,
-          pointsEnabled: true,
-          storedValueEnabled: false,
-          packagesEnabled: true
+          membershipEnabled: true
         }
       });
       assert.equal(patchRes.status, 200);
       const patchJson = await patchRes.json();
       assert.equal(patchJson.success, true);
-      assert.equal(patchJson.data.pointsEnabled, true);
-      assert.equal(patchJson.data.packagesEnabled, true);
-      assert.equal(store[ID.shopA].points_enabled, true);
-      assert.equal(store[ID.shopA].packages_enabled, true);
+      assert.equal(patchJson.data.membershipEnabled, true);
+      assert.equal(patchJson.data.pointsEnabled, false);
+      assert.equal(patchJson.data.storedValueEnabled, false);
+      assert.equal(patchJson.data.packagesEnabled, false);
+      assert.equal(store[ID.shopA].membership_enabled, true);
+
+      // 3. Attempting to enable unfinished modules returns 400 UNSUPPORTED_MODULE
+      for (const key of ['pointsEnabled', 'storedValueEnabled', 'packagesEnabled']) {
+        const errRes = await request(baseUrl, '/api/owner/customer-settings', {
+          method: 'PATCH',
+          body: { [key]: true }
+        });
+        assert.equal(errRes.status, 400);
+        const errJson = await errRes.json();
+        assert.equal(errJson.success, false);
+        assert.equal(errJson.code, 'UNSUPPORTED_MODULE');
+      }
     });
   });
 }
