@@ -19,10 +19,11 @@ const ID = {
 };
 const uuid = n => `aaaaaaaa-aaaa-4aaa-8aaa-${String(n).padStart(12, '0')}`;
 
-async function connect(url) {
+async function connect(config, postgres, stderr) {
   let last;
   for (let i = 0; i < 50; i += 1) {
-    const db = new Client({ connectionString: url });
+    if (postgres.exitCode !== null || postgres.signalCode !== null) throw new Error(`PostgreSQL exited before readiness: ${stderr()}`);
+    const db = new Client(config);
     try { await db.connect(); return db; } catch (error) { last = error; await db.end().catch(() => {}); await new Promise(resolve => setTimeout(resolve, 100)); }
   }
   throw last;
@@ -51,13 +52,17 @@ async function insertTransaction(db, n, options = {}) {
 test('Customer Transactions executes real PostgreSQL aggregation, tenant filtering, reconciliation, and migration chain', { timeout: 120000 }, async t => {
   if (!fs.existsSync(path.join(PG_BIN, 'initdb'))) return t.skip('PostgreSQL 17 unavailable');
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'gg-customer-transactions-'));
-  const data = path.join(temp, 'data'); const port = 58600 + Math.floor(Math.random() * 100);
+  const data = path.join(temp, 'data'); const socket = path.join(temp, 'socket'); const port = 58600 + Math.floor(Math.random() * 100);
+  fs.mkdirSync(socket);
   const init = spawnSync(path.join(PG_BIN, 'initdb'), ['-D', data, '-A', 'trust', '--no-locale'], { encoding: 'utf8' });
   assert.equal(init.status, 0, init.stderr);
-  const postgres = spawn(path.join(PG_BIN, 'postgres'), ['-D', data, '-p', String(port)], { stdio: 'ignore' });
+  let stderr = '';
+  const postgres = spawn(path.join(PG_BIN, 'postgres'), ['-D', data, '-k', socket, '-p', String(port)], { stdio: ['ignore', 'ignore', 'pipe'] });
+  postgres.stderr.on('data', chunk => { stderr += chunk; });
+  const postgresExit = new Promise(resolve => { postgres.once('exit', (code, signal) => resolve({ code, signal })); postgres.once('error', error => resolve({ error })); });
   let db;
   try {
-    db = await connect(`postgresql://${os.userInfo().username}@127.0.0.1:${port}/postgres`);
+    db = await connect({ host: socket, port, database: 'postgres', user: os.userInfo().username }, postgres, () => stderr);
     await db.query(`CREATE EXTENSION pgcrypto; CREATE TABLE shops(id uuid PRIMARY KEY); CREATE TABLE customers(id uuid PRIMARY KEY,shop_id uuid NOT NULL,UNIQUE(shop_id,id)); CREATE TABLE staff(id uuid PRIMARY KEY,shop_id uuid NOT NULL,name text NOT NULL,UNIQUE(shop_id,id)); CREATE TABLE appointments(id uuid PRIMARY KEY,shop_id uuid NOT NULL,customer_id uuid NOT NULL,recipient_customer_id uuid NOT NULL,booker_customer_id uuid NOT NULL,appointment_no text,status text,UNIQUE(shop_id,id)); CREATE TABLE appointment_items(id uuid PRIMARY KEY,shop_id uuid NOT NULL,appointment_id uuid NOT NULL);`);
     await db.query(`INSERT INTO shops VALUES($1),($2); INSERT INTO customers VALUES($3,$1),($4,$1),($5,$2); INSERT INTO staff VALUES($6,$1,'Staff A')`, [ID.shopA, ID.shopB, ID.customerA, ID.customerB, ID.customerOther, ID.staffA]);
     await db.query(sql('048_checkout_pos_schema.sql')); await db.query(sql('051_checkout_financial_audit_schema.sql'));
@@ -91,5 +96,5 @@ test('Customer Transactions executes real PostgreSQL aggregation, tenant filteri
     assert.equal((await db.query(`SELECT to_regclass('public.checkout_transactions_shop_customer_created_id_idx') AS index`)).rows[0].index, null);
     assert.equal((await db.query(`SELECT to_regclass('public.checkout_transactions_appointment_idx') AS index`)).rows[0].index, 'checkout_transactions_appointment_idx');
     assert.equal((await db.query('SELECT count(*) FROM checkout_transactions')).rows[0].count, '8');
-  } finally { if (db) await db.end().catch(() => {}); postgres.kill('SIGTERM'); await new Promise(resolve => postgres.once('exit', resolve)); fs.rmSync(temp, { recursive: true, force: true }); }
+  } finally { if (db) await db.end().catch(() => {}); if (postgres.exitCode === null && postgres.signalCode === null) postgres.kill('SIGTERM'); await postgresExit; fs.rmSync(temp, { recursive: true, force: true }); }
 });

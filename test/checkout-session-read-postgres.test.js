@@ -16,14 +16,20 @@ test('checkout-session read transaction is database-enforced read-only', { timeo
   assert.match(readHandler, /BEGIN READ ONLY/);
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'gg-checkout-read-'));
   const data = path.join(temp, 'data');
+  const socket = path.join(temp, 'socket');
   const port = 58150 + Math.floor(Math.random() * 80);
+  fs.mkdirSync(socket);
   const init = spawnSync(path.join(PG_BIN, 'initdb'), ['-D', data, '-A', 'trust', '--no-locale'], { encoding: 'utf8' });
   assert.equal(init.status, 0, init.stderr);
-  const postgres = spawn(path.join(PG_BIN, 'postgres'), ['-D', data, '-p', String(port)], { stdio: 'ignore' });
+  let stderr = '';
+  const postgres = spawn(path.join(PG_BIN, 'postgres'), ['-D', data, '-k', socket, '-p', String(port)], { stdio: ['ignore', 'ignore', 'pipe'] });
+  postgres.stderr.on('data', chunk => { stderr += chunk; });
+  const postgresExit = new Promise(resolve => { postgres.once('exit', (code, signal) => resolve({ code, signal })); postgres.once('error', error => resolve({ error })); });
   let db;
   try {
     for (let attempt = 0; attempt < 50; attempt += 1) {
-      db = new Client({ connectionString: `postgresql://${os.userInfo().username}@127.0.0.1:${port}/postgres` });
+      if (postgres.exitCode !== null || postgres.signalCode !== null) throw new Error(`PostgreSQL exited before readiness: ${stderr}`);
+      db = new Client({ host: socket, port, database: 'postgres', user: os.userInfo().username });
       try { await db.connect(); break; }
       catch { await db.end().catch(() => {}); db = null; await new Promise(resolve => setTimeout(resolve, 100)); }
     }
@@ -35,8 +41,8 @@ test('checkout-session read transaction is database-enforced read-only', { timeo
     assert.equal((await db.query('SELECT count(*) FROM read_only_probe')).rows[0].count, '0');
   } finally {
     if (db) await db.end().catch(() => {});
-    postgres.kill('SIGTERM');
-    await new Promise(resolve => postgres.once('exit', resolve));
+    if (postgres.exitCode === null && postgres.signalCode === null) postgres.kill('SIGTERM');
+    await postgresExit;
     fs.rmSync(temp, { recursive: true, force: true });
   }
 });

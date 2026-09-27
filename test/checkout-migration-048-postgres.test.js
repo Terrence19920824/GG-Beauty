@@ -12,10 +12,11 @@ const ROOT = path.join(__dirname, '..');
 const PG_BIN = process.env.PG17_BIN || '/opt/homebrew/opt/postgresql@17/bin';
 const sql048 = fs.readFileSync(path.join(ROOT, 'migrations/048_checkout_pos_schema.sql'), 'utf8');
 
-async function connect(url) {
+async function connect(config, postgres, stderr) {
   let lastError;
   for (let attempt = 0; attempt < 50; attempt += 1) {
-    const db = new Client({ connectionString: url });
+    if (postgres.exitCode !== null || postgres.signalCode !== null) throw new Error(`PostgreSQL exited before readiness: ${stderr()}`);
+    const db = new Client(config);
     try { await db.connect(); return db; }
     catch (error) { lastError = error; await db.end().catch(() => {}); await new Promise(resolve => setTimeout(resolve, 100)); }
   }
@@ -25,13 +26,18 @@ async function connect(url) {
 async function withDatabase(t, setup, verify) {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'gg-checkout-048-'));
   const data = path.join(temp, 'data');
+  const socket = path.join(temp, 'socket');
   const port = 58000 + Math.floor(Math.random() * 120);
+  fs.mkdirSync(socket);
   const init = spawnSync(path.join(PG_BIN, 'initdb'), ['-D', data, '-A', 'trust', '--no-locale'], { encoding: 'utf8' });
   assert.equal(init.status, 0, init.stderr);
-  const postgres = spawn(path.join(PG_BIN, 'postgres'), ['-D', data, '-p', String(port)], { stdio: 'ignore' });
+  let stderr = '';
+  const postgres = spawn(path.join(PG_BIN, 'postgres'), ['-D', data, '-k', socket, '-p', String(port)], { stdio: ['ignore', 'ignore', 'pipe'] });
+  postgres.stderr.on('data', chunk => { stderr += chunk; });
+  const postgresExit = new Promise(resolve => { postgres.once('exit', (code, signal) => resolve({ code, signal })); postgres.once('error', error => resolve({ error })); });
   let db;
   try {
-    db = await connect(`postgresql://${os.userInfo().username}@127.0.0.1:${port}/postgres`);
+    db = await connect({ host: socket, port, database: 'postgres', user: os.userInfo().username }, postgres, () => stderr);
     await db.query(`
       CREATE EXTENSION pgcrypto;
       CREATE TABLE shops (id uuid PRIMARY KEY);
@@ -44,8 +50,8 @@ async function withDatabase(t, setup, verify) {
     await verify(db);
   } finally {
     if (db) await db.end().catch(() => {});
-    postgres.kill('SIGTERM');
-    await new Promise(resolve => postgres.once('exit', resolve));
+    if (postgres.exitCode === null && postgres.signalCode === null) postgres.kill('SIGTERM');
+    await postgresExit;
     fs.rmSync(temp, { recursive: true, force: true });
   }
 }

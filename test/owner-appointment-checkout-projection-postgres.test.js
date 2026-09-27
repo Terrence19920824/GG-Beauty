@@ -39,10 +39,11 @@ const ID = {
   assistantTime: '88888888-8888-4888-8888-666666666666'
 };
 
-const connectWhenReady = async url => {
+const connectWhenReady = async (config, postgres, stderr) => {
   let lastError;
   for (let attempt = 0; attempt < 50; attempt += 1) {
-    const client = new Client({ connectionString: url });
+    if (postgres.exitCode !== null || postgres.signalCode !== null) throw new Error(`PostgreSQL exited before readiness: ${stderr()}`);
+    const client = new Client(config);
     try { await client.connect(); return client; }
     catch (error) {
       lastError = error;
@@ -64,15 +65,20 @@ test('owner appointment checkout projection executes once on PostgreSQL and isol
   if (!fs.existsSync(path.join(PG_BIN, 'initdb'))) return t.skip('PostgreSQL 17 unavailable');
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'gg-owner-checkout-projection-'));
   const data = path.join(temp, 'data');
+  const socket = path.join(temp, 'socket');
   const port = 58300 + Math.floor(Math.random() * 150);
+  fs.mkdirSync(socket);
   const init = spawnSync(path.join(PG_BIN, 'initdb'), ['-D', data, '-A', 'trust', '--no-locale'], { encoding: 'utf8' });
   assert.equal(init.status, 0, init.stderr);
-  const postgres = spawn(path.join(PG_BIN, 'postgres'), ['-D', data, '-p', String(port)], { stdio: 'ignore' });
-  const url = `postgresql://${os.userInfo().username}@127.0.0.1:${port}/postgres`;
+  let stderr = '';
+  const postgres = spawn(path.join(PG_BIN, 'postgres'), ['-D', data, '-k', socket, '-p', String(port)], { stdio: ['ignore', 'ignore', 'pipe'] });
+  postgres.stderr.on('data', chunk => { stderr += chunk; });
+  const postgresExit = new Promise(resolve => { postgres.once('exit', (code, signal) => resolve({ code, signal })); postgres.once('error', error => resolve({ error })); });
+  const config = { host: socket, port, database: 'postgres', user: os.userInfo().username, ssl: false };
   let db; let pool;
   const originalGate = process.env.CHECKOUT_WRITE_ENABLED;
   try {
-    db = await connectWhenReady(url);
+    db = await connectWhenReady(config, postgres, () => stderr);
     await db.query(`
       CREATE TABLE locations (id uuid PRIMARY KEY, shop_id uuid NOT NULL, name text, is_active boolean NOT NULL, UNIQUE(shop_id,id));
       CREATE TABLE customers (id uuid PRIMARY KEY, shop_id uuid NOT NULL, name text, phone text, email text, member_code text, identity_status text, profile_notes text NULL, UNIQUE(shop_id,id), CONSTRAINT customers_profile_notes_length_check CHECK(profile_notes IS NULL OR char_length(profile_notes) <= 4000));
@@ -225,7 +231,7 @@ test('owner appointment checkout projection executes once on PostgreSQL and isol
       ($6,$2,$3,$4,$5,'assistant','2030-01-03T02:00:00.000000Z','2030-01-03T03:00:00.000000Z')`,
     [ID.assignmentTime, ID.shopA, ID.locationA, ID.itemTime, ID.staffA, ID.assistantTime]);
 
-    pool = new Pool({ connectionString: url, ssl: false });
+    pool = new Pool(config);
     let connectCount = 0;
     app.locals.ownerAuthPool = {
       async query(sql) {
@@ -375,8 +381,8 @@ test('owner appointment checkout projection executes once on PostgreSQL and isol
     else process.env.CHECKOUT_WRITE_ENABLED = originalGate;
     if (pool) await pool.end().catch(() => {});
     if (db) await db.end().catch(() => {});
-    postgres.kill('SIGTERM');
-    await new Promise(resolve => postgres.once('exit', resolve));
+    if (postgres.exitCode === null && postgres.signalCode === null) postgres.kill('SIGTERM');
+    await postgresExit;
     fs.rmSync(temp, { recursive: true, force: true });
   }
 });

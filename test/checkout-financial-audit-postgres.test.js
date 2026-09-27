@@ -26,10 +26,11 @@ const request = (appointmentId, shopId, body) => ({
   params: { appointmentId }, body, ownerAuth: { shopId, ownerAccountId: ID.owner }
 });
 
-async function connectWhenReady(url) {
+async function connectWhenReady(config, postgres, stderr) {
   let lastError;
   for (let attempt = 0; attempt < 50; attempt += 1) {
-    const client = new Client({ connectionString: url });
+    if (postgres.exitCode !== null || postgres.signalCode !== null) throw new Error(`PostgreSQL exited before readiness: ${stderr()}`);
+    const client = new Client(config);
     try { await client.connect(); return client; }
     catch (error) { lastError = error; await client.end().catch(() => {}); await new Promise(resolve => setTimeout(resolve, 100)); }
   }
@@ -40,14 +41,19 @@ test('PostgreSQL checkout financial audit is immutable, idempotent and transacti
   if (!fs.existsSync(path.join(PG_BIN, 'initdb'))) return t.skip('PostgreSQL 17 unavailable');
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'gg-checkout-pg-'));
   const data = path.join(temp, 'data');
+  const socket = path.join(temp, 'socket');
   const port = 57900 + Math.floor(Math.random() * 80);
+  fs.mkdirSync(socket);
   const init = spawnSync(path.join(PG_BIN, 'initdb'), ['-D', data, '-A', 'trust', '--no-locale'], { encoding: 'utf8' });
   assert.equal(init.status, 0, init.stderr);
-  const postgres = spawn(path.join(PG_BIN, 'postgres'), ['-D', data, '-p', String(port)], { stdio: 'ignore' });
-  const url = `postgresql://${os.userInfo().username}@127.0.0.1:${port}/postgres`;
+  let stderr = '';
+  const postgres = spawn(path.join(PG_BIN, 'postgres'), ['-D', data, '-k', socket, '-p', String(port)], { stdio: ['ignore', 'ignore', 'pipe'] });
+  postgres.stderr.on('data', chunk => { stderr += chunk; });
+  const postgresExit = new Promise(resolve => { postgres.once('exit', (code, signal) => resolve({ code, signal })); postgres.once('error', error => resolve({ error })); });
+  const config = { host: socket, port, database: 'postgres', user: os.userInfo().username, ssl: false };
   let db; let pool;
   try {
-    db = await connectWhenReady(url);
+    db = await connectWhenReady(config, postgres, () => stderr);
     await db.query(`
       CREATE EXTENSION pgcrypto;
       CREATE TABLE shops (id uuid PRIMARY KEY);
@@ -79,7 +85,7 @@ test('PostgreSQL checkout financial audit is immutable, idempotent and transacti
     await db.query(migration('050_checkout_financial_audit_preflight_readonly.sql'));
     await db.query(migration('051_checkout_financial_audit_schema.sql'));
 
-    pool = new Pool({ connectionString: url, ssl: false });
+    pool = new Pool(config);
     const create = createCheckoutPos({ pool }).create;
     const session = {
       appointmentId: ID.appointmentA,
@@ -121,8 +127,8 @@ test('PostgreSQL checkout financial audit is immutable, idempotent and transacti
   } finally {
     if (pool) await pool.end().catch(() => {});
     if (db) await db.end().catch(() => {});
-    postgres.kill('SIGTERM');
-    await new Promise(resolve => postgres.once('exit', resolve));
+    if (postgres.exitCode === null && postgres.signalCode === null) postgres.kill('SIGTERM');
+    await postgresExit;
     fs.rmSync(temp, { recursive: true, force: true });
   }
 });
