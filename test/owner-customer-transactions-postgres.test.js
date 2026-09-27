@@ -64,7 +64,9 @@ test('Customer Transactions executes real PostgreSQL aggregation, tenant filteri
   try {
     db = await connect({ host: socket, port, database: 'postgres', user: os.userInfo().username }, postgres, () => stderr);
     await db.query(`CREATE EXTENSION pgcrypto; CREATE TABLE shops(id uuid PRIMARY KEY); CREATE TABLE customers(id uuid PRIMARY KEY,shop_id uuid NOT NULL,UNIQUE(shop_id,id)); CREATE TABLE staff(id uuid PRIMARY KEY,shop_id uuid NOT NULL,name text NOT NULL,UNIQUE(shop_id,id)); CREATE TABLE appointments(id uuid PRIMARY KEY,shop_id uuid NOT NULL,customer_id uuid NOT NULL,recipient_customer_id uuid NOT NULL,booker_customer_id uuid NOT NULL,appointment_no text,status text,UNIQUE(shop_id,id)); CREATE TABLE appointment_items(id uuid PRIMARY KEY,shop_id uuid NOT NULL,appointment_id uuid NOT NULL);`);
-    await db.query(`INSERT INTO shops VALUES($1),($2); INSERT INTO customers VALUES($3,$1),($4,$1),($5,$2); INSERT INTO staff VALUES($6,$1,'Staff A')`, [ID.shopA, ID.shopB, ID.customerA, ID.customerB, ID.customerOther, ID.staffA]);
+    await db.query(`INSERT INTO shops VALUES($1),($2)`, [ID.shopA, ID.shopB]);
+    await db.query(`INSERT INTO customers VALUES($1,$2),($3,$2),($4,$5)`, [ID.customerA, ID.shopA, ID.customerB, ID.customerOther, ID.shopB]);
+    await db.query(`INSERT INTO staff VALUES($1,$2,'Staff A')`, [ID.staffA, ID.shopA]);
     await db.query(sql('048_checkout_pos_schema.sql')); await db.query(sql('051_checkout_financial_audit_schema.sql'));
     await db.query(sql('075_customer_transactions_index_preflight_readonly.sql')); await db.query(sql('076_customer_transactions_index_schema.sql')); await db.query(sql('077_customer_transactions_index_verification_readonly.sql'));
     const definition = (await db.query(`SELECT pg_get_indexdef('checkout_transactions_shop_customer_created_id_idx'::regclass) AS definition`)).rows[0].definition;
