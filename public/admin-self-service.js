@@ -23,7 +23,8 @@
     authoritativeLocationIds: new Set(),
     authoritativeSchedule: null,
     authoritativeOverrides: []
-    , customerPage: 1, customerHasMore: false, customerQuery: '', selectedCustomerId: null
+    , customerPage: 1, customerHasMore: false, customerQuery: '', selectedCustomerId: null,
+    customerTransactionsPage: 1, customerTransactionsHasMore: false, customerTransactions: []
   };
 
   const byId = id => document.getElementById(id);
@@ -226,6 +227,35 @@
   const roleCanWriteProfileNotes = () => ['owner', 'manager'].includes(state.profile?.membership?.role);
   const statusText = status => t(status === 'no_show' ? 'noShow' : status || 'unknownStatus');
   const identityStatusText = value => t(value === 'verified_member' ? 'verifiedMember' : value === 'unverified_contact' ? 'unverifiedContact' : 'notSpecified');
+  const transactionStateText = value => t({ draft: 'checkoutStateDraft', unpaid: 'checkoutStateUnpaid', partially_paid: 'checkoutStatePartiallyPaid', paid: 'checkoutStatePaid', partially_refunded: 'checkoutStatePartiallyRefunded', refunded: 'checkoutStateRefunded', void: 'checkoutStateVoid', inconsistent: 'checkoutStateInconsistent' }[value] || 'checkoutStateInconsistent');
+  const formatMinor = (value, currency) => Number.isSafeInteger(value)
+    ? new Intl.NumberFormat(state.locale === 'zh-CN' ? 'zh-CN' : 'en-SG', { style: 'currency', currency: currency || 'SGD' }).format(value / 100)
+    : '-';
+  function transactionHtml(transaction) {
+    const amount = (label, value) => `<span>${escapeHtml(label)}: ${escapeHtml(formatMinor(value, transaction.currencyCode))}</span>`;
+    const items = (transaction.lineItems || []).map(item => `<li>${escapeHtml(item.description || '-')} · ${escapeHtml(formatMinor(item.finalValueMinor, transaction.currencyCode))}</li>`).join('');
+    const payments = (transaction.payments || []).map(payment => `${escapeHtml(payment.method || '-')}: ${escapeHtml(formatMinor(payment.amountMinor, transaction.currencyCode))}`).join(' · ');
+    const attribution = (transaction.staffAttributions || []).map(item => escapeHtml(item.staffName || '-')).join(' · ');
+    return `<article class="customer-visit customer-transaction"><div><strong>${escapeHtml(formatDateTime(transaction.createdAt))}</strong> · ${escapeHtml(transactionStateText(transaction.paymentState))}</div><div class="customer-meta"><span>${escapeHtml(t('transactionReference'))}: ${escapeHtml(transaction.id)}</span>${transaction.appointmentNo ? `<span>${escapeHtml(t('appointmentNoLabel'))}: ${escapeHtml(transaction.appointmentNo)}</span>` : ''}</div><div class="customer-meta">${amount(t('transactionQuote'), transaction.quoteTotalMinor)}${amount(t('transactionActual'), transaction.actualTotalMinor)}${amount(t('transactionDiscount'), transaction.discountTotalMinor)}${amount(t('finalDue'), transaction.finalDueMinor)}${amount(t('paidAmount'), transaction.recordedPaidMinor)}${amount(t('transactionRefund'), transaction.refundTotalMinor)}${amount(t('transactionNetPaid'), transaction.netPaidMinor)}${amount(t('outstandingAmount'), transaction.outstandingMinor)}</div><div class="hint">${escapeHtml(t('transactionReconciliation'))}: ${escapeHtml(transaction.reconciliationValid ? t('transactionReconciliationValid') : t('transactionReconciliationError'))}</div>${items ? `<ul class="customer-transaction-items">${items}</ul>` : ''}${payments ? `<div class="hint">${escapeHtml(t('transactionPayments'))}: ${payments}</div>` : ''}${attribution ? `<div class="hint">${escapeHtml(t('transactionStaff'))}: ${attribution}</div>` : ''}</article>`;
+  }
+  function renderCustomerTransactions() {
+    const host = byId('customerTransactions'); if (!host) return;
+    if (!state.customerTransactions.length) host.innerHTML = `<div class="empty">${escapeHtml(t('noCustomerTransactions'))}</div>`;
+    else host.innerHTML = state.customerTransactions.map(transactionHtml).join('');
+    const more = byId('loadMoreCustomerTransactions');
+    if (more) { more.hidden = !state.customerTransactionsHasMore; more.onclick = () => loadCustomerTransactions(state.selectedCustomerId, true); }
+  }
+  async function loadCustomerTransactions(customerId, append = false) {
+    const host = byId('customerTransactions'); if (!host || !customerId) return;
+    if (!append) { state.customerTransactionsPage = 1; state.customerTransactions = []; host.textContent = t('loading'); }
+    try {
+      const data = await request(`/api/owner/customers/${encodeURIComponent(customerId)}/transactions?page=${state.customerTransactionsPage}&pageSize=25`);
+      state.customerTransactions = append ? state.customerTransactions.concat(data.transactions || []) : (data.transactions || []);
+      state.customerTransactionsHasMore = data.hasMore === true;
+      if (state.customerTransactionsHasMore) state.customerTransactionsPage++;
+      renderCustomerTransactions();
+    } catch (error) { if (!error.sessionExpired) host.textContent = `${t('transactionLoadFailed')}: ${error.message}`; }
+  }
   function renderCustomerProfile(data) {
     const host = byId('customerProfilePanel'); if (!host) return;
     const customer = data.customer;
@@ -243,8 +273,10 @@
       <section class="customer-profile-section"><h3>${escapeHtml(t('overview'))}</h3><div class="customer-meta"><span>${escapeHtml(t('email'))}: ${escapeHtml(customer.email || t('emailNotProvided'))}</span><span>${escapeHtml(t('dateOfBirth'))}: ${escapeHtml(customer.dateOfBirth || t('notSpecified'))}</span><span>${escapeHtml(t('genderOptional'))}: ${escapeHtml(gender)}</span><span>${escapeHtml(t('identityStatus'))}: ${escapeHtml(identityStatusText(customer.identityStatus))}</span></div></section>
       <section class="customer-profile-section"><h3>${escapeHtml(t('customerProfileNotes'))}</h3><textarea id="customerProfileNotesInput" class="customer-notes" maxlength="4000" ${notesWritable ? '' : 'disabled'}>${escapeHtml(customer.profileNotes || '')}</textarea>${notesWritable ? `<div class="form-actions"><button id="saveCustomerProfileNotesButton" class="primary-btn" type="button">${escapeHtml(t('save'))}</button></div>` : `<div class="hint">${escapeHtml(t('readOnly'))}</div>`}</section>
       <section class="customer-profile-section"><h3>${escapeHtml(t('visits'))}</h3>${visitHtml}</section>
-      <section class="customer-profile-section"><h3>${escapeHtml(t('serviceHistory'))}</h3><div class="hint">${escapeHtml(t('serviceHistoryHelp'))}</div>${visitHtml}</section>`;
+      <section class="customer-profile-section"><h3>${escapeHtml(t('serviceHistory'))}</h3><div class="hint">${escapeHtml(t('serviceHistoryHelp'))}</div>${visitHtml}</section>
+      <section class="customer-profile-section"><h3>${escapeHtml(t('customerTransactions'))}</h3><div id="customerTransactions" aria-live="polite"></div><div class="form-actions"><button id="loadMoreCustomerTransactions" type="button" class="secondary-btn" hidden>${escapeHtml(t('loadMore'))}</button></div></section>`;
     if (notesWritable) byId('saveCustomerProfileNotesButton')?.addEventListener('click', () => saveCustomerProfileNotes(customer.id));
+    loadCustomerTransactions(customer.id);
   }
   async function selectCustomer(id) {
     state.selectedCustomerId = id;

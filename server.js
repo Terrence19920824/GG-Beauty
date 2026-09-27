@@ -70,6 +70,7 @@ const {
   createOwnerAppointmentEdit
 } = require('./lib/owner-appointment-edit');
 const { CUSTOMER_READ_ROLES, listCustomers, getCustomer } = require('./lib/owner-customer-profile');
+const { listCustomerTransactions } = require('./lib/owner-customer-transactions');
 
 const app = express();
 const OWNER_MERCHANT_CONTACT_READ_ROLES = Object.freeze(['owner', 'manager', 'admin']);
@@ -774,6 +775,21 @@ app.get('/api/owner/customers/:customerId', requireOwnerAuth, requireOwnerRole(C
   } catch (error) {
     console.error('Owner customer detail error:', safeStaffAuthErrorCode(error));
     return res.status(500).json({ success: false, code: 'CUSTOMER_DETAIL_READ_FAILED' });
+  }
+});
+
+app.get('/api/owner/customers/:customerId/transactions', requireOwnerAuth, requireOwnerRole(CUSTOMER_READ_ROLES), async (req, res) => {
+  try {
+    const data = await listCustomerTransactions(app.locals.ownerAuthPool, {
+      shopId: req.ownerAuth.shopId,
+      customerId: typeof req.params.customerId === 'string' ? req.params.customerId.trim() : '',
+      query: req.query
+    });
+    if (!data) return res.status(404).json({ success: false, code: 'CUSTOMER_NOT_FOUND' });
+    return res.set('Cache-Control', 'no-store').json({ success: true, data });
+  } catch (error) {
+    console.error('Owner customer transactions read error:', safeStaffAuthErrorCode(error));
+    return res.status(500).json({ success: false, code: 'CUSTOMER_TRANSACTIONS_READ_FAILED' });
   }
 });
 
