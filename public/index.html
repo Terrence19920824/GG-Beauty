@@ -254,6 +254,12 @@
     .recipient-option { margin: 0; padding: 13px 10px; background: var(--theme-surface, #fff); color: var(--theme-text, #222); border: 1px solid var(--theme-border, #ddd); font-size: 14px; }
     .recipient-option.selected { background: var(--theme-primary, #111); color: var(--theme-primary-contrast, #fff); border-color: var(--theme-primary, #111); }
     .phone-row { display: grid; grid-template-columns: 145px 1fr; gap: 8px; }
+    .special-request { margin-top: 14px; border: 1px solid var(--theme-border, #ddd); border-radius: 12px; overflow: hidden; background: var(--theme-surface, #fff); }
+    .special-request-toggle { width: 100%; min-height: 48px; margin: 0; padding: 11px 13px; border: 0; border-radius: 0; background: transparent; color: var(--theme-text, #222); text-align: left; font-size: 14px; line-height: 1.35; }
+    .special-request-title { display: block; font-weight: 700; }
+    .special-request-hint { display: block; margin-top: 2px; color: var(--theme-text-muted, #777); font-size: 13px; font-weight: 500; }
+    .special-request-body { padding: 0 13px 13px; }
+    .special-request-body textarea { min-height: 88px; resize: vertical; margin: 0; }
     .language-switch { position:absolute;right:0;top:-16px;display:inline-flex;align-items:center;padding:3px 5px;border:1px solid rgba(80,80,80,.16);border-radius:999px;background:rgba(255,255,255,.66);backdrop-filter:blur(9px);-webkit-backdrop-filter:blur(9px);color:#888; }
     .language-switch button { width:auto;margin:0;padding:4px 7px;border:0;border-radius:999px;background:transparent;color:#999;font-size:12px;font-weight:600; }
     .language-switch button:disabled { opacity:1;color:#222;background:rgba(255,255,255,.72);box-shadow:0 1px 5px rgba(0,0,0,.07); }
@@ -458,6 +464,16 @@
       id="email"
       placeholder="example@email.com"
     >
+
+    <div class="special-request">
+      <button id="specialRequestToggle" class="special-request-toggle" type="button" aria-expanded="false" aria-controls="specialRequestBody">
+        <span class="special-request-title" data-i18n="specialRequestOptional">🏷️ 特殊要求（选填）</span>
+        <span class="special-request-hint" data-i18n="specialRequestHint">有特殊需求？点击填写</span>
+      </button>
+      <div id="specialRequestBody" class="special-request-body" hidden>
+        <textarea id="customerSpecialRequest" maxlength="1000" data-i18n-placeholder="specialRequestHint" placeholder="有特殊需求？点击填写"></textarea>
+      </div>
+    </div>
 
     <div id="confirmationSummary" class="cart-item notranslate" translate="no" hidden></div>
 
@@ -1584,6 +1600,16 @@ if (nextStepBtn) {
 
 bookForMyself.addEventListener('click', () => { bookingFor = 'myself'; renderRecipientChoice(); });
 bookForSomeoneElse.addEventListener('click', () => { bookingFor = 'someone_else'; renderRecipientChoice(); });
+const specialRequestToggle = document.getElementById('specialRequestToggle');
+const specialRequestBody = document.getElementById('specialRequestBody');
+if (specialRequestToggle && specialRequestBody) {
+  specialRequestToggle.addEventListener('click', () => {
+    const expanded = specialRequestToggle.getAttribute('aria-expanded') === 'true';
+    specialRequestToggle.setAttribute('aria-expanded', String(!expanded));
+    specialRequestBody.hidden = expanded;
+    if (!expanded) document.getElementById('customerSpecialRequest')?.focus();
+  });
+}
 document.getElementById('previousMonth').addEventListener('click', async () => { calendarMonth = calendarApi.shiftMonth(calendarMonth, -1); await loadAvailableDates(); });
 document.getElementById('nextMonth').addEventListener('click', async () => { calendarMonth = calendarApi.shiftMonth(calendarMonth, 1); await loadAvailableDates(); });
 
@@ -1882,6 +1908,8 @@ document
           .value
           .trim();
 
+      const customerSpecialRequest = document.getElementById('customerSpecialRequest').value;
+
       const date =
         dateInput.value;
 
@@ -1890,6 +1918,12 @@ document
         phone: explicitContactPhone(recipientCountryCode.value, document.getElementById('recipientPhone').value),
         email: document.getElementById('recipientEmail').value.trim()
       } : null;
+
+      if (customerSpecialRequest.trim().length > 1000) {
+        messageBox.className = 'message error';
+        messageBox.textContent = customerT('specialRequestTooLong');
+        return;
+      }
 
       if (
         !cart.length ||
@@ -1939,6 +1973,7 @@ document
                 customerName,
                 phone,
                 email,
+                customerSpecialRequest,
                 bookingFor,
                 ...(recipient ? { recipient } : {}),
                 date,

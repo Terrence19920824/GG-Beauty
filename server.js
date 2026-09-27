@@ -79,6 +79,7 @@ const OWNER_APPOINTMENT_INTERNAL_NOTES_MAX_LENGTH = 4000;
 const OWNER_CUSTOMER_PROFILE_NOTES_WRITE_ROLES = Object.freeze(['owner', 'manager']);
 const OWNER_CUSTOMER_PROFILE_NOTES_READ_ROLES = Object.freeze(['owner', 'manager', 'admin', 'front_desk']);
 const OWNER_CUSTOMER_PROFILE_NOTES_MAX_LENGTH = 4000;
+const CUSTOMER_SPECIAL_REQUEST_MAX_LENGTH = 1000;
 
 const ADMIN_PASSWORD =
   process.env.ADMIN_PASSWORD;
@@ -2173,6 +2174,7 @@ app.get(
         a.status,
         a.booking_source,
         a.internal_notes,
+        a.customer_special_request,
 
         a.customer_id,
         a.booker_customer_id,
@@ -2664,11 +2666,25 @@ const planMultiServiceStaff = async ({ client, scope, date, timeline, validator,
   });
 };
 
+const normalizeCustomerSpecialRequest = body => {
+  const value = body?.customerSpecialRequest;
+  if (value === undefined || value === null) return null;
+  if (typeof value !== 'string') {
+    throw new AppointmentMutationError('CUSTOMER_SPECIAL_REQUEST_INVALID', 400, '特殊要求格式不正确');
+  }
+  const trimmed = value.trim();
+  if (trimmed.length > CUSTOMER_SPECIAL_REQUEST_MAX_LENGTH) {
+    throw new AppointmentMutationError('CUSTOMER_SPECIAL_REQUEST_TOO_LONG', 400, '特殊要求不能超过1000个字符');
+  }
+  return trimmed || null;
+};
+
 const createMultiServiceBooking = async (req,verifiedSession=null) => {
   const body = req.body;
   const items = normalizeBookingItems(body, isUuid);
   const locale = normalizeLocale(body.locale);
   const parsedStart = parseStrictIsoInstant(body.startAt);
+  const customerSpecialRequest = normalizeCustomerSpecialRequest(body);
   if (!parsedStart || !body.shopSlug || !body.customerName || !body.phone) {
     throw new AppointmentMutationError('booking_input_invalid', 400, '请完整填写所有必填信息');
   }
@@ -2701,14 +2717,14 @@ const createMultiServiceBooking = async (req,verifiedSession=null) => {
          shop_id,location_id,customer_id,booker_customer_id,recipient_customer_id,
          booker_name_snapshot,booker_phone_snapshot,booker_email_snapshot,
          recipient_name_snapshot,recipient_phone_snapshot,recipient_email_snapshot,
-         service_id,staff_id,start_at,end_at,status,booking_source
+         service_id,staff_id,start_at,end_at,status,booking_source,customer_special_request
        )
-       VALUES ($1,$2,$3,$4,$3,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'pending','online')
+       VALUES ($1,$2,$3,$4,$3,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'pending','online',$15)
        RETURNING id,shop_id,location_id,customer_id,service_id,staff_id,appointment_no,start_at,end_at,status,created_at`,
       [scope.shop_id, scope.location_id, parties.recipient.customerId, parties.booker.customerId,
        parties.bookerDraft.name, parties.booker.phone, parties.bookerDraft.email,
        parties.recipientDraft.name, parties.recipient.phone, parties.recipientDraft.email,
-       first.serviceId, first.staffId, first.startAt, last.endAt]
+       first.serviceId, first.staffId, first.startAt, last.endAt, customerSpecialRequest]
     );
     if (appointmentResult.rows.length !== 1) throw new AppointmentMutationError('appointment_insert_mismatch', 500, '预约创建失败');
     await createMultiServiceRows(client, { appointment: appointmentResult.rows[0], items: planned, serviceLocale: locale });
@@ -2762,7 +2778,8 @@ app.post('/api/new-db', async (req, res) => {
       return res.status(status).json({ success: false,
         message: error.code === '23P01' || unavailable ? '该时间暂不可预约'
           : error instanceof AppointmentMutationError ? error.publicMessage : '预约失败',
-        ...(error.code === '23P01' || unavailable ? { code: 'BOOKING_NOT_AVAILABLE' } : {}) });
+        ...(error.code === '23P01' || unavailable ? { code: 'BOOKING_NOT_AVAILABLE' }
+          : error instanceof AppointmentMutationError ? { code: error.code } : {}) });
     }
   }
 
@@ -2780,6 +2797,16 @@ app.post('/api/new-db', async (req, res) => {
     date,
     time
   } = req.body;
+
+  let customerSpecialRequest;
+  try {
+    customerSpecialRequest = normalizeCustomerSpecialRequest(req.body);
+  } catch (error) {
+    if (error instanceof AppointmentMutationError) {
+      return res.status(error.status).json({ success: false, code: error.code, message: error.publicMessage });
+    }
+    throw error;
+  }
 
   const noPreference = staffSelectionType === 'no_preference';
 
@@ -3067,12 +3094,14 @@ app.post('/api/new-db', async (req, res) => {
             start_at,
             end_at,
             status,
-            booking_source
+            booking_source,
+            customer_special_request
           )
           VALUES (
             $1, $2, $3, $4, $3, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
             'pending',
-            'online'
+            'online',
+            $15
           )
           RETURNING
             id,
@@ -3101,7 +3130,8 @@ app.post('/api/new-db', async (req, res) => {
             selectedService.id,
             staffId,
             startAt,
-            endAt
+            endAt,
+            customerSpecialRequest
           ]
         );
 
@@ -3168,6 +3198,8 @@ app.post('/api/new-db', async (req, res) => {
 
     if (isExpectedBookabilityFailure) {
       response.code = 'BOOKING_NOT_AVAILABLE';
+    } else if (error instanceof AppointmentMutationError) {
+      response.code = error.code;
     }
 
     res.status(status).json(response);
@@ -5322,6 +5354,7 @@ module.exports = {
   loadTrustedCustomerBookingScope,
   invalidateShopCatalogCache,
   getShopCatalogRevision,
+  normalizeCustomerSpecialRequest,
   loadMultiServiceAvailableTimes,
   loadMultiServiceAvailableDates
 };

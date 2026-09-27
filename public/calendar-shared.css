@@ -977,6 +977,21 @@ a:focus-visible {
   flex-shrink: 0;
 }
 
+.calendar-card-special-request-badge {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  padding: 1px 5px;
+  border: 1px solid #ddd6fe;
+  border-radius: 4px;
+  background: #f5f3ff;
+  color: #5b21b6;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
 /* Deliberate compact-height responsiveness for short cards */
 .owner-calendar-appointment.is-compact {
   padding: 4px 6px;
@@ -986,6 +1001,7 @@ a:focus-visible {
 .owner-calendar-appointment.is-compact .calendar-card-actions,
 .owner-calendar-appointment.is-compact .calendar-card-assistant,
 .owner-calendar-appointment.is-compact .calendar-card-member-badge,
+.owner-calendar-appointment.is-compact .calendar-card-special-request-badge,
 .owner-calendar-appointment.is-compact .calendar-card-conflict-wrap,
 .owner-calendar-appointment.is-compact .owner-calendar-late-badge,
 .owner-calendar-appointment.is-compact .calendar-card-checkout-badge {
@@ -996,6 +1012,7 @@ a:focus-visible {
 .owner-calendar-appointment.is-short .calendar-card-assistant,
 .owner-calendar-appointment.is-short .calendar-card-actions,
 .owner-calendar-appointment.is-short .calendar-card-member-badge,
+.owner-calendar-appointment.is-short .calendar-card-special-request-badge,
 .owner-calendar-appointment.is-short .calendar-card-conflict-wrap,
 .owner-calendar-appointment.is-short .owner-calendar-late-badge,
 .owner-calendar-appointment.is-short .calendar-card-checkout-badge {
@@ -1022,6 +1039,7 @@ a:focus-visible {
 .owner-calendar-appointment.is-ultra-short .calendar-card-assistant,
 .owner-calendar-appointment.is-ultra-short .calendar-card-actions,
 .owner-calendar-appointment.is-ultra-short .calendar-card-member-badge,
+.owner-calendar-appointment.is-ultra-short .calendar-card-special-request-badge,
 .owner-calendar-appointment.is-ultra-short .calendar-card-conflict-wrap,
 .owner-calendar-appointment.is-ultra-short .owner-calendar-late-badge,
 .owner-calendar-appointment.is-ultra-short .calendar-card-checkout-badge {

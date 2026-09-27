@@ -2130,6 +2130,12 @@ const renderAppointmentsView = () => {
           ? `<div class="calendar-card-phone notranslate" translate="no">${escapeHtml(recipientPhone)}</div>`
           : '';
 
+        const hasCustomerSpecialRequest = typeof item.customer_special_request === 'string'
+          && item.customer_special_request.trim().length > 0;
+        const specialRequestBadgeHtml = hasCustomerSpecialRequest
+          ? `<span class="calendar-card-special-request-badge">${escapeHtml(adminT('specialRequest'))}</span>`
+          : '';
+
         const isUltraShortCard = heightPx < 50;
         const isShortCard = heightPx < 65;
         const isCompactCard = heightPx < 105;
@@ -2187,6 +2193,7 @@ const renderAppointmentsView = () => {
               ${memberBadgeHtml}
             </div>
             <div class="calendar-card-service notranslate" translate="no">${escapeHtml(serviceSummary)}</div>
+            ${specialRequestBadgeHtml}
             ${phoneHtml}
             ${assistantHtml}
             ${getCheckoutBadgeHtml(checkoutFinancialState)}
@@ -3845,6 +3852,14 @@ function renderAppointmentDrawer(appointment) {
       }
       card.appendChild(rolesBox);
       serviceSection.appendChild(card);
+    }
+
+    const customerSpecialRequest = typeof appointment.customer_special_request === 'string'
+      ? appointment.customer_special_request.trim()
+      : '';
+    if (customerSpecialRequest) {
+      const customerSpecialRequestSection = appendDrawerSection(drawerBody, adminT('customerSpecialRequest'));
+      customerSpecialRequestSection.appendChild(drawerElement('div', 'drawer-notes-box notranslate', customerSpecialRequest));
     }
 
     // Section E: Internal Notes / 内部备注
