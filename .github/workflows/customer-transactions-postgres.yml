@@ -36,6 +36,9 @@ jobs:
       - name: Customer Transactions PostgreSQL integration
         run: node --test test/owner-customer-transactions-postgres.test.js
 
+      - name: Returning Customer PostgreSQL integration
+        run: node --test test/returning-customer-signal-postgres.test.js
+
       - name: Checkout migration PostgreSQL integration
         run: node --test test/checkout-migration-048-postgres.test.js
 
