@@ -140,6 +140,8 @@
     return result.data;
   }
 
+  const canWriteCustomerSettings = () => ['owner', 'manager', 'admin'].includes(state.profile?.membership?.role);
+
   function setBusy(buttonId, busy) {
     const button = byId(buttonId);
     if (!button) return;
@@ -147,7 +149,8 @@
     const idleKey = {
       saveServiceButton: 'save', saveStaffButton: 'saveProfile', saveCapabilityButton: 'saveCapabilities',
       saveCategoryButton: 'save',
-      saveLocationsButton: 'saveLocations', saveScheduleButton: 'saveSchedule', saveOverrideButton: 'addSpecialDate'
+      saveLocationsButton: 'saveLocations', saveScheduleButton: 'saveSchedule', saveOverrideButton: 'addSpecialDate',
+      saveCustomerSettingsButton: 'saveSettings'
     }[buttonId] || 'save';
     button.textContent = busy ? t('saving') : t(idleKey);
   }
@@ -193,6 +196,10 @@
     byId('addServiceButton').hidden = !write;
     byId('addCategoryButton').hidden = !write;
     byId('addStaffButton').hidden = !write;
+    const customerSettingsNav = byId('nav-customer-settings');
+    if (customerSettingsNav) {
+      customerSettingsNav.hidden = !canWriteCustomerSettings();
+    }
   }
 
   function reset() {
@@ -208,9 +215,12 @@
   }
 
   function showViewOnly(name) {
-    ['calendar', 'customers', 'staff', 'services', 'contact'].forEach(item => {
-      byId(`${item}View`).hidden = item !== name;
-      byId(`nav-${item}`).classList.toggle('active', item === name);
+    ['calendar', 'customers', 'staff', 'services', 'contact', 'customer-settings'].forEach(item => {
+      const viewId = item === 'customer-settings' ? 'customerSettingsView' : `${item}View`;
+      const view = byId(viewId);
+      if (view) view.hidden = item !== name;
+      const nav = byId(`nav-${item}`);
+      if (nav) nav.classList.toggle('active', item === name);
     });
   }
 
@@ -220,6 +230,7 @@
     if (name === 'services') return loadServices();
     if (name === 'staff') return loadStaff();
     if (name === 'contact') return loadMerchantContact();
+    if (name === 'customer-settings') return loadCustomerSettings();
     if (name === 'customers') return loadCustomers();
   }
 
@@ -350,6 +361,48 @@
       setMessage('merchantContactMessage', t('saved'));
     } catch (error) { if (!error.sessionExpired) setMessage('merchantContactMessage', error.message, true); }
     finally { button.disabled = false; }
+  }
+
+  async function loadCustomerSettings() {
+    const message = byId('customerSettingsMessage');
+    if (message) setMessage('customerSettingsMessage', '');
+    try {
+      const data = await request('/api/owner/customer-settings');
+      if (byId('settingMembershipEnabled')) byId('settingMembershipEnabled').checked = data.membershipEnabled !== false;
+      if (byId('settingPointsEnabled')) byId('settingPointsEnabled').checked = data.pointsEnabled === true;
+      if (byId('settingStoredValueEnabled')) byId('settingStoredValueEnabled').checked = data.storedValueEnabled === true;
+      if (byId('settingPackagesEnabled')) byId('settingPackagesEnabled').checked = data.packagesEnabled === true;
+      const canEdit = canWriteCustomerSettings();
+      if (byId('saveCustomerSettingsButton')) byId('saveCustomerSettingsButton').hidden = !canEdit;
+      ['settingMembershipEnabled', 'settingPointsEnabled', 'settingStoredValueEnabled', 'settingPackagesEnabled'].forEach(id => {
+        if (byId(id)) byId(id).disabled = !canEdit;
+      });
+    } catch (error) {
+      if (!error.sessionExpired) setMessage('customerSettingsMessage', error.message, true);
+    }
+  }
+
+  async function saveCustomerSettings() {
+    if (!canWriteCustomerSettings()) return;
+    setBusy('saveCustomerSettingsButton', true);
+    try {
+      const payload = {
+        membershipEnabled: Boolean(byId('settingMembershipEnabled')?.checked),
+        pointsEnabled: Boolean(byId('settingPointsEnabled')?.checked),
+        storedValueEnabled: Boolean(byId('settingStoredValueEnabled')?.checked),
+        packagesEnabled: Boolean(byId('settingPackagesEnabled')?.checked)
+      };
+      const data = await request('/api/owner/customer-settings', { method: 'PATCH', body: JSON.stringify(payload) });
+      if (byId('settingMembershipEnabled')) byId('settingMembershipEnabled').checked = data.membershipEnabled !== false;
+      if (byId('settingPointsEnabled')) byId('settingPointsEnabled').checked = data.pointsEnabled === true;
+      if (byId('settingStoredValueEnabled')) byId('settingStoredValueEnabled').checked = data.storedValueEnabled === true;
+      if (byId('settingPackagesEnabled')) byId('settingPackagesEnabled').checked = data.packagesEnabled === true;
+      setMessage('customerSettingsMessage', t('saved'));
+    } catch (error) {
+      if (!error.sessionExpired) setMessage('customerSettingsMessage', error.message, true);
+    } finally {
+      setBusy('saveCustomerSettingsButton', false);
+    }
   }
 
   async function loadServices() {
@@ -752,6 +805,6 @@
   }
 
   initializeCustomerUi();
-  global.ownerSelfService = { setLocale, setProfile, reset, showView, loadServices, renderCategories, openCategoryForm, closeCategoryForm, saveCategory, openServiceForm, closeServiceForm, saveService, loadStaff, openStaffForm, saveStaff, selectStaff, openStaffTab, markStaffTabDirty, toggleCapability, saveCapability, toggleLocation, saveLocations, changeScheduleLocation, saveSchedule, updateOverrideFields, saveOverride, deactivateOverride, loadMerchantContact, saveMerchantContact, loadCustomers, selectCustomer, _state: state, _request: request };
+  global.ownerSelfService = { setLocale, setProfile, reset, showView, loadServices, renderCategories, openCategoryForm, closeCategoryForm, saveCategory, openServiceForm, closeServiceForm, saveService, loadStaff, openStaffForm, saveStaff, selectStaff, openStaffTab, markStaffTabDirty, toggleCapability, saveCapability, toggleLocation, saveLocations, changeScheduleLocation, saveSchedule, updateOverrideFields, saveOverride, deactivateOverride, loadMerchantContact, saveMerchantContact, loadCustomerSettings, saveCustomerSettings, loadCustomers, selectCustomer, _state: state, _request: request };
   setLocale(initialLocale());
 })(globalThis);

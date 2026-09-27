@@ -657,6 +657,7 @@
     <button id="nav-staff" class="nav-btn" data-i18n="staff" onclick="ownerSelfService.showView('staff')">员工</button>
     <button id="nav-services" class="nav-btn" data-i18n="services" onclick="ownerSelfService.showView('services')">服务</button>
     <button id="nav-contact" class="nav-btn" data-i18n="merchantContactSettings" onclick="ownerSelfService.showView('contact')">店铺联系方式</button>
+    <button id="nav-customer-settings" class="nav-btn" data-i18n="customerModuleSettings" onclick="ownerSelfService.showView('customer-settings')">会员与资产</button>
     <button id="nav-customers" class="nav-btn" data-i18n="customers">顾客</button>
     <button class="nav-btn" disabled data-i18n="checkout" data-i18n-title="comingSoon" title="即将推出">收银</button>
     <button class="nav-btn" disabled data-i18n="more" data-i18n-title="comingSoon" title="即将推出">更多</button>
@@ -781,6 +782,31 @@
         </label>
       </div>
       <div class="form-actions"><button id="saveMerchantContactButton" class="primary-btn" type="button" data-i18n="saveMerchantContact" onclick="ownerSelfService.saveMerchantContact()">保存联系方式</button></div>
+    </div>
+  </section>
+
+  <section id="customerSettingsView" class="view" hidden>
+    <div class="toolbar"><div><h2 data-i18n="customerModuleSettings">会员与资产</h2><div class="muted" data-i18n="moduleSettingsHelp">配置顾客会员资格及商业资产模块。关闭模块不会删除历史数据。</div></div></div>
+    <div class="card panel"><div id="customerSettingsMessage" class="save-status" aria-live="polite"></div>
+      <div style="display:flex;flex-direction:column;gap:18px;max-width:540px;margin-top:8px;">
+        <label style="display:flex;align-items:flex-start;gap:12px;cursor:pointer;">
+          <input id="settingMembershipEnabled" type="checkbox" checked style="width:20px;height:20px;margin-top:2px;cursor:pointer;">
+          <div><strong data-i18n="membershipModule">会员</strong><div class="muted" style="font-size:13px;margin-top:2px;" data-i18n="membershipHelp">新顾客注册后自动激活普通会员资格。</div></div>
+        </label>
+        <label style="display:flex;align-items:flex-start;gap:12px;cursor:pointer;">
+          <input id="settingPointsEnabled" type="checkbox" style="width:20px;height:20px;margin-top:2px;cursor:pointer;">
+          <div><strong data-i18n="pointsModule">积分</strong><div class="muted" style="font-size:13px;margin-top:2px;" data-i18n="pointsHelp">顾客消费积分功能（积分引擎开发中）。</div></div>
+        </label>
+        <label style="display:flex;align-items:flex-start;gap:12px;cursor:pointer;">
+          <input id="settingStoredValueEnabled" type="checkbox" style="width:20px;height:20px;margin-top:2px;cursor:pointer;">
+          <div><strong data-i18n="storedValueModule">储值</strong><div class="muted" style="font-size:13px;margin-top:2px;" data-i18n="storedValueHelp">顾客储值钱包功能（储值引擎开发中）。</div></div>
+        </label>
+        <label style="display:flex;align-items:flex-start;gap:12px;cursor:pointer;">
+          <input id="settingPackagesEnabled" type="checkbox" style="width:20px;height:20px;margin-top:2px;cursor:pointer;">
+          <div><strong data-i18n="packagesModule">配套</strong><div class="muted" style="font-size:13px;margin-top:2px;" data-i18n="packagesHelp">次卡与服务配套功能（配套引擎开发中）。</div></div>
+        </label>
+      </div>
+      <div class="form-actions" style="margin-top:24px;"><button id="saveCustomerSettingsButton" class="primary-btn" type="button" data-i18n="saveSettings" onclick="ownerSelfService.saveCustomerSettings()">保存设置</button></div>
     </div>
   </section>
 

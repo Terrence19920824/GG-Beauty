@@ -54,6 +54,10 @@ const {
   CustomerMemberError,
   createCustomerMemberIdentity
 } = require('./lib/customer-member-identity');
+const {
+  CustomerAccountError,
+  createCustomerAccountService
+} = require('./lib/customer-account-service');
 const { isKnownStatus, canTransition, recordStatusHistory } = require('./lib/appointment-status');
 const { createCheckoutPos } = require('./lib/checkout-pos');
 const { createCheckoutPosRead } = require('./lib/checkout-pos-read');
@@ -124,6 +128,9 @@ const customerMemberIdentity = createCustomerMemberIdentity({
   getProvider: () => app.locals.customerOtpProvider
 });
 
+const defaultCustomerAccountService = createCustomerAccountService({ pool });
+const resolveCustomerAccountService = () => app.locals.customerAccountService || (app.locals.ownerAuthPool && app.locals.ownerAuthPool !== pool ? createCustomerAccountService({ pool: app.locals.ownerAuthPool }) : defaultCustomerAccountService);
+
 const customerCookie = request => {
   const header=request.headers.cookie||'';
   for (const part of header.split(';')) {
@@ -136,6 +143,9 @@ const customerCookie = request => {
 };
 const customerCookieOptions = maxAge => `Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${process.env.NODE_ENV==='production'?'; Secure':''}`;
 const customerIdentityError = (res,error) => {
+  if (error instanceof CustomerAccountError) {
+    return res.status(error.status).json({ success: false, code: error.code });
+  }
   const status=error instanceof CustomerMemberError?error.status:500;
   const code=error instanceof CustomerMemberError?error.code:'CUSTOMER_IDENTITY_FAILED';
   return res.status(status).json({success:false,code});
@@ -146,6 +156,34 @@ app.get('/api/customer/member/config',async(req,res)=>{
   if(rejectCustomerAuthority(req.query)) return res.status(400).json({success:false,code:'INVALID_IDENTITY_CONTEXT'});
   try { const data=await customerMemberIdentity.getPublicConfig(req.query.shopSlug); return res.json({success:true,data}); }
   catch(error){ return customerIdentityError(res,error); }
+});
+
+app.post('/api/customer/auth/sign-in', async (req, res) => {
+  if (rejectCustomerAuthority(req.body)) return res.status(400).json({ success: false, code: 'INVALID_IDENTITY_CONTEXT' });
+  try {
+    const data = await resolveCustomerAccountService().signInWithPhone({
+      shopSlug: req.body.shopSlug,
+      countryCode: req.body.countryCode,
+      phone: req.body.phone,
+      name: req.body.name,
+      email: req.body.email,
+      dateOfBirth: req.body.dateOfBirth,
+      gender: req.body.gender
+    });
+    res.setHeader('Set-Cookie', `${CUSTOMER_SESSION_COOKIE}=${encodeURIComponent(data.token)}; ${customerCookieOptions(30 * 24 * 60 * 60)}`);
+    return res.json({
+      success: true,
+      data: {
+        customerId: data.customerId,
+        memberCode: data.memberCode,
+        isPhoneVerified: data.isPhoneVerified,
+        account: data.account,
+        membership: data.membership
+      }
+    });
+  } catch (error) {
+    return customerIdentityError(res, error);
+  }
 });
 
 app.post('/api/customer/auth/otp/request',async(req,res)=>{
@@ -163,7 +201,11 @@ app.post('/api/customer/auth/otp/verify',async(req,res)=>{
   catch(error){ return customerIdentityError(res,error); }
 });
 app.get('/api/customer/me',async(req,res)=>{
-  try { const data=await customerMemberIdentity.authenticate(customerCookie(req)); return res.json({success:true,data}); }
+  try {
+    const session = await customerMemberIdentity.authenticate(customerCookie(req));
+    const summary = await resolveCustomerAccountService().getCustomerSummary({ shopId: session.shop_id, customerId: session.customer_id });
+    return res.json({ success: true, data: summary || session });
+  }
   catch(error){ return customerIdentityError(res,error); }
 });
 app.patch('/api/customer/me',async(req,res)=>{
@@ -1073,6 +1115,51 @@ app.patch('/api/owner/merchant-contact', requireOwnerAuth, requireOwnerRole(OWNE
   } catch (error) {
     console.error('Owner merchant contact write error:', safeStaffAuthErrorCode(error));
     return res.status(500).json({ success: false, code: 'MERCHANT_CONTACT_UPDATE_FAILED' });
+  }
+});
+
+const OWNER_CUSTOMER_SETTINGS_ROLES = Object.freeze(['owner', 'manager', 'admin']);
+
+app.get('/api/owner/customer-settings', requireOwnerAuth, requireOwnerRole(OWNER_CUSTOMER_SETTINGS_ROLES), async (req, res) => {
+  setPublicBookingNoCacheHeaders(res);
+  try {
+    const settings = await resolveCustomerAccountService().getShopSettings(req.ownerAuth.shopId);
+    return res.json({
+      success: true,
+      data: {
+        membershipEnabled: settings.membership_enabled !== false,
+        pointsEnabled: settings.points_enabled === true,
+        storedValueEnabled: settings.stored_value_enabled === true,
+        packagesEnabled: settings.packages_enabled === true
+      }
+    });
+  } catch (error) {
+    console.error('Owner customer settings read error:', safeStaffAuthErrorCode(error));
+    return res.status(500).json({ success: false, code: 'CUSTOMER_SETTINGS_UNAVAILABLE' });
+  }
+});
+
+app.patch('/api/owner/customer-settings', requireOwnerAuth, requireOwnerRole(OWNER_CUSTOMER_SETTINGS_ROLES), async (req, res) => {
+  setPublicBookingNoCacheHeaders(res);
+  try {
+    const updated = await resolveCustomerAccountService().updateShopSettings(req.ownerAuth.shopId, {
+      membership_enabled: req.body?.membershipEnabled,
+      points_enabled: req.body?.pointsEnabled,
+      stored_value_enabled: req.body?.storedValueEnabled,
+      packages_enabled: req.body?.packagesEnabled
+    });
+    return res.json({
+      success: true,
+      data: {
+        membershipEnabled: updated.membership_enabled !== false,
+        pointsEnabled: updated.points_enabled === true,
+        storedValueEnabled: updated.stored_value_enabled === true,
+        packagesEnabled: updated.packages_enabled === true
+      }
+    });
+  } catch (error) {
+    console.error('Owner customer settings write error:', safeStaffAuthErrorCode(error));
+    return res.status(500).json({ success: false, code: 'CUSTOMER_SETTINGS_UPDATE_FAILED' });
   }
 });
 
@@ -5373,6 +5460,7 @@ if (require.main === module) {
 module.exports = {
   app,
   OWNER_MERCHANT_CONTACT_WRITE_ROLES,
+  OWNER_CUSTOMER_SETTINGS_ROLES,
   filterBookableCandidateSlots,
   filterAnyStaffCandidateSlots,
   loadEligibleBookingStaff,

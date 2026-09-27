@@ -10,10 +10,10 @@ const ui=fs.readFileSync(path.join(root,'public/customer-member-ui.js'),'utf8');
 const booking=fs.readFileSync(path.join(root,'public/index.html'),'utf8');
 const server=fs.readFileSync(path.join(root,'server.js'),'utf8');
 
-test('customer booking exposes a bilingual VIP membership entry',()=>{
+test('customer booking exposes a bilingual account/membership entry',()=>{
   assert.match(booking,/id="memberEntry"[^>]+href="\/member\.html"[^>]+data-i18n="membershipEntry"/);
-  assert.equal(i18n.t('membershipEntry','zh-CN'),'VIP / 我的会员');
-  assert.equal(i18n.t('membershipEntry','en'),'VIP / My Membership');
+  assert.equal(i18n.t('membershipEntry','zh-CN'),'我的账户');
+  assert.equal(i18n.t('membershipEntry','en'),'My Account');
   assert.match(booking,/memberEntry\.href = `\/member\.html\?shop=/);
 });
 
@@ -38,10 +38,9 @@ test('member entry reuses the matching verified shop session and rejects a diffe
   assert.match(ui,/await api\('\/api\/customer\/me'\)/);
 });
 
-test('member UI covers OTP registration returning member profile phone change and logout without empty benefit modules',()=>{
-  for(const id of ['authPanel','countryCode','memberPhone','sendCode','codeStep','otpCode','verifyCode','resendCode','registrationStep','registrationName','registrationEmail','registrationDob','registrationGender','memberPanel','memberCode','memberVerifiedPhone','editMemberProfile','changeMemberPhone','phoneChangePanel','changeCountryCode','changePhone','sendPhoneChangeCode','phoneChangeCode','confirmPhoneChange','logoutMember']) assert.match(html,new RegExp(`id="${id}"`));
-  for(const endpoint of ['/api/customer/auth/otp/request','/api/customer/auth/otp/verify','/api/customer/me','/api/customer/phone-change/request','/api/customer/phone-change/confirm','/api/customer/logout']) assert.ok(ui.includes(endpoint));
-  assert.doesNotMatch(html,/points|stored value|package|referral/i);
+test('member UI covers registration returning member profile phone change and logout with module cards',()=>{
+  for(const id of ['authPanel','countryCode','memberPhone','registrationStep','registrationName','registrationEmail','registrationDob','registrationGender','memberPanel','memberCode','memberVerifiedPhone','editMemberProfile','changeMemberPhone','phoneChangePanel','changeCountryCode','changePhone','sendPhoneChangeCode','phoneChangeCode','confirmPhoneChange','logoutMember']) assert.match(html,new RegExp(`id="${id}"`));
+  for(const endpoint of ['/api/customer/me','/api/customer/phone-change/request','/api/customer/phone-change/confirm','/api/customer/logout']) assert.ok(ui.includes(endpoint));
   assert.match(html,/class="member-card"/);assert.match(html,/class="logo [^"]*notranslate"/);
 });
 
@@ -52,7 +51,7 @@ test('member modules are shop-policy flags and render only with enabled real pay
     {singleSale:true,membershipTier:false,points:true,storedValue:false,packages:false,referral:false});
   assert.equal(config.normalizeMemberTheme().key,'premium-black');
   assert.match(html,/data-member-theme="premium-black"/);assert.match(html,/id="memberDynamicSections" hidden/);
-  assert.match(ui,/modules\[key\]===true&&payload\[key\]!=null/);
+  assert.match(ui,/modules\.points===true/);
   assert.match(ui,/panel\.dataset\.shop=state\.shopSlug/);
 });
 
