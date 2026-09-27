@@ -75,7 +75,7 @@ test('owner appointment checkout projection executes once on PostgreSQL and isol
     db = await connectWhenReady(url);
     await db.query(`
       CREATE TABLE locations (id uuid PRIMARY KEY, shop_id uuid NOT NULL, name text, is_active boolean NOT NULL, UNIQUE(shop_id,id));
-      CREATE TABLE customers (id uuid PRIMARY KEY, shop_id uuid NOT NULL, name text, phone text, email text, member_code text, identity_status text, UNIQUE(shop_id,id));
+      CREATE TABLE customers (id uuid PRIMARY KEY, shop_id uuid NOT NULL, name text, phone text, email text, member_code text, identity_status text, profile_notes text NULL, UNIQUE(shop_id,id), CONSTRAINT customers_profile_notes_length_check CHECK(profile_notes IS NULL OR char_length(profile_notes) <= 4000));
       CREATE TABLE services (id uuid PRIMARY KEY, shop_id uuid NOT NULL, name text, duration_minutes integer, price numeric, UNIQUE(shop_id,id));
       CREATE TABLE staff (id uuid PRIMARY KEY, shop_id uuid NOT NULL, name text, staff_code text, UNIQUE(shop_id,id));
       CREATE TABLE appointments (
@@ -83,10 +83,13 @@ test('owner appointment checkout projection executes once on PostgreSQL and isol
         customer_id uuid NOT NULL, service_id uuid NOT NULL, staff_id uuid NOT NULL,
         appointment_no text, start_at timestamptz, end_at timestamptz,
         status text, booking_source text, internal_notes text NULL,
+        customer_special_request text NULL,
         booker_customer_id uuid NULL, recipient_customer_id uuid NULL,
         booker_name_snapshot text NULL, booker_phone_snapshot text NULL, booker_email_snapshot text NULL,
         recipient_name_snapshot text NULL, recipient_phone_snapshot text NULL, recipient_email_snapshot text NULL,
-        UNIQUE(shop_id,id), UNIQUE(shop_id,location_id,id)
+        UNIQUE(shop_id,id), UNIQUE(shop_id,location_id,id),
+        CONSTRAINT appointments_customer_special_request_length_check
+          CHECK(customer_special_request IS NULL OR char_length(customer_special_request) <= 1000)
       );
       CREATE TABLE appointment_items (
         id uuid PRIMARY KEY, shop_id uuid NOT NULL, location_id uuid NOT NULL,
