@@ -1,0 +1,46 @@
+name: Customer Transactions PostgreSQL 17 Release Gate
+
+on:
+  workflow_dispatch:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  postgres-release-gate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install PostgreSQL 17 binaries
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes postgresql-common
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get update
+          sudo apt-get install --yes postgresql-17
+          echo "PG17_BIN=/usr/lib/postgresql/17/bin" >> "$GITHUB_ENV"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Customer Transactions PostgreSQL integration
+        run: node --test test/owner-customer-transactions-postgres.test.js
+
+      - name: Checkout migration PostgreSQL integration
+        run: node --test test/checkout-migration-048-postgres.test.js
+
+      - name: Checkout projection PostgreSQL integration
+        run: node --test test/owner-appointment-checkout-projection-postgres.test.js
+
+      - name: Financial audit PostgreSQL integration
+        run: node --test test/checkout-financial-audit-postgres.test.js
+
+      - name: Checkout session read PostgreSQL integration
+        run: node --test test/checkout-session-read-postgres.test.js
