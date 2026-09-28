@@ -1022,6 +1022,22 @@ app.post('/api/customer/my-bookings', async (req, res) => {
     return res.status(400).json({ success: false, code: 'INVALID_SHOP_CONTEXT' });
   }
 
+  // A valid customer session is the only authority for the direct-bookings
+  // path.  An invalid/expired cookie deliberately falls through to the
+  // established anonymous phone lookup instead of preventing that flow.
+  let customerSession = null;
+  const sessionToken = customerCookie(req);
+  if (sessionToken) {
+    try {
+      customerSession = await customerMemberIdentity.authenticate(sessionToken);
+    } catch (error) {
+      if (error?.code !== 'CUSTOMER_SESSION_INVALID') return customerIdentityError(res, error);
+    }
+  }
+  if (customerSession && customerSession.shop_slug !== normalizedSlug) {
+    return res.status(403).json({ success: false, code: 'CUSTOMER_SESSION_SHOP_MISMATCH' });
+  }
+
   const clientIp = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket.remoteAddress || 'unknown';
   const rawPhone = typeof phone === 'string' ? phone.trim() : '';
   const phoneNormalized = normalizeCustomerQueryPhone(countryCode, rawPhone);
@@ -1058,7 +1074,9 @@ app.post('/api/customer/my-bookings', async (req, res) => {
               settings.customer_announcement_enabled
        FROM shops AS shop
        LEFT JOIN shop_customer_settings AS settings ON settings.shop_id = shop.id
-       WHERE shop.slug = $1 AND shop.status = 'active' LIMIT 1`, [normalizedSlug]
+       WHERE shop.slug = $1 AND shop.status = 'active'
+         AND ($2::uuid IS NULL OR shop.id = $2::uuid)
+       LIMIT 1`, [normalizedSlug, customerSession?.shop_id || null]
     );
 
     if (shopResult.rows.length !== 1) {
@@ -1068,8 +1086,16 @@ app.post('/api/customer/my-bookings', async (req, res) => {
     const shopRow = shopResult.rows[0];
     const shopContact = merchantContactPresentation(shopRow);
 
+    if (customerSession) {
+      const appointments = await queryCustomerBookings(app.locals.bookingPool, {
+        shopId: customerSession.shop_id,
+        customerId: customerSession.customer_id
+      });
+      return res.json({ success: true, data: { shop: shopContact, appointments, authenticated: true } });
+    }
+
     if (!phoneNormalized && !rawPhone) {
-      return res.json({ success: true, data: { shop: shopContact, appointments: [] } });
+      return res.json({ success: true, data: { shop: shopContact, appointments: [], authenticated: false } });
     }
 
     const appointments = await queryCustomerBookings(app.locals.bookingPool, {
@@ -1082,7 +1108,8 @@ app.post('/api/customer/my-bookings', async (req, res) => {
       success: true,
       data: {
         shop: shopContact,
-        appointments
+        appointments,
+        authenticated: false
       }
     });
   } catch (error) {

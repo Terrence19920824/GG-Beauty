@@ -181,32 +181,6 @@
       }
       card.appendChild(servicesList);
 
-      // Contact options for shop
-      if (shop.contactPhone || shop.whatsAppUrl) {
-        const contactBar = root.document.createElement('div');
-        contactBar.className = 'booking-contact-actions';
-
-        if (shop.contactPhone) {
-          const callLink = root.document.createElement('a');
-          callLink.className = 'action-link';
-          callLink.href = `tel:${shop.contactPhone}`;
-          callLink.textContent = `📞 ${customerT('merchantCall') || '电话'}`;
-          contactBar.appendChild(callLink);
-        }
-
-        if (shop.whatsAppUrl) {
-          const waLink = root.document.createElement('a');
-          waLink.className = 'action-link whatsapp';
-          waLink.href = shop.whatsAppUrl;
-          waLink.target = '_blank';
-          waLink.rel = 'noopener noreferrer';
-          waLink.textContent = `💬 ${customerT('merchantWhatsApp') || 'WhatsApp'}`;
-          contactBar.appendChild(waLink);
-        }
-
-        card.appendChild(contactBar);
-      }
-
       section.appendChild(card);
     }
   }
@@ -285,6 +259,26 @@
     }
   }
 
+  async function loadSessionBookings() {
+    const form = root.document ? root.document.getElementById('phoneLookupForm') : null;
+    const help = root.document ? root.document.getElementById('bookingLookupHelp') : null;
+    const message = root.document ? root.document.getElementById('queryMessage') : null;
+    try {
+      const response = await root.fetch('/api/customer/my-bookings', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, cache: 'no-store',
+        body: JSON.stringify({ shopSlug: currentShopSlug })
+      });
+      const result = await response.json().catch(() => null);
+      if (!response.ok || result?.success !== true || result.data?.authenticated !== true) return false;
+      lastQueryResult = result.data;
+      if (form) form.hidden = true;
+      if (help) help.textContent = customerT('signedInBookings');
+      if (message) { message.className = 'message'; message.textContent = ''; }
+      renderBookings(lastQueryResult);
+      return true;
+    } catch (_) { return false; }
+  }
+
   function setLocale(loc) {
     currentLocale = loc === 'en' ? 'en' : 'zh-CN';
     try {
@@ -316,17 +310,13 @@
       brandHeading.textContent = currentShopSlug;
     }
 
-    // Apply theme & contact bar
+    // Apply the current shop theme. Merchant contact information belongs on the
+    // main booking page, not this account-adjacent page.
     if (root.ggCustomerTheme && typeof root.ggCustomerTheme.resolveTheme === 'function') {
       const theme = root.ggCustomerTheme.resolveTheme(currentShopSlug, {});
       if (root.document.documentElement) {
         root.ggCustomerTheme.applyTheme(root.document.documentElement, theme);
       }
-    }
-
-    const contactBarHost = root.document.getElementById('merchantContactBar');
-    if (contactBarHost && root.ggMerchantContactBar?.mount) {
-      root.ggMerchantContactBar.mount({ shopSlug: currentShopSlug, host: contactBarHost }).catch(() => {});
     }
 
     // Event listeners
@@ -351,9 +341,11 @@
 
     renderTexts();
 
+    const loadedFromSession = await loadSessionBookings();
+
     // Check if phone was passed in query params
     const initialPhone = params.get('phone');
-    if (initialPhone && phoneInput) {
+    if (!loadedFromSession && initialPhone && phoneInput) {
       phoneInput.value = initialPhone;
       await executeQuery();
     }
@@ -370,6 +362,7 @@
   root.ggCustomerMyBookings = {
     init,
     executeQuery,
+    loadSessionBookings,
     setLocale,
     formatDateTime,
     getStatusText

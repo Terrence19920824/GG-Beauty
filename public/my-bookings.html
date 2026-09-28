@@ -206,34 +206,6 @@
       color: var(--theme-text-muted, #666);
       font-size: 13px;
     }
-    .booking-contact-actions {
-      display: flex;
-      gap: 10px;
-      margin-top: 6px;
-      padding-top: 10px;
-      border-top: 1px solid var(--theme-surface-subtle, #eee);
-    }
-    .action-link {
-      flex: 1;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      gap: 6px;
-      padding: 9px 12px;
-      border-radius: 8px;
-      font-size: 13px;
-      font-weight: 600;
-      text-decoration: none;
-      background: var(--theme-surface-subtle, #eee);
-      color: var(--theme-text, #222);
-      border: 1px solid var(--theme-border, #ddd);
-      transition: background 0.15s ease;
-    }
-    .action-link.whatsapp {
-      background: #25d366;
-      color: #fff;
-      border-color: #25d366;
-    }
     .empty-state {
       text-align: center;
       padding: 32px 16px;
@@ -257,20 +229,19 @@
     </div>
   </div>
 
-  <div id="merchantContactBar"></div>
-
   <section class="panel">
     <div id="shopBrandHeading" class="notranslate" translate="no" style="font-size: 13px; font-weight: 700; color: var(--theme-text-muted, #666); margin-bottom: 6px;"></div>
     <h1 data-i18n="myBookings">我的预约</h1>
-    <p data-i18n="enterPhoneToView">输入预约手机号查看预约</p>
+    <p id="bookingLookupHelp" data-i18n="enterPhoneToView">输入预约手机号查看预约</p>
 
-    <label data-i18n="countryRegion">国家 / 地区</label>
-    <div class="phone-row">
-      <select id="countryCode" aria-label="Country or region"></select>
-      <input id="queryPhone" type="tel" data-i18n-placeholder="enterPhone" placeholder="请输入手机号码" autocomplete="tel">
+    <div id="phoneLookupForm">
+      <label data-i18n="countryRegion">国家 / 地区</label>
+      <div class="phone-row">
+        <select id="countryCode" aria-label="Country or region"></select>
+        <input id="queryPhone" type="tel" data-i18n-placeholder="enterPhone" placeholder="请输入手机号码" autocomplete="tel">
+      </div>
+      <button id="queryBtn" class="primary-btn" type="button" data-i18n="searchBookings">查询预约</button>
     </div>
-
-    <button id="queryBtn" class="primary-btn" type="button" data-i18n="searchBookings">查询预约</button>
 
     <div id="queryMessage" class="message" aria-live="polite"></div>
   </section>
@@ -281,7 +252,6 @@
 <script src="/shared-i18n.js"></script>
 <script src="/customer-shop-context.js"></script>
 <script src="/customer-theme.js"></script>
-<script src="/merchant-contact-bar.js"></script>
 <script src="/customer-my-bookings.js"></script>
 <script>
   if ('serviceWorker' in navigator) {
