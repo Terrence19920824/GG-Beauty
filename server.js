@@ -23,7 +23,8 @@ const {
   planStaffAssignments
 } = require('./lib/customer-multi-service-booking');
 const {
-  computeBatchAvailability
+  computeBatchAvailability,
+  getTodayInTimezone
 } = require('./lib/customer-batch-availability');
 const {
   StaffBookabilityError,
@@ -3577,10 +3578,22 @@ app.post('/api/new-db', async (req, res) => {
 // ==================================================
 
 app.get('/api/available-times', (req, res) => {
+  setPublicBookingNoCacheHeaders(res);
   const {
     date,
     staff
   } = req.query;
+
+  const serverNow = req.app.locals.bookingNow || new Date();
+  const shopTimezone = 'Asia/Singapore';
+  const todayInShop = getTodayInTimezone(serverNow, shopTimezone);
+
+  if (date && date < todayInShop) {
+    return res.json({
+      success: true,
+      data: []
+    });
+  }
 
   const allTimes = [
     '10:00', '10:30',
@@ -3595,6 +3608,15 @@ app.get('/api/available-times', (req, res) => {
     '19:00', '19:30',
     '20:00', '20:30'
   ];
+
+  const filterPastTimes = (times, targetDate) => {
+    if (!targetDate || targetDate !== todayInShop) return times;
+    const nowMs = serverNow.getTime();
+    return times.filter(time => {
+      const instant = new Date(`${targetDate}T${time}:00.000+08:00`);
+      return instant.getTime() > nowMs;
+    });
+  };
 
   if (date && staff) {
     const bookedTimes = bookings
@@ -3614,13 +3636,13 @@ app.get('/api/available-times', (req, res) => {
 
     res.json({
       success: true,
-      data: availableTimes
+      data: filterPastTimes(availableTimes, date)
     });
 
   } else {
     res.json({
       success: true,
-      data: allTimes
+      data: filterPastTimes(allTimes, date)
     });
   }
 });
@@ -3677,11 +3699,17 @@ const filterBookableCandidateSlots = async ({
   locationId,
   staffId,
   serviceId,
-  validator = validateStaffBookability
+  validator = validateStaffBookability,
+  now = new Date()
 }) => {
+  const serverNow = now instanceof Date ? now : (now ? new Date(now) : new Date());
+  const nowMs = serverNow.getTime();
   const availableTimes = [];
 
   for (const candidate of candidates) {
+    if (candidate.start_at && new Date(candidate.start_at).getTime() <= nowMs) {
+      continue;
+    }
     // Mirror the final database exclusion predicate. It is intentionally
     // staff-wide, so availability never advertises a slot the DB will reject.
     if (candidate.has_database_guard_collision === true) {
@@ -3838,10 +3866,16 @@ const filterAnyStaffCandidateSlots = async ({
   shopId,
   locationId,
   serviceId,
-  validator = validateStaffBookability
+  validator = validateStaffBookability,
+  now = new Date()
 }) => {
+  const serverNow = now instanceof Date ? now : (now ? new Date(now) : new Date());
+  const nowMs = serverNow.getTime();
   const availableTimes = [];
   for (const candidate of candidates) {
+    if (candidate.start_at && new Date(candidate.start_at).getTime() <= nowMs) {
+      continue;
+    }
     let available = false;
     for (const member of staffCandidates) {
       try {
@@ -4049,6 +4083,10 @@ app.post('/api/booking/multi-service-eligible-staff', async (req, res) => {
       return res.status(400).json({ success: false, message: '找不到门店' });
     }
     const startAt = instantResult.rows[0].start_at;
+    const serverNow = req.app.locals.bookingNow || new Date();
+    if (new Date(startAt).getTime() <= serverNow.getTime()) {
+      return res.status(400).json({ success: false, message: '所选时间已过，无法预约' });
+    }
     const timeline = buildSequentialTimeline(context.services, startAt);
 
     const validator = req.app.locals.bookingValidator || validateStaffBookability;
@@ -4115,6 +4153,7 @@ app.post('/api/booking/multi-service-eligible-staff', async (req, res) => {
 app.get(
   '/api/available-times-db',
   async (req, res) => {
+    setPublicBookingNoCacheHeaders(res, req.query && req.query.shopSlug);
 
     const {
       shopSlug,
@@ -4203,6 +4242,16 @@ app.get(
       }
 
       const locationId = locationResult.rows[0].id;
+      const locationTimezone = 'Asia/Singapore';
+      const serverNow = req.app.locals.bookingNow || new Date();
+      const todayInShop = getTodayInTimezone(serverNow, locationTimezone);
+
+      if (date < todayInShop) {
+        return res.json({
+          success: true,
+          data: []
+        });
+      }
 
       // 3. Tenant-scoped lookup only; bookability is decided by the validator.
       const staffResult = noPreference ? { rows: [] } : await client.query(
@@ -4360,7 +4409,8 @@ app.get(
             shopId,
             locationId,
             serviceId: serviceResult.rows[0].id,
-            validator: req.app.locals.bookingValidator
+            validator: req.app.locals.bookingValidator,
+            now: serverNow
           })
         : await filterBookableCandidateSlots({
           dbClient: client,
@@ -4369,7 +4419,8 @@ app.get(
           locationId,
           staffId,
           serviceId: serviceResult.rows[0].id,
-          validator: req.app.locals.bookingValidator
+          validator: req.app.locals.bookingValidator,
+          now: serverNow
         });
 
 

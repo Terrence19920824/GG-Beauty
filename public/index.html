@@ -1815,7 +1815,16 @@ async function loadAvailableTimes() {
       throw new Error(customerT('availabilityFailed'));
     }
 
-    renderTimes(result.data);
+    const validTimes = Array.isArray(result.data) ? result.data : [];
+
+    if (validTimes.length === 0 && date) {
+      if (calendarAvailability && typeof calendarAvailability.has === 'function' && calendarAvailability.has(date)) {
+        calendarAvailability.set(date, { date, hasAvailability: false, earliestStartAt: null });
+        renderBookingCalendar();
+      }
+    }
+
+    renderTimes(validTimes);
 
   } catch (error) {
     if (
@@ -1850,7 +1859,9 @@ function renderTimes(times) {
     return;
   }
 
-  times.forEach(slot => {
+  const slotList = (times || []).map(s => typeof s === 'string' ? { time: s } : s);
+  slotList.forEach(slot => {
+    if (!slot || !slot.time) return;
     const button = document.createElement('div');
     button.className = 'time-btn';
     button.textContent = slot.time;
