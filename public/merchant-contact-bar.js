@@ -2,7 +2,7 @@
   'use strict';
   const locale = () => (root.ggI18n && root.ggI18n.normalizeLocale ? root.ggI18n.normalizeLocale(root.document.documentElement.lang) : 'en');
   const label = key => root.ggI18n && root.ggI18n.t ? root.ggI18n.t(key, locale()) : key;
-  const safeHref = value => { try { const url = new URL(value, root.location.origin); return ['https:','tel:'].includes(url.protocol) ? url.href : ''; } catch (_) { return ''; } };
+  const safeHref = value => { try { const url = new URL(value, root.location.origin); return ['https:', 'http:', 'tel:'].includes(url.protocol) ? url.href : ''; } catch (_) { return ''; } };
   async function mount({ shopSlug, host }) {
     if (!host || !shopSlug) return;
     const response = await root.fetch(`/api/customer/public-config?shopSlug=${encodeURIComponent(shopSlug)}`, { credentials: 'omit', cache: 'no-store' });
@@ -10,7 +10,7 @@
     if (!response.ok || !result || result.success !== true) return;
     const data = result.data;
     const bar = root.document.createElement('nav'); bar.className = 'merchant-contact-bar'; bar.setAttribute('aria-label', label('merchantContactAria'));
-    const name = root.document.createElement('strong'); name.className = 'merchant-contact-name notranslate'; name.translate = false; name.textContent = data.shopName || shopSlug; bar.appendChild(name);
+    const name = root.document.createElement('strong'); name.className = 'merchant-contact-name notranslate'; name.translate = false; name.textContent = data.displayName || data.shopName || shopSlug; bar.appendChild(name);
 
     if (data.showAddress !== false && (data.address || data.postalCode)) {
       const addrRow = root.document.createElement('div');
@@ -31,6 +31,21 @@
       bar.appendChild(addrRow);
     }
 
+    if (data.businessHours) {
+      const hoursRow = root.document.createElement('div');
+      hoursRow.className = 'merchant-contact-hours notranslate';
+      hoursRow.translate = false;
+      const clockIcon = root.document.createElement('span');
+      clockIcon.setAttribute('aria-hidden', 'true');
+      clockIcon.textContent = '🕒 ';
+      hoursRow.appendChild(clockIcon);
+      const hoursText = root.document.createElement('span');
+      hoursText.className = 'merchant-contact-hours-text';
+      hoursText.textContent = data.businessHours;
+      hoursRow.appendChild(hoursText);
+      bar.appendChild(hoursRow);
+    }
+
     const links = [];
     if (data.contactPhone && safeHref('tel:' + data.contactPhone)) links.push(['tel:' + data.contactPhone, 'merchantCall', false]);
     if (data.whatsAppUrl && safeHref(data.whatsAppUrl)) links.push([data.whatsAppUrl, 'merchantWhatsApp', true]);
@@ -40,8 +55,9 @@
           : ''))
       : '';
     if (resolvedMapUrl && safeHref(resolvedMapUrl)) links.push([resolvedMapUrl, 'openMap', true]);
-    links.push([`/member.html?shop=${encodeURIComponent(shopSlug)}`, 'membershipEntry', false]);
-    links.push([`/?shop=${encodeURIComponent(shopSlug)}`, 'merchantBooking', false]);
+    if (data.websiteUrl && safeHref(data.websiteUrl)) links.push([data.websiteUrl, 'website', true]);
+    if (data.instagramUrl && safeHref(data.instagramUrl)) links.push([data.instagramUrl, 'instagram', true]);
+
     for (const [href, key, external] of links) {
       const a = root.document.createElement('a');
       a.href = href;

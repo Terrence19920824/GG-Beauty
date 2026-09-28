@@ -70,13 +70,19 @@ test('2. public presentation exposes intended contact fields, address, and map l
   };
 
   assert.deepEqual(contact.publicPresentation(fullRow), {
+    displayName: 'Shop',
     shopName: 'Shop',
     contactPhone: '+6512345678',
+    whatsappPhone: '+6581234567',
     whatsAppUrl: 'https://wa.me/6581234567',
     address: '123 Orchard Road, #02-01',
     postalCode: '238888',
     mapUrl: 'https://maps.google.com/?q=Orchard',
-    showAddress: true
+    showAddress: true,
+    businessHours: null,
+    websiteUrl: null,
+    instagramUrl: null,
+    announcement: { active: false, text: '' }
   });
 
   // When show_public_address is false -> address, postalCode, mapUrl are wiped to null
@@ -86,13 +92,19 @@ test('2. public presentation exposes intended contact fields, address, and map l
   };
 
   assert.deepEqual(contact.publicPresentation(hiddenRow), {
+    displayName: 'Shop',
     shopName: 'Shop',
     contactPhone: '+6512345678',
+    whatsappPhone: '+6581234567',
     whatsAppUrl: 'https://wa.me/6581234567',
     address: null,
     postalCode: null,
     mapUrl: null,
-    showAddress: false
+    showAddress: false,
+    businessHours: null,
+    websiteUrl: null,
+    instagramUrl: null,
+    announcement: { active: false, text: '' }
   });
 
   // When address fields are empty/null
@@ -107,13 +119,19 @@ test('2. public presentation exposes intended contact fields, address, and map l
   };
 
   assert.deepEqual(contact.publicPresentation(emptyAddrRow), {
+    displayName: 'Shop',
     shopName: 'Shop',
     contactPhone: null,
+    whatsappPhone: null,
     whatsAppUrl: null,
     address: null,
     postalCode: null,
     mapUrl: null,
-    showAddress: true
+    showAddress: true,
+    businessHours: null,
+    websiteUrl: null,
+    instagramUrl: null,
+    announcement: { active: false, text: '' }
   });
 });
 

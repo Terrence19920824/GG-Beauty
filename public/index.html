@@ -346,7 +346,13 @@
     <div class="language-switch" aria-label="Language"><button id="languageZh" type="button" aria-label="中文">中</button><span class="language-divider">｜</span><button id="languageEn" type="button" aria-label="English">E</button></div>
     <div><a id="memberEntry" class="member-entry" href="/member.html" data-i18n="membershipEntry">我的账户</a><a id="myBookingsEntry" class="my-bookings-entry" href="/my-bookings.html" data-i18n="myBookings">我的预约</a></div>
   </div>
-  <div id="merchantContactBar"></div>
+  <div id="customerAnnouncement" class="announcement-banner" hidden>
+    <div class="announcement-header"><span class="announcement-icon" aria-hidden="true">📢</span><span class="announcement-title" data-i18n="customerAnnouncement">顾客公告</span></div>
+    <div class="announcement-body">
+      <p id="announcementText" class="announcement-text notranslate" translate="no"></p>
+      <button id="announcementToggleBtn" type="button" class="announcement-toggle-btn" hidden></button>
+    </div>
+  </div>
 
   <div id="cartModuleRecovery" class="message error" hidden>
     <div id="cartRecoveryMessage"></div>
@@ -485,6 +491,8 @@
 
   </div>
 
+  <div id="merchantContactBar"></div>
+
 </div>
 
 <script src="/shared-i18n.js?v=2.0.0"></script>
@@ -615,6 +623,59 @@ const NO_PREFERENCE_VALUE = '__no_preference__';
 const localeApi = globalThis.ggI18n;
 const shopContextApi = globalThis.ggCustomerShopContext;
 const categoryFlowApi = globalThis.ggCustomerCategoryFlow;
+
+let announcementExpanded = false;
+
+function renderAnnouncement(announcement) {
+  const banner = document.getElementById('customerAnnouncement');
+  const textEl = document.getElementById('announcementText');
+  const toggleBtn = document.getElementById('announcementToggleBtn');
+  if (!banner || !textEl) return;
+  if (!announcement || !announcement.active || !announcement.text || !announcement.text.trim()) {
+    banner.hidden = true;
+    textEl.textContent = '';
+    if (toggleBtn) toggleBtn.hidden = true;
+    return;
+  }
+  const text = announcement.text.trim();
+  textEl.textContent = text;
+  banner.hidden = false;
+
+  const isLong = text.length > 80 || text.includes('\n');
+  if (isLong && toggleBtn) {
+    toggleBtn.hidden = false;
+    if (announcementExpanded) {
+      textEl.classList.remove('collapsed');
+      toggleBtn.textContent = customerT('showLess');
+    } else {
+      textEl.classList.add('collapsed');
+      toggleBtn.textContent = customerT('showMore');
+    }
+    toggleBtn.onclick = () => {
+      announcementExpanded = !announcementExpanded;
+      if (announcementExpanded) {
+        textEl.classList.remove('collapsed');
+        toggleBtn.textContent = customerT('showLess');
+      } else {
+        textEl.classList.add('collapsed');
+        toggleBtn.textContent = customerT('showMore');
+      }
+    };
+  } else {
+    textEl.classList.remove('collapsed');
+    if (toggleBtn) toggleBtn.hidden = true;
+  }
+}
+
+function applyPublicConfig(cfgData) {
+  if (!cfgData) return;
+  cachedMerchantContact = cfgData;
+  if (cfgData.displayName) {
+    if (shopBrandName) shopBrandName.textContent = cfgData.displayName;
+    document.title = `${cfgData.displayName} · ${customerT('onlineAppointment')}`;
+  }
+  renderAnnouncement(cfgData.announcement);
+}
 const calendarApi = globalThis.ggCustomerBookingCalendar;
 const customerT = key => localeApi.t(key, currentLocale);
 const COUNTRY_CODES = [
@@ -1134,7 +1195,7 @@ async function loadCustomerCatalogue(gen = customerLoadGeneration, signal = curr
     if (serviceCards) serviceCards.hidden = false;
     if (bookingStep) bookingStep.hidden = false;
 
-    if (categoriesResolved && availableCategories.length > 0) {
+    if (categoriesResolved) {
       renderCategories();
     } else {
       if (categoryStep) categoryStep.hidden = true;
@@ -1377,6 +1438,7 @@ async function setLocale(locale) {
   renderLocaleDependentBookingState();
   await renderCart();
   renderLocaleDependentBookingState();
+  if (cachedMerchantContact) applyPublicConfig(cachedMerchantContact);
 }
 
 async function switchLanguage(locale) {
@@ -1556,7 +1618,7 @@ async function initializeCustomerPage() {
       myBookingsEntry.href = `/my-bookings.html?shop=${encodeURIComponent(customerShopSlug)}`;
     }
     fetchJsonWithTimeout(`/api/customer/public-config?shopSlug=${encodeURIComponent(customerShopSlug)}`, { signal })
-      .then(cfg => { if (cfg && cfg.success && cfg.data) cachedMerchantContact = cfg.data; })
+      .then(cfg => { if (cfg && cfg.success && cfg.data) applyPublicConfig(cfg.data); })
       .catch(() => {});
     fetchJsonWithTimeout(`/api/customer/member/config?shopSlug=${encodeURIComponent(customerShopSlug)}`, { signal })
       .then(cfg => {

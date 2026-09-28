@@ -329,12 +329,18 @@
     if (message) setMessage('merchantContactMessage', '');
     try {
       const data = await request('/api/owner/merchant-contact');
+      if (byId('merchantDisplayName')) byId('merchantDisplayName').value = data.displayName || '';
       byId('merchantContactPhone').value = data.contactPhone || '';
       byId('merchantWhatsAppPhone').value = data.whatsAppPhone || '';
       if (byId('merchantAddress')) byId('merchantAddress').value = data.address || '';
       if (byId('merchantPostalCode')) byId('merchantPostalCode').value = data.postalCode || '';
       if (byId('merchantMapUrl')) byId('merchantMapUrl').value = data.mapUrl || '';
       if (byId('merchantShowAddress')) byId('merchantShowAddress').checked = data.showAddress !== false;
+      if (byId('merchantBusinessHours')) byId('merchantBusinessHours').value = data.businessHours || '';
+      if (byId('merchantWebsiteUrl')) byId('merchantWebsiteUrl').value = data.websiteUrl || '';
+      if (byId('merchantInstagramUrl')) byId('merchantInstagramUrl').value = data.instagramUrl || '';
+      if (byId('merchantAnnouncementText')) byId('merchantAnnouncementText').value = data.announcementText || '';
+      if (byId('merchantAnnouncementEnabled')) byId('merchantAnnouncementEnabled').checked = data.announcementEnabled === true;
       byId('saveMerchantContactButton').hidden = !canWrite();
     } catch (error) { if (!error.sessionExpired) setMessage('merchantContactMessage', error.message, true); }
   }
@@ -346,18 +352,30 @@
         contactPhone: value('merchantContactPhone').trim(),
         whatsAppPhone: value('merchantWhatsAppPhone').trim()
       };
+      if (byId('merchantDisplayName')) payload.displayName = value('merchantDisplayName').trim();
       if (byId('merchantAddress')) payload.address = value('merchantAddress').trim();
       if (byId('merchantPostalCode')) payload.postalCode = value('merchantPostalCode').trim();
       if (byId('merchantMapUrl')) payload.mapUrl = value('merchantMapUrl').trim();
       if (byId('merchantShowAddress')) payload.showAddress = Boolean(byId('merchantShowAddress').checked);
+      if (byId('merchantBusinessHours')) payload.businessHours = value('merchantBusinessHours').trim();
+      if (byId('merchantWebsiteUrl')) payload.websiteUrl = value('merchantWebsiteUrl').trim();
+      if (byId('merchantInstagramUrl')) payload.instagramUrl = value('merchantInstagramUrl').trim();
+      if (byId('merchantAnnouncementText')) payload.announcementText = value('merchantAnnouncementText').trim();
+      if (byId('merchantAnnouncementEnabled')) payload.announcementEnabled = Boolean(byId('merchantAnnouncementEnabled').checked);
 
       const data = await request('/api/owner/merchant-contact', { method: 'PATCH', body: JSON.stringify(payload) });
+      if (byId('merchantDisplayName')) byId('merchantDisplayName').value = data.displayName || '';
       byId('merchantContactPhone').value = data.contactPhone || '';
       byId('merchantWhatsAppPhone').value = data.whatsAppPhone || '';
       if (byId('merchantAddress')) byId('merchantAddress').value = data.address || '';
       if (byId('merchantPostalCode')) byId('merchantPostalCode').value = data.postalCode || '';
       if (byId('merchantMapUrl')) byId('merchantMapUrl').value = data.mapUrl || '';
       if (byId('merchantShowAddress')) byId('merchantShowAddress').checked = data.showAddress !== false;
+      if (byId('merchantBusinessHours')) byId('merchantBusinessHours').value = data.businessHours || '';
+      if (byId('merchantWebsiteUrl')) byId('merchantWebsiteUrl').value = data.websiteUrl || '';
+      if (byId('merchantInstagramUrl')) byId('merchantInstagramUrl').value = data.instagramUrl || '';
+      if (byId('merchantAnnouncementText')) byId('merchantAnnouncementText').value = data.announcementText || '';
+      if (byId('merchantAnnouncementEnabled')) byId('merchantAnnouncementEnabled').checked = data.announcementEnabled === true;
       setMessage('merchantContactMessage', t('saved'));
     } catch (error) { if (!error.sessionExpired) setMessage('merchantContactMessage', error.message, true); }
     finally { button.disabled = false; }
