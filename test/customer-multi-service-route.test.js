@@ -15,7 +15,7 @@ const ID = {
 
 const requestBody = {
   shopSlug: 'tenant-a', locale: 'en', startAt: '2030-01-07T02:00:00.000Z',
-  customerName: 'Customer', phone: '00000000', email: 'customer@example.invalid',
+  customerName: 'Customer', phone: '+6581234567', email: 'customer@example.invalid',
   items: [
     { clientItemKey: 'facial', serviceId: ID.serviceA, staffSelectionType: 'specific', staffId: ID.staffA },
     { clientItemKey: 'balayage', serviceId: ID.serviceB, staffSelectionType: 'specific', staffId: ID.staffB }
@@ -95,7 +95,7 @@ test('someone-else endpoint writes recipient as customer authority and keeps boo
   const parent = fixture.state.queries.find(query => /^INSERT INTO appointments/.test(query.sql));
   assert.deepEqual(parent.params.slice(2, 10), [
     ID.recipient, ID.customer,
-    'Customer', '00000000', 'customer@example.invalid',
+    'Customer', '+6581234567', 'customer@example.invalid',
     'Recipient B', '+65 9999 9999', 'b@example.invalid'
   ]);
   assert.equal(fixture.state.queries.filter(query => /^INSERT INTO appointment_items/.test(query.sql)).length, 2);
@@ -126,9 +126,12 @@ test('ambiguous same-shop phone fails closed and rolls back before appointment c
 test('unsupported existing local phone is handled safely without country guessing', async () => {
   delete process.env.BOOKING_WRITE_MAINTENANCE;
   const fixture = makeFixture(); app.locals.bookingPool = fixture.pool; app.locals.bookingValidator = async () => {};
-  await withServer(async base => assert.equal((await post(base, { ...requestBody, phone: '123' })).status, 200));
-  const lookup = fixture.state.queries.find(query => /BTRIM\(phone\)/.test(query.sql));
-  assert.deepEqual(lookup.params, [ID.shop, '123']);
+  await withServer(async base => {
+    const res = await post(base, { ...requestBody, phone: '123' });
+    assert.equal(res.status, 400);
+    const body = await res.json();
+    assert.equal(body.code, 'INVALID_PHONE');
+  });
 });
 
 test('same staff endpoint creates exactly two sequential primary assignments', async () => {

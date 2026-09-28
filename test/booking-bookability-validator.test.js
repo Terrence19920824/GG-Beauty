@@ -24,7 +24,7 @@ const body = {
   service: 'Test Service',
   staff: 'Test Staff',
   customerName: 'Test Customer',
-  phone: '00000000',
+  phone: '+6581234567',
   email: 'test@example.invalid',
   date: '2030-01-07',
   time: '10:00',

@@ -51,7 +51,10 @@ const {
 } = require('./lib/customer-identity');
 const {
   validateCustomerIdentityPhone,
-  PhoneValidationError
+  PhoneValidationError,
+  isSupportedCountryIso,
+  getSupportedPhoneCountries,
+  REGION_KINDS
 } = require('./lib/phone-normalization');
 const {
   COOKIE: CUSTOMER_SESSION_COOKIE,
@@ -2897,14 +2900,46 @@ const normalizeCustomerSpecialRequest = body => {
   return trimmed || null;
 };
 
-const validateBookingPhone = rawPhone => {
+const CALLING_CODE_TO_ISO = {
+  '+65': 'SG',
+  '+60': 'MY',
+  '+62': 'ID',
+  '+86': 'CN',
+  '+1': 'US'
+};
+
+const resolveCountryIso = countryInput => {
+  if (!countryInput || typeof countryInput !== 'string') return null;
+  const raw = countryInput.trim().toUpperCase();
+  if (!raw) return null;
+  if (/^[A-Z]{2}$/.test(raw)) {
+    return isSupportedCountryIso(raw) ? raw : null;
+  }
+  const calling = raw.startsWith('+') ? raw : `+${raw}`;
+  if (CALLING_CODE_TO_ISO[calling]) return CALLING_CODE_TO_ISO[calling];
+  const match = getSupportedPhoneCountries().find(
+    c => c.callingCode === calling && c.regionKind === REGION_KINDS.ISO3166
+  );
+  return match ? match.countryIso2 : null;
+};
+
+const validateBookingPhone = (rawPhone, countryInput) => {
   if (typeof rawPhone !== 'string' || !rawPhone.trim()) {
     throw new AppointmentMutationError('INVALID_PHONE', 400, '请输入有效的手机号码');
   }
   const trimmed = rawPhone.trim();
+  if (/[\r\n\t\0<>]/.test(trimmed)) {
+    throw new AppointmentMutationError('INVALID_PHONE', 400, '请输入有效的手机号码');
+  }
+
+  const countryIso = countryInput ? resolveCountryIso(countryInput) : null;
+  if (countryInput && !countryIso) {
+    throw new AppointmentMutationError('INVALID_PHONE', 400, '请输入有效的手机号码');
+  }
+
   if (trimmed.startsWith('+')) {
     try {
-      validateCustomerIdentityPhone(trimmed);
+      validateCustomerIdentityPhone(trimmed, countryIso || undefined);
     } catch (err) {
       if (err instanceof PhoneValidationError) {
         throw new AppointmentMutationError('INVALID_PHONE', 400, '请输入有效的手机号码');
@@ -2912,8 +2947,16 @@ const validateBookingPhone = rawPhone => {
       throw err;
     }
   } else {
-    if (/^1\d{7}$/.test(trimmed) || /[\r\n\t\0<>]/.test(trimmed)) {
+    if (!countryIso) {
       throw new AppointmentMutationError('INVALID_PHONE', 400, '请输入有效的手机号码');
+    }
+    try {
+      validateCustomerIdentityPhone(trimmed, countryIso);
+    } catch (err) {
+      if (err instanceof PhoneValidationError) {
+        throw new AppointmentMutationError('INVALID_PHONE', 400, '请输入有效的手机号码');
+      }
+      throw err;
     }
   }
 };
@@ -2940,9 +2983,9 @@ const createMultiServiceBooking = async (req,verifiedSession=null) => {
   if (!parsedStart || !body.shopSlug || !body.customerName || !body.phone) {
     throw new AppointmentMutationError('booking_input_invalid', 400, '请完整填写所有必填信息');
   }
-  validateBookingPhone(body.phone);
+  validateBookingPhone(body.phone, body.countryCode);
   if (body.bookingFor === 'someone_else' && body.recipient?.phone) {
-    validateBookingPhone(body.recipient.phone);
+    validateBookingPhone(body.recipient.phone, body.recipient.countryCode || body.countryCode);
   }
   return runInTransaction(req.app.locals.bookingPool, async client => {
     const serverNow = req.app.locals.bookingNow || new Date();
@@ -3107,9 +3150,9 @@ app.post('/api/new-db', async (req, res) => {
   }
 
   try {
-    validateBookingPhone(phone);
+    validateBookingPhone(phone, req.body.countryCode);
     if (req.body.bookingFor === 'someone_else' && req.body.recipient?.phone) {
-      validateBookingPhone(req.body.recipient.phone);
+      validateBookingPhone(req.body.recipient.phone, req.body.recipient.countryCode || req.body.countryCode);
     }
   } catch (err) {
     if (err instanceof AppointmentMutationError) {
