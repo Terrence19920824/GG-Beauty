@@ -1084,6 +1084,7 @@ app.post('/api/customer/my-bookings', async (req, res) => {
 
 app.get('/api/calendar/appointment.ics', async (req, res) => {
   setPublicBookingNoCacheHeaders(res);
+  res.set('Referrer-Policy', 'no-referrer');
   const token = typeof req.query.token === 'string' ? req.query.token.trim() : '';
   const verified = verifyCalendarToken(token);
   if (!verified) {
@@ -1112,6 +1113,7 @@ app.get('/api/calendar/appointment.ics', async (req, res) => {
 
 app.get('/api/calendar/projection', async (req, res) => {
   setPublicBookingNoCacheHeaders(res);
+  res.set('Referrer-Policy', 'no-referrer');
   const token = typeof req.query.token === 'string' ? req.query.token.trim() : '';
   const verified = verifyCalendarToken(token);
   if (!verified) {
@@ -2988,11 +2990,13 @@ app.post('/api/new-db', async (req, res) => {
             appointmentId: created.appointment.id,
             shopId: created.appointment.shop_id
           });
-          calendar = {
-            token: calToken,
-            icsUrl: `/api/calendar/appointment.ics?token=${encodeURIComponent(calToken)}`,
-            googleUrl: buildGoogleCalendarUrl(calData)
-          };
+          if (calToken) {
+            calendar = {
+              token: calToken,
+              icsUrl: `/api/calendar/appointment.ics?token=${encodeURIComponent(calToken)}`,
+              googleUrl: buildGoogleCalendarUrl(calData)
+            };
+          }
         }
       } catch (calErr) {
         console.error('Calendar generation error:', safeStaffAuthErrorCode(calErr));
@@ -3400,11 +3404,13 @@ app.post('/api/new-db', async (req, res) => {
           appointmentId: appointment.id,
           shopId: appointment.shop_id
         });
-        calendar = {
-          token: calToken,
-          icsUrl: `/api/calendar/appointment.ics?token=${encodeURIComponent(calToken)}`,
-          googleUrl: buildGoogleCalendarUrl(calData)
-        };
+        if (calToken) {
+          calendar = {
+            token: calToken,
+            icsUrl: `/api/calendar/appointment.ics?token=${encodeURIComponent(calToken)}`,
+            googleUrl: buildGoogleCalendarUrl(calData)
+          };
+        }
       }
     } catch (calErr) {
       console.error('Calendar generation error:', safeStaffAuthErrorCode(calErr));

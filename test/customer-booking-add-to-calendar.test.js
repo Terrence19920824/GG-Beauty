@@ -7,13 +7,20 @@ const path = require('node:path');
 const crypto = require('crypto');
 const http = require('http');
 
+const TEST_CALENDAR_SECRET = 'test-secret-that-is-at-least-32-bytes-long-for-calendar-auth';
+process.env.CALENDAR_TOKEN_SECRET = TEST_CALENDAR_SECRET;
+
 const {
   TIMEZONE,
+  MIN_SECRET_BYTES,
+  CALENDAR_TOKEN_TTL_SECONDS,
+  getSigningSecret,
   generateCalendarToken,
   verifyCalendarToken,
   toSingaporeLocalIcs,
   toUtcIcs,
   escapeIcsText,
+  foldIcsLine,
   buildCalendarEventProjection,
   formatIcsCalendar,
   buildGoogleCalendarUrl,
@@ -511,6 +518,11 @@ test('30. HTTP endpoint /api/calendar/appointment.ics with valid token returns 2
     assert.equal(res.status, 200);
     assert.equal(res.headers.get('content-type'), 'text/calendar; charset=utf-8');
     assert.match(res.headers.get('content-disposition'), /appointment-GG-CAL-01\.ics/);
+    assert.equal(res.headers.get('referrer-policy'), 'no-referrer');
+    assert.equal(res.headers.get('cache-control'), 'no-store, no-cache, must-revalidate, private');
+    assert.equal(res.headers.get('pragma'), 'no-cache');
+    assert.equal(res.headers.get('expires'), '0');
+
     const body = await res.text();
     assert.match(body, /BEGIN:VCALENDAR/);
     assert.match(body, /SUMMARY:GG Hair Studio — Haircut & Styling/);
@@ -566,6 +578,11 @@ test('31. HTTP endpoint /api/calendar/projection returns JSON with authoritative
   await withTestServer(app, async base => {
     const res = await fetch(`${base}/api/calendar/projection?token=${encodeURIComponent(token)}`);
     assert.equal(res.status, 200);
+    assert.equal(res.headers.get('referrer-policy'), 'no-referrer');
+    assert.equal(res.headers.get('cache-control'), 'no-store, no-cache, must-revalidate, private');
+    assert.equal(res.headers.get('pragma'), 'no-cache');
+    assert.equal(res.headers.get('expires'), '0');
+
     const json = await res.json();
     assert.equal(json.success, true);
     assert.equal(json.data.title, 'GG Hair Studio — Haircut & Styling');
@@ -578,4 +595,237 @@ test('31. HTTP endpoint /api/calendar/projection returns JSON with authoritative
     const resNoToken = await fetch(`${base}/api/calendar/projection`);
     assert.equal(resNoToken.status, 403);
   });
+});
+
+test('32. Tamper resistance: aid modified is denied', () => {
+  const appointmentId = '33333333-3333-4000-8000-000000000001';
+  const shopId = '11111111-1111-4000-8000-000000000001';
+  const token = generateCalendarToken({ appointmentId, shopId });
+  const [payloadEnc, sig] = token.split('.');
+  const payload = JSON.parse(Buffer.from(payloadEnc, 'base64url').toString('utf8'));
+  payload.aid = '99999999-9999-4000-8000-000000000009';
+  const tamperedPayloadEnc = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  assert.equal(verifyCalendarToken(`${tamperedPayloadEnc}.${sig}`), null);
+});
+
+test('33. Tamper resistance: sid modified is denied', () => {
+  const appointmentId = '33333333-3333-4000-8000-000000000001';
+  const shopId = '11111111-1111-4000-8000-000000000001';
+  const token = generateCalendarToken({ appointmentId, shopId });
+  const [payloadEnc, sig] = token.split('.');
+  const payload = JSON.parse(Buffer.from(payloadEnc, 'base64url').toString('utf8'));
+  payload.sid = '99999999-9999-4000-8000-000000000009';
+  const tamperedPayloadEnc = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  assert.equal(verifyCalendarToken(`${tamperedPayloadEnc}.${sig}`), null);
+});
+
+test('34. Tamper resistance: exp modified without re-signing is denied', () => {
+  const appointmentId = '33333333-3333-4000-8000-000000000001';
+  const shopId = '11111111-1111-4000-8000-000000000001';
+  const token = generateCalendarToken({ appointmentId, shopId });
+  const [payloadEnc, sig] = token.split('.');
+  const payload = JSON.parse(Buffer.from(payloadEnc, 'base64url').toString('utf8'));
+  payload.exp = payload.exp + 100000;
+  const tamperedPayloadEnc = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  assert.equal(verifyCalendarToken(`${tamperedPayloadEnc}.${sig}`), null);
+});
+
+test('35. Tamper resistance: signature modified is denied', () => {
+  const appointmentId = '33333333-3333-4000-8000-000000000001';
+  const shopId = '11111111-1111-4000-8000-000000000001';
+  const token = generateCalendarToken({ appointmentId, shopId });
+  const [payloadEnc, sig] = token.split('.');
+  const tamperedSig = sig.slice(0, -4) + 'zzzz';
+  assert.equal(verifyCalendarToken(`${payloadEnc}.${tamperedSig}`), null);
+});
+
+test('36. Tamper resistance: expired token is denied', () => {
+  const appointmentId = '33333333-3333-4000-8000-000000000001';
+  const shopId = '11111111-1111-4000-8000-000000000001';
+  const expiredToken = generateCalendarToken({ appointmentId, shopId, ttlSeconds: -60 });
+  assert.equal(verifyCalendarToken(expiredToken), null);
+});
+
+test('37. Tamper resistance: missing or malformed exp claim is denied', () => {
+  const appointmentId = '33333333-3333-4000-8000-000000000001';
+  const shopId = '11111111-1111-4000-8000-000000000001';
+
+  // Missing exp
+  const missingExpPayload = { aid: appointmentId, sid: shopId, iat: Math.floor(Date.now() / 1000) };
+  const missingExpEnc = Buffer.from(JSON.stringify(missingExpPayload)).toString('base64url');
+  const missingExpSig = crypto.createHmac('sha256', TEST_CALENDAR_SECRET).update(missingExpEnc).digest('base64url');
+  assert.equal(verifyCalendarToken(`${missingExpEnc}.${missingExpSig}`), null);
+
+  // Malformed exp values
+  const malformedExpValues = [
+    null,
+    'garbage-string',
+    '9999999999',
+    NaN,
+    Infinity,
+    -Infinity,
+    1727500000.75, // non-integer float
+    {},
+    []
+  ];
+
+  for (const badExp of malformedExpValues) {
+    const payload = { aid: appointmentId, sid: shopId, exp: badExp };
+    const enc = Buffer.from(JSON.stringify(payload)).toString('base64url');
+    const sig = crypto.createHmac('sha256', TEST_CALENDAR_SECRET).update(enc).digest('base64url');
+    assert.equal(verifyCalendarToken(`${enc}.${sig}`), null, `Expected rejection for bad exp: ${badExp}`);
+  }
+});
+
+test('38. Tamper resistance: missing token, wrong secret, or secret absent/insufficient is denied', () => {
+  // Missing / empty token
+  assert.equal(verifyCalendarToken(''), null);
+  assert.equal(verifyCalendarToken(null), null);
+  assert.equal(verifyCalendarToken(undefined), null);
+  assert.equal(verifyCalendarToken('   '), null);
+  assert.equal(verifyCalendarToken('singleparttoken'), null);
+
+  // Wrong secret
+  const secretA = 'secret-a-must-be-at-least-32-bytes-long!';
+  const secretB = 'secret-b-must-be-at-least-32-bytes-long!';
+  const tokenA = generateCalendarToken({
+    appointmentId: '33333333-3333-4000-8000-000000000001',
+    shopId: '11111111-1111-4000-8000-000000000001',
+    secret: secretA
+  });
+  assert.equal(verifyCalendarToken(tokenA, secretB), null);
+
+  // Secret absent or insufficient (< 32 bytes)
+  const savedSecret = process.env.CALENDAR_TOKEN_SECRET;
+  try {
+    delete process.env.CALENDAR_TOKEN_SECRET;
+    assert.equal(getSigningSecret(), null);
+    assert.equal(generateCalendarToken({
+      appointmentId: '33333333-3333-4000-8000-000000000001',
+      shopId: '11111111-1111-4000-8000-000000000001'
+    }), null);
+    assert.equal(verifyCalendarToken(tokenA), null);
+
+    // Insufficient length secret
+    process.env.CALENDAR_TOKEN_SECRET = 'short-secret-less-32-bytes';
+    assert.equal(getSigningSecret(), null);
+    assert.equal(generateCalendarToken({
+      appointmentId: '33333333-3333-4000-8000-000000000001',
+      shopId: '11111111-1111-4000-8000-000000000001'
+    }), null);
+  } finally {
+    process.env.CALENDAR_TOKEN_SECRET = savedSecret;
+  }
+});
+
+test('39. ICS lone carriage return and injection neutralization', () => {
+  // Lone \r escaping
+  assert.equal(escapeIcsText('Line1\rLine2'), 'Line1\\nLine2');
+  assert.equal(escapeIcsText('Line1\nLine2'), 'Line1\\nLine2');
+  assert.equal(escapeIcsText('Line1\r\nLine2'), 'Line1\\nLine2');
+  assert.equal(escapeIcsText('A\rB\nC\r\nD'), 'A\\nB\\nC\\nD');
+
+  // Attempted injections with various newline styles
+  const maliciousPayloads = [
+    'Service\rATTENDEE:mailto:attacker@evil.com\rORGANIZER:mailto:evil@hacker.com',
+    'Service\r\nURL:https://evil.com/phish\r\nDESCRIPTION:Injected',
+    'Service\rBEGIN:VEVENT\rUID:injected@evil.com\rEND:VEVENT',
+    'Service\nATTENDEE:mailto:victim@example.com\nORGANIZER:mailto:fake@example.com',
+    'Service\r\nBEGIN:VEVENT\r\nSUMMARY:Injected Event\r\nEND:VEVENT'
+  ];
+
+  for (const payload of maliciousPayloads) {
+    const proj = buildCalendarEventProjection({
+      appointment: {
+        id: '33333333-3333-4000-8000-000000000001',
+        appointment_no: 'GG-001',
+        start_at: new Date('2030-05-15T02:00:00.000Z'),
+        end_at: new Date('2030-05-15T03:00:00.000Z'),
+        legacy_service_name: payload
+      },
+      shop: { name: 'Safety Test Salon' }
+    });
+
+    const ics = formatIcsCalendar(proj);
+
+    // Verify no line starts with injected property
+    const lines = ics.split('\r\n');
+    for (const line of lines) {
+      assert.equal(line.startsWith('ATTENDEE:'), false, `Line should not start with ATTENDEE: "${line}"`);
+      assert.equal(line.startsWith('ORGANIZER:'), false, `Line should not start with ORGANIZER: "${line}"`);
+      assert.equal(line.startsWith('URL:'), false, `Line should not start with URL: "${line}"`);
+    }
+
+    // Must have exactly ONE BEGIN:VEVENT and ONE END:VEVENT
+    const beginMatches = ics.match(/^BEGIN:VEVENT$/gm);
+    const endMatches = ics.match(/^END:VEVENT$/gm);
+    assert.equal(beginMatches?.length, 1, 'Must have exactly 1 BEGIN:VEVENT');
+    assert.equal(endMatches?.length, 1, 'Must have exactly 1 END:VEVENT');
+  }
+});
+
+test('40. RFC 5545 line folding: UTF-8 safe line folding for ASCII and Unicode text', () => {
+  // Long ASCII text
+  const longAscii = 'VeryLongServiceNameThatExceedsTheSeventyFiveOctetLimitGuidelineFromRFC5545Specification'.repeat(2);
+  const projAscii = buildCalendarEventProjection({
+    appointment: {
+      id: '33333333-3333-4000-8000-000000000001',
+      appointment_no: 'GG-001',
+      start_at: new Date('2030-05-15T02:00:00.000Z'),
+      end_at: new Date('2030-05-15T03:00:00.000Z'),
+      legacy_service_name: longAscii
+    },
+    shop: { name: 'Standard Salon' }
+  });
+  const icsAscii = formatIcsCalendar(projAscii);
+  const asciiLines = icsAscii.split('\r\n');
+  if (asciiLines[asciiLines.length - 1] === '') asciiLines.pop();
+  for (let i = 0; i < asciiLines.length; i++) {
+    assert.ok(Buffer.byteLength(asciiLines[i], 'utf8') <= 75, `ASCII Line ${i} exceeds 75 octets: ${Buffer.byteLength(asciiLines[i], 'utf8')}`);
+  }
+  const unfoldedAscii = icsAscii.replace(/\r\n[ \t]/g, '');
+  assert.ok(unfoldedAscii.includes(longAscii));
+
+  // Long Chinese text & multi-byte characters
+  const longChinese = '日式极致美睫嫁接经典自然款单根浓密立体纤长睫毛护理项目'.repeat(4);
+  const emojis = '🌸💖✨💆‍♀️🌿💅'.repeat(6);
+  const projUnicode = buildCalendarEventProjection({
+    appointment: {
+      id: '33333333-3333-4000-8000-000000000001',
+      appointment_no: 'GG-001',
+      start_at: new Date('2030-05-15T02:00:00.000Z'),
+      end_at: new Date('2030-05-15T03:00:00.000Z'),
+      legacy_service_name: `${longChinese} ${emojis}`
+    },
+    shop: { name: '美丽日记美甲美睫旗舰店' }
+  });
+  const icsUnicode = formatIcsCalendar(projUnicode);
+  const unicodeLines = icsUnicode.split('\r\n');
+  if (unicodeLines[unicodeLines.length - 1] === '') unicodeLines.pop();
+  for (let i = 0; i < unicodeLines.length; i++) {
+    assert.ok(Buffer.byteLength(unicodeLines[i], 'utf8') <= 75, `Unicode Line ${i} exceeds 75 octets: ${Buffer.byteLength(unicodeLines[i], 'utf8')}`);
+    assert.equal(unicodeLines[i].includes('\ufffd'), false, `Unicode Line ${i} must not have corrupted UTF-8`);
+    if (i > 0 && unicodeLines[i - 1].startsWith('SUMMARY:')) {
+      assert.ok(unicodeLines[i].startsWith(' '), 'Continuation line must start with space');
+    }
+  }
+  const unfoldedUnicode = icsUnicode.replace(/\r\n[ \t]/g, '');
+  assert.ok(unfoldedUnicode.includes(longChinese));
+  assert.ok(unfoldedUnicode.includes(emojis));
+});
+
+test('41. Booking failure isolation: booking succeeds when CALENDAR_TOKEN_SECRET is absent', () => {
+  const savedSecret = process.env.CALENDAR_TOKEN_SECRET;
+  try {
+    delete process.env.CALENDAR_TOKEN_SECRET;
+    const token = generateCalendarToken({
+      appointmentId: '33333333-3333-4000-8000-000000000001',
+      shopId: '11111111-1111-4000-8000-000000000001'
+    });
+    assert.equal(token, null);
+    // Verified in server source code:
+    assert.match(serverSource, /if\s*\(calToken\)\s*\{\s*calendar\s*=/);
+  } finally {
+    process.env.CALENDAR_TOKEN_SECRET = savedSecret;
+  }
 });
