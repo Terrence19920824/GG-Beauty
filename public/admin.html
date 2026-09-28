@@ -702,6 +702,7 @@
           <span data-i18n="calendar">日历</span>
         </button>
       </div>
+      <button type="button" class="primary-btn" id="walkInButton" onclick="openWalkInAppointment()" data-i18n="walkIn">到店顾客</button>
     </div>
 
     <div id="content" class="loading" aria-busy="true" aria-live="polite">
@@ -2876,6 +2877,69 @@ function getStatusText(status) {
     return escapeHtml(globalThis.ggI18n.formatStatus(status, activeLocale));
   }
   return escapeHtml(String(status || '-'));
+}
+
+// Compact, receptionist-oriented flow. The server remains authoritative for
+// customer identity, service snapshots, availability, timezone and collisions.
+async function openWalkInAppointment() {
+  const role = getAdminActorRole();
+  if (!['owner', 'manager', 'front_desk'].includes(role)) {
+    showAdminToast(adminT('operationFailed'), 'error');
+    return;
+  }
+  const button = safeGetElement('walkInButton');
+  if (button) button.disabled = true;
+  try {
+    const [servicesResponse, context] = await Promise.all([
+      fetch('/api/owner/services', { credentials: 'same-origin', cache: 'no-store' }),
+      fetchCalendarContext(currentRequestedLocationId)
+    ]);
+    const servicesJson = await servicesResponse.json().catch(() => ({}));
+    const services = Array.isArray(servicesJson.data) ? servicesJson.data.filter(s => s.is_active !== false && s.bookable !== false) : [];
+    if (!context || !context.location_id || !services.length || !Array.isArray(currentStaffSnapshot) || !currentStaffSnapshot.length) {
+      showAdminToast(adminT('loadFailed'), 'error'); return;
+    }
+    const now = getAuthoritativeNowMs() || Date.parse(context.server_now);
+    const date = getAuthoritativeLocalDate(now, context.timezone) || '';
+    const minutes = getAuthoritativeLocalMinutes(now, context.timezone);
+    const roundedMinutes = Number.isInteger(minutes) ? Math.ceil((minutes + 1) / 10) * 10 : null;
+    const time = Number.isInteger(roundedMinutes) && roundedMinutes < 1440
+      ? `${String(Math.floor(roundedMinutes / 60)).padStart(2, '0')}:${String(roundedMinutes % 60).padStart(2, '0')}`
+      : '';
+    const dialog = document.createElement('dialog');
+    dialog.className = 'walk-in-dialog';
+    dialog.innerHTML = `<form method="dialog" class="card" style="min-width:min(92vw,620px);margin:0">
+      <div class="toolbar"><h2>${escapeHtml(adminT('walkInTitle'))}</h2><button value="cancel" class="secondary-btn">×</button></div>
+      <div class="form-grid"><label class="field"><span>${escapeHtml(adminT('name'))}</span><input name="name" required maxlength="200"></label><label class="field"><span>${escapeHtml(adminT('phone'))}</span><input name="phone" required maxlength="40" inputmode="tel"></label><label class="field full"><span>${escapeHtml(adminT('email'))}</span><input name="email" type="email" maxlength="320"></label><label class="field"><span>${escapeHtml(adminT('date'))}</span><input name="date" type="date" required value="${escapeHtml(date)}"></label><label class="field"><span>${escapeHtml(adminT('time'))}</span><input name="time" type="time" required value="${escapeHtml(time)}"></label></div>
+      <h3>${escapeHtml(adminT('walkInServices'))}</h3><div class="walk-in-items"></div>
+      <div class="form-actions"><button type="button" class="secondary-btn walk-in-add">${escapeHtml(adminT('addServiceItem'))}</button><button type="button" class="primary-btn walk-in-save">${escapeHtml(adminT('walkInCreate'))}</button></div>
+    </form>`;
+    const rows = dialog.querySelector('.walk-in-items');
+    const addRow = () => {
+      const row = document.createElement('div'); row.className = 'form-grid';
+      const serviceOptions = services.map(s => `<option value="${escapeHtml(String(s.id))}">${escapeHtml(s.localized_name || s.name || s.name_en || s.name_zh || '')}</option>`).join('');
+      const staffOptions = currentStaffSnapshot.filter(s => s && s.is_active !== false && (!Array.isArray(s.locations) || !s.locations.length || s.locations.some(l => String(l.id) === String(context.location_id))))
+        .map(s => `<option value="${escapeHtml(String(s.id))}">${escapeHtml(s.name || '')}</option>`).join('');
+      row.innerHTML = `<label class="field"><span>${escapeHtml(adminT('service'))}</span><select class="walk-in-service">${serviceOptions}</select></label><label class="field"><span>${escapeHtml(adminT('selectStaff'))}</span><select class="walk-in-staff">${staffOptions}</select></label><button type="button" class="secondary-btn walk-in-remove">${escapeHtml(adminT('remove'))}</button>`;
+      row.querySelector('.walk-in-remove').onclick = () => row.remove(); rows.appendChild(row);
+    };
+    addRow();
+    dialog.querySelector('.walk-in-add').onclick = addRow;
+    dialog.querySelector('.walk-in-save').onclick = async () => {
+      const form = dialog.querySelector('form'); if (!form.reportValidity()) return;
+      const items = [...rows.children].map(row => ({ serviceId: row.querySelector('.walk-in-service').value, staffId: row.querySelector('.walk-in-staff').value, staffSelectionType: 'specific' }));
+      if (!items.length || items.some(item => !item.serviceId || !item.staffId)) { showAdminToast(adminT('walkInNeedsItem'), 'error'); return; }
+      const save = dialog.querySelector('.walk-in-save'); save.disabled = true;
+      const fd = new FormData(form);
+      try {
+        const response = await fetch('/api/owner/walk-in-appointments', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ locationId: context.location_id, date: fd.get('date'), time: fd.get('time'), customer: { name: fd.get('name'), phone: fd.get('phone'), email: fd.get('email') }, items }) });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok || !result.success) throw new Error(adminResultMessage(result, 'operationFailed'));
+        dialog.close(); dialog.remove(); showAdminToast(adminT('walkInCreated'), 'success'); await loadAppointments(context.location_id);
+      } catch (error) { showAdminToast(error.message || adminT('operationFailed'), 'error'); save.disabled = false; }
+    };
+    document.body.appendChild(dialog); dialog.showModal();
+  } finally { if (button) button.disabled = false; }
 }
 
 

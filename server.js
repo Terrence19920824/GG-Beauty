@@ -49,7 +49,8 @@ const {
 } = require('./public/service-locale');
 const {
   CustomerIdentityError,
-  resolveBookingParties
+  resolveBookingParties,
+  resolveOrCreateCustomer
 } = require('./lib/customer-identity');
 const {
   validateCustomerIdentityPhone,
@@ -1688,7 +1689,7 @@ const upsertOwnerServiceTranslation = async (
 app.get(
   '/api/owner/services',
   requireOwnerAuth,
-  requireOwnerRole(['owner', 'manager', 'admin']),
+  requireOwnerRole(['owner', 'manager', 'admin', 'front_desk']),
   async (req, res) => {
     let client;
 
@@ -3936,6 +3937,125 @@ const loadEligibleBookingStaff = async (
   );
   return result.rows;
 };
+
+// A walk-in remains an ordinary appointment.  This owner-only entry point is
+// intentionally separate from public booking: it derives every tenant, price,
+// duration, staff eligibility, and instant from server-owned data.
+app.post('/api/owner/walk-in-appointments',
+  requireOwnerAuth,
+  requireOwnerRole(['owner', 'manager', 'front_desk']),
+  async (req, res) => {
+    const body = req.body || {};
+    const customer = body.customer || {};
+    const locationId = typeof body.locationId === 'string' ? body.locationId.trim() : '';
+    const date = typeof body.date === 'string' ? body.date.trim() : '';
+    const time = typeof body.time === 'string' ? body.time.trim() : '';
+    const name = typeof customer.name === 'string' ? customer.name.trim() : '';
+    const phone = typeof customer.phone === 'string' ? customer.phone.trim() : '';
+    const email = typeof customer.email === 'string' && customer.email.trim() ? customer.email.trim() : null;
+
+    if (!isUuid(locationId) || !isValidCalendarDate(date) || !isValidClockTime(time) || !name || name.length > 200 || !phone) {
+      return res.status(400).json({ success: false, code: 'WALK_IN_INPUT_INVALID', message: '到店预约资料无效' });
+    }
+    try { validateBookingPhone(phone, customer.countryCode); }
+    catch (error) {
+      return res.status(error instanceof AppointmentMutationError ? error.status : 400).json({
+        success: false, code: error.code || 'INVALID_PHONE', message: error.publicMessage || '请输入有效的手机号码'
+      });
+    }
+
+    let requestedItems;
+    try {
+      requestedItems = normalizeBookingItems({ items: body.items }, isUuid);
+      if (requestedItems.some(item => item.staffSelectionType !== 'specific')) {
+        throw new MultiServicePlanningError('WALK_IN_STAFF_REQUIRED');
+      }
+    } catch (error) {
+      return res.status(400).json({ success: false, code: error.code || 'BOOKING_ITEMS_INVALID', message: '请选择有效的服务与员工' });
+    }
+
+    try {
+      const created = await runInTransaction(req.app.locals.ownerAuthPool, async client => {
+        await client.query("SET LOCAL lock_timeout = '5s'");
+        const scopeResult = await client.query(
+          `SELECT location.id AS location_id, location.timezone
+             FROM locations location
+            WHERE location.id=$1 AND location.shop_id=$2 AND location.is_active=TRUE
+            LIMIT 1`, [locationId, req.ownerAuth.shopId]);
+        if (scopeResult.rows.length !== 1) throw new AppointmentMutationError('LOCATION_NOT_FOUND', 404, '未找到营业地点');
+        const scope = { shop_id: req.ownerAuth.shopId, location_id: locationId,
+          timezone: validateAuthoritativeTimezone(scopeResult.rows[0].timezone) };
+        if (!scope.timezone) throw new AppointmentMutationError('LOCATION_TIMEZONE_INVALID', 409, '营业地点时区配置无效');
+
+        const serviceIds = [...new Set(requestedItems.map(item => item.serviceId))];
+        const serviceResult = await client.query(
+          `SELECT service.id, service.duration_minutes, service.price, service.price_is_from,
+                  COALESCE(service.name, '') AS localized_name
+             FROM services service
+             JOIN service_categories category ON category.shop_id=service.shop_id
+               AND category.id=service.category_id AND category.is_active=TRUE
+            WHERE service.shop_id=$1 AND service.id=ANY($2::UUID[])
+              AND service.is_active=TRUE AND service.bookable=TRUE
+              AND ${QUALIFIED_SERVICE_STAFF_EXISTS_SQL}`,
+          [scope.shop_id, serviceIds]);
+        if (serviceResult.rows.length !== serviceIds.length) throw new AppointmentMutationError('SERVICE_NOT_FOUND', 400, '服务项目不可预约');
+        const services = new Map(serviceResult.rows.map(row => [row.id, row]));
+        if (serviceResult.rows.some(row => !Number.isInteger(Number(row.duration_minutes)) || Number(row.duration_minutes) <= 0 || row.price === null || !Number.isFinite(Number(row.price)))) {
+          throw new AppointmentMutationError('SERVICE_SNAPSHOT_INVALID', 409, '服务资料暂不可预约');
+        }
+        const instantResult = await client.query(
+          `SELECT TO_CHAR((($1::DATE + $2::TIME) AT TIME ZONE timezone) AT TIME ZONE 'UTC',
+                    'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS start_at
+             FROM locations WHERE id=$3 AND shop_id=$4 AND is_active=TRUE`,
+          [date, time, scope.location_id, scope.shop_id]);
+        const startAt = instantResult.rows[0]?.start_at;
+        const serverNow = req.app.locals.bookingNow || new Date();
+        if (!startAt || new Date(startAt).getTime() <= serverNow.getTime()) {
+          throw new AppointmentMutationError('BOOKING_TIME_IN_PAST', 400, '所选时间已过，无法创建到店预约');
+        }
+        const timeline = buildSequentialTimeline(requestedItems.map(item => {
+          const service = services.get(item.serviceId);
+          return { ...item, serviceId: service.id, durationMinutes: Number(service.duration_minutes),
+            duration_minutes: Number(service.duration_minutes), price: service.price, localizedName: service.localized_name };
+        }), startAt);
+        for (const item of timeline) {
+          await req.app.locals.bookingValidator({ dbClient: client, shopId: scope.shop_id, locationId: scope.location_id,
+            staffId: item.staffId, serviceId: item.serviceId, requestedStartAt: item.startAt, requestedEndAt: item.endAt });
+        }
+        const identity = await resolveOrCreateCustomer(client, { shopId: scope.shop_id, name, phone, email });
+        const first = timeline[0], last = timeline[timeline.length - 1];
+        const appointmentResult = await client.query(
+          `INSERT INTO appointments (shop_id,location_id,customer_id,booker_customer_id,recipient_customer_id,
+             booker_name_snapshot,booker_phone_snapshot,booker_email_snapshot,recipient_name_snapshot,recipient_phone_snapshot,recipient_email_snapshot,
+             service_id,staff_id,start_at,end_at,status,booking_source)
+           VALUES ($1,$2,$3,$3,$3,$4,$5,$6,$4,$5,$6,$7,$8,$9,$10,'pending','walk_in')
+           RETURNING id,shop_id,location_id,customer_id,appointment_no,start_at,end_at,status,created_at`,
+          [scope.shop_id, scope.location_id, identity.customerId, name, identity.phone, email,
+            first.serviceId, first.staffId, first.startAt, last.endAt]);
+        const appointment = appointmentResult.rows[0];
+        if (!appointment) throw new AppointmentMutationError('APPOINTMENT_INSERT_MISMATCH', 500, '到店预约创建失败');
+        await createMultiServiceRows(client, { appointment, items: timeline, serviceLocale: normalizeLocale(body.locale) });
+        for (const nextStatus of ['confirmed', 'arrived']) {
+          await client.query(`UPDATE appointments SET status=$1, updated_at=NOW() WHERE id=$2 AND shop_id=$3 AND location_id=$4`,
+            [nextStatus, appointment.id, scope.shop_id, scope.location_id]);
+          await client.query(`UPDATE appointment_items SET status=$1, updated_at=NOW() WHERE shop_id=$2 AND location_id=$3 AND appointment_id=$4`,
+            [nextStatus, scope.shop_id, scope.location_id, appointment.id]);
+          await recordStatusHistory(client, { appointment, fromStatus: appointment.status, toStatus: nextStatus,
+            operatorType: 'owner', operatorId: req.ownerAuth.ownerAccountId, source: 'owner_walk_in' });
+          appointment.status = nextStatus;
+        }
+        return { appointment, customerId: identity.customerId, reusedCustomer: Boolean(identity.customerId && !identity.verified) };
+      });
+      return res.status(201).json({ success: true, data: { ...created.appointment, customer_id: created.customerId } });
+    } catch (error) {
+      const unavailable = error instanceof StaffBookabilityError || error instanceof MultiServicePlanningError || error.code === '23P01';
+      const status = unavailable ? 409 : (error instanceof AppointmentMutationError ? error.status : 500);
+      console.error('Create walk-in appointment error:', safeStaffAuthErrorCode(error));
+      return res.status(status).json({ success: false, code: unavailable ? 'BOOKING_NOT_AVAILABLE' : (error.code || 'INTERNAL_ERROR'),
+        message: unavailable ? '该时间暂不可安排' : (error.publicMessage || '到店预约创建失败') });
+    }
+  }
+);
 
 const filterAnyStaffCandidateSlots = async ({
   dbClient,
