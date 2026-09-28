@@ -271,9 +271,17 @@
     .success-action-link { display: inline-flex; align-items: center; justify-content: center; padding: 7px 12px; border-radius: 8px; text-decoration: none; font-size: 13px; font-weight: 600; background: #fff; color: #166534; border: 1px solid #bbf7d0; }
     .success-action-link.whatsapp { background: #25d366; color: #fff; border-color: #25d366; }
     .success-actions-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 14px; }
-    .success-btn { display: inline-flex; align-items: center; justify-content: center; padding: 12px 14px; border-radius: 10px; font-size: 14px; font-weight: 700; text-decoration: none; cursor: pointer; border: 0; box-sizing: border-box; text-align: center; }
+    .success-btn { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: 12px 14px; border-radius: 10px; font-size: 14px; font-weight: 700; text-decoration: none; cursor: pointer; border: 0; box-sizing: border-box; text-align: center; }
     .success-btn.primary { background: var(--theme-primary, #111); color: var(--theme-primary-contrast, #fff); }
     .success-btn.secondary { background: var(--theme-surface-subtle, #eee); color: var(--theme-text, #222); border: 1px solid var(--theme-border, #ddd); }
+    .calendar-section { margin-top: 14px; padding-top: 12px; border-top: 1px dashed #bbf7d0; text-align: left; }
+    .calendar-title { font-size: 14px; font-weight: 700; color: #166534; margin-bottom: 8px; }
+    .calendar-actions-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .calendar-btn { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: 10px 12px; border-radius: 10px; font-size: 13px; font-weight: 600; text-decoration: none; cursor: pointer; border: 1px solid #bbf7d0; background: #fff; color: #166534; box-sizing: border-box; text-align: center; }
+    .calendar-btn:active { background: #f0fdf4; }
+    .calendar-btn.google { color: #1e3a8a; border-color: #bfdbfe; background: #fff; }
+    .calendar-btn.google:active { background: #eff6ff; }
+    .calendar-error { margin-top: 8px; font-size: 13px; color: #dc2626; font-weight: 500; }
 
     .staff-item-card {
       border: 1px solid var(--theme-border, #ddd);
@@ -2044,9 +2052,9 @@ document
                 customerName,
                 phone,
                 email,
-                customerSpecialRequest,
                 bookingFor,
                 ...(recipient ? { recipient } : {}),
+                customerSpecialRequest,
                 date,
                 startAt: selectedSlot.startAt
               })
@@ -2114,6 +2122,49 @@ document
         }
         if (contactRow.children.length > 0) {
           messageBox.appendChild(contactRow);
+        }
+
+        if (result.data?.calendar) {
+          const calSec = document.createElement('div');
+          calSec.className = 'calendar-section';
+          calSec.id = 'calendarSection';
+
+          const calTitle = document.createElement('div');
+          calTitle.className = 'calendar-title';
+          calTitle.textContent = `📅 ${customerT('addToCalendar')}`;
+          calSec.appendChild(calTitle);
+
+          const calActions = document.createElement('div');
+          calActions.className = 'calendar-actions-row';
+
+          if (result.data.calendar.icsUrl) {
+            const appleBtn = document.createElement('a');
+            appleBtn.className = 'calendar-btn apple';
+            appleBtn.id = 'appleCalendarBtn';
+            appleBtn.href = result.data.calendar.icsUrl;
+            appleBtn.textContent = ` ${customerT('appleCalendar')}`;
+            calActions.appendChild(appleBtn);
+          }
+
+          if (result.data.calendar.googleUrl) {
+            const googleBtn = document.createElement('a');
+            googleBtn.className = 'calendar-btn google';
+            googleBtn.id = 'googleCalendarBtn';
+            googleBtn.href = result.data.calendar.googleUrl;
+            googleBtn.target = '_blank';
+            googleBtn.rel = 'noopener noreferrer';
+            googleBtn.textContent = `G ${customerT('googleCalendar')}`;
+            calActions.appendChild(googleBtn);
+          }
+
+          calSec.appendChild(calActions);
+          messageBox.appendChild(calSec);
+        } else {
+          const calErr = document.createElement('div');
+          calErr.className = 'calendar-error';
+          calErr.id = 'calendarErrorMessage';
+          calErr.textContent = customerT('calendarGenerationFailed');
+          messageBox.appendChild(calErr);
         }
 
         const actionsRow = document.createElement('div');

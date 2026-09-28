@@ -75,6 +75,13 @@ const {
 } = require('./lib/owner-appointment-edit');
 const { CUSTOMER_READ_ROLES, listCustomers, getCustomer } = require('./lib/owner-customer-profile');
 const { listCustomerTransactions } = require('./lib/owner-customer-transactions');
+const {
+  generateCalendarToken,
+  verifyCalendarToken,
+  buildGoogleCalendarUrl,
+  loadAuthoritativeCalendarData,
+  formatIcsCalendar
+} = require('./lib/customer-calendar');
 
 const app = express();
 const OWNER_MERCHANT_CONTACT_READ_ROLES = Object.freeze(['owner', 'manager', 'admin']);
@@ -1072,6 +1079,69 @@ app.post('/api/customer/my-bookings', async (req, res) => {
   } catch (error) {
     console.error('Customer my-bookings query error:', safeStaffAuthErrorCode(error));
     return res.status(500).json({ success: false, code: 'BOOKINGS_QUERY_UNAVAILABLE' });
+  }
+});
+
+app.get('/api/calendar/appointment.ics', async (req, res) => {
+  setPublicBookingNoCacheHeaders(res);
+  const token = typeof req.query.token === 'string' ? req.query.token.trim() : '';
+  const verified = verifyCalendarToken(token);
+  if (!verified) {
+    return res.status(403).json({ success: false, code: 'UNAUTHORIZED_CALENDAR_ACCESS', message: 'Forbidden' });
+  }
+
+  try {
+    const calendarPool = app.locals.bookingPool || pool;
+    const calendarData = await loadAuthoritativeCalendarData(calendarPool, verified);
+    if (!calendarData) {
+      return res.status(404).json({ success: false, code: 'APPOINTMENT_NOT_FOUND', message: 'Not found' });
+    }
+
+    const icsContent = formatIcsCalendar(calendarData);
+    const safeFilename = `appointment-${calendarData.appointmentNo || calendarData.appointmentId}.ics`;
+    res.set({
+      'Content-Type': 'text/calendar; charset=utf-8',
+      'Content-Disposition': `attachment; filename="${safeFilename}"`
+    });
+    return res.status(200).send(icsContent);
+  } catch (error) {
+    console.error('Calendar ICS generation error:', safeStaffAuthErrorCode(error));
+    return res.status(500).json({ success: false, code: 'CALENDAR_EXPORT_FAILED' });
+  }
+});
+
+app.get('/api/calendar/projection', async (req, res) => {
+  setPublicBookingNoCacheHeaders(res);
+  const token = typeof req.query.token === 'string' ? req.query.token.trim() : '';
+  const verified = verifyCalendarToken(token);
+  if (!verified) {
+    return res.status(403).json({ success: false, code: 'UNAUTHORIZED_CALENDAR_ACCESS', message: 'Forbidden' });
+  }
+
+  try {
+    const calendarPool = app.locals.bookingPool || pool;
+    const calendarData = await loadAuthoritativeCalendarData(calendarPool, verified);
+    if (!calendarData) {
+      return res.status(404).json({ success: false, code: 'APPOINTMENT_NOT_FOUND', message: 'Not found' });
+    }
+
+    const googleUrl = buildGoogleCalendarUrl(calendarData);
+    return res.json({
+      success: true,
+      data: {
+        title: calendarData.title,
+        startAt: calendarData.startAt,
+        endAt: calendarData.endAt,
+        location: calendarData.location,
+        description: calendarData.description,
+        appointmentNo: calendarData.appointmentNo,
+        icsUrl: `/api/calendar/appointment.ics?token=${encodeURIComponent(token)}`,
+        googleUrl
+      }
+    });
+  } catch (error) {
+    console.error('Calendar projection query error:', safeStaffAuthErrorCode(error));
+    return res.status(500).json({ success: false, code: 'CALENDAR_PROJECTION_FAILED' });
   }
 });
 
@@ -2906,11 +2976,33 @@ app.post('/api/new-db', async (req, res) => {
     }
     try {
       const created = await createMultiServiceBooking(req,verifiedSession);
+      let calendar = null;
+      try {
+        const poolToUse = req.app.locals.bookingPool || pool;
+        const calData = await loadAuthoritativeCalendarData(poolToUse, {
+          appointmentId: created.appointment.id,
+          shopId: created.appointment.shop_id
+        });
+        if (calData) {
+          const calToken = generateCalendarToken({
+            appointmentId: created.appointment.id,
+            shopId: created.appointment.shop_id
+          });
+          calendar = {
+            token: calToken,
+            icsUrl: `/api/calendar/appointment.ics?token=${encodeURIComponent(calToken)}`,
+            googleUrl: buildGoogleCalendarUrl(calData)
+          };
+        }
+      } catch (calErr) {
+        console.error('Calendar generation error:', safeStaffAuthErrorCode(calErr));
+      }
       return res.json({ success: true, message: '预约成功', data: {
         id: created.appointment.id, appointment_no: created.appointment.appointment_no,
         start_at: created.appointment.start_at, end_at: created.appointment.end_at,
         status: created.appointment.status, created_at: created.appointment.created_at,
-        items: created.items
+        items: created.items,
+        ...(calendar ? { calendar } : {})
       }});
     } catch (error) {
       console.error('Create multi-service appointment error:', safeStaffAuthErrorCode(error));
@@ -3296,6 +3388,28 @@ app.post('/api/new-db', async (req, res) => {
       }
     );
 
+    let calendar = null;
+    try {
+      const poolToUse = req.app.locals.bookingPool || pool;
+      const calData = await loadAuthoritativeCalendarData(poolToUse, {
+        appointmentId: appointment.id,
+        shopId: appointment.shop_id
+      });
+      if (calData) {
+        const calToken = generateCalendarToken({
+          appointmentId: appointment.id,
+          shopId: appointment.shop_id
+        });
+        calendar = {
+          token: calToken,
+          icsUrl: `/api/calendar/appointment.ics?token=${encodeURIComponent(calToken)}`,
+          googleUrl: buildGoogleCalendarUrl(calData)
+        };
+      }
+    } catch (calErr) {
+      console.error('Calendar generation error:', safeStaffAuthErrorCode(calErr));
+    }
+
     res.json({
       success: true,
       message: '预约成功',
@@ -3305,7 +3419,8 @@ app.post('/api/new-db', async (req, res) => {
         start_at: appointment.start_at,
         end_at: appointment.end_at,
         status: appointment.status,
-        created_at: appointment.created_at
+        created_at: appointment.created_at,
+        ...(calendar ? { calendar } : {})
       }
     });
   } catch (error) {
