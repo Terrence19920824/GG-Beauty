@@ -704,6 +704,66 @@ function explicitContactPhone(countryCode, value) {
   return `${countryCode}${phone}`;
 }
 
+function isValidCustomerPhone(countryCode, value) {
+  const raw = typeof value === 'string' ? value.trim() : '';
+  if (!raw) return false;
+  let effectiveCountry = countryCode || '+65';
+  let national = raw;
+  if (raw.startsWith('+65')) {
+    effectiveCountry = '+65';
+    national = raw.slice(3);
+  } else if (raw.startsWith('+86')) {
+    effectiveCountry = '+86';
+    national = raw.slice(3);
+  } else if (raw.startsWith('+60')) {
+    effectiveCountry = '+60';
+    national = raw.slice(3);
+  } else if (raw.startsWith('+62')) {
+    effectiveCountry = '+62';
+    national = raw.slice(3);
+  } else if (raw.startsWith('+1')) {
+    effectiveCountry = '+1';
+    national = raw.slice(2);
+  }
+  const digits = national.replace(/\D/g, '');
+  if (effectiveCountry === '+65') {
+    return /^[3689]\d{7}$/.test(digits);
+  }
+  return digits.length >= 6 && digits.length <= 15 && !/[a-zA-Z]/.test(raw);
+}
+
+function mapBookingErrorCode(code) {
+  switch (code) {
+    case 'INVALID_PHONE':
+    case 'PHONE_INVALID':
+    case 'PHONE_E164_INVALID':
+    case 'PHONE_INPUT_REQUIRED':
+    case 'PHONE_INVALID_FOR_COUNTRY':
+    case 'PHONE_CUSTOMER_IDENTITY_INELIGIBLE':
+      return customerT('invalidPhone');
+    case 'BOOKING_NOT_AVAILABLE':
+    case 'BOOKING_CONFLICT':
+    case 'SLOT_UNAVAILABLE':
+    case '23P01':
+      return customerT('slotUnavailable');
+    case 'booking_time_in_past':
+      return customerT('bookingTimeInPast');
+    case 'service_not_found':
+    case 'SERVICE_UNAVAILABLE':
+      return customerT('serviceUnavailable');
+    case 'NO_AVAILABLE_STAFF':
+    case 'STAFF_UNAVAILABLE':
+      return customerT('staffUnavailable');
+    case 'BOOKING_MAINTENANCE':
+      return customerT('bookingMaintenance');
+    case 'CUSTOMER_IDENTITY_CONFLICT':
+    case 'VERIFIED_BOOKER_REQUIRED':
+      return customerT('identityConflict');
+    default:
+      return null;
+  }
+}
+
 function renderRecipientChoice() {
   bookForMyself.classList.toggle('selected', bookingFor === 'myself');
   bookForSomeoneElse.classList.toggle('selected', bookingFor === 'someone_else');
@@ -2022,6 +2082,22 @@ document
         return;
       }
 
+      const rawBookerPhone = document.getElementById('phone').value.trim();
+      if (!isValidCustomerPhone(bookerCountryCode.value, rawBookerPhone)) {
+        messageBox.className = 'message error';
+        messageBox.textContent = customerT('invalidPhone');
+        return;
+      }
+
+      if (bookingFor === 'someone_else') {
+        const rawRecipientPhone = document.getElementById('recipientPhone').value.trim();
+        if (!isValidCustomerPhone(recipientCountryCode.value, rawRecipientPhone)) {
+          messageBox.className = 'message error';
+          messageBox.textContent = customerT('invalidPhone');
+          return;
+        }
+      }
+
       const submitBtn =
         document.getElementById('submitBtn');
 
@@ -2065,7 +2141,11 @@ document
           await response.json();
 
         if (!result.success) {
-          throw new Error(customerT('bookingFailed'));
+          const mappedMsg = mapBookingErrorCode(result && result.code);
+          const errorMsg = mappedMsg || customerT('bookingFailed');
+          const err = new Error(errorMsg);
+          err.code = result && result.code;
+          throw err;
         }
 
         bookingSucceeded = true;
@@ -2216,7 +2296,7 @@ document
           'message error';
 
         messageBox.textContent =
-          customerT('bookingFailed');
+          (error && error.message) || customerT('bookingFailed');
 
       } finally {
 

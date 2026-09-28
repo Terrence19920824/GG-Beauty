@@ -50,6 +50,10 @@ const {
   resolveBookingParties
 } = require('./lib/customer-identity');
 const {
+  validateCustomerIdentityPhone,
+  PhoneValidationError
+} = require('./lib/phone-normalization');
+const {
   COOKIE: CUSTOMER_SESSION_COOKIE,
   CustomerMemberError,
   createCustomerMemberIdentity
@@ -2893,6 +2897,40 @@ const normalizeCustomerSpecialRequest = body => {
   return trimmed || null;
 };
 
+const validateBookingPhone = rawPhone => {
+  if (typeof rawPhone !== 'string' || !rawPhone.trim()) {
+    throw new AppointmentMutationError('INVALID_PHONE', 400, '请输入有效的手机号码');
+  }
+  const trimmed = rawPhone.trim();
+  if (trimmed.startsWith('+')) {
+    try {
+      validateCustomerIdentityPhone(trimmed);
+    } catch (err) {
+      if (err instanceof PhoneValidationError) {
+        throw new AppointmentMutationError('INVALID_PHONE', 400, '请输入有效的手机号码');
+      }
+      throw err;
+    }
+  } else {
+    if (/^1\d{7}$/.test(trimmed) || /[\r\n\t\0<>]/.test(trimmed)) {
+      throw new AppointmentMutationError('INVALID_PHONE', 400, '请输入有效的手机号码');
+    }
+  }
+};
+
+const mapCustomerIdentityBookingError = error => {
+  if (error.code === 'CUSTOMER_IDENTITY_CONFLICT') {
+    return new AppointmentMutationError('CUSTOMER_IDENTITY_CONFLICT', 409, '顾客联系方式与已登录账号不符');
+  }
+  if (error.code === 'CUSTOMER_SESSION_INVALID') {
+    return new AppointmentMutationError('CUSTOMER_SESSION_INVALID', 401, '登录状态无效');
+  }
+  if (['CLIENT_CUSTOMER_ID_FORBIDDEN', 'BOOKING_RECIPIENT_MODE_INVALID', 'BOOKER_CONTACT_REQUIRED', 'RECIPIENT_CONTACT_REQUIRED', 'CUSTOMER_PHONE_INVALID'].includes(error.code)) {
+    return new AppointmentMutationError(error.code, 400, '预约信息无效');
+  }
+  return new AppointmentMutationError(error.code, 409, '顾客联系方式无法唯一识别');
+};
+
 const createMultiServiceBooking = async (req,verifiedSession=null) => {
   const body = req.body;
   const items = normalizeBookingItems(body, isUuid);
@@ -2901,6 +2939,10 @@ const createMultiServiceBooking = async (req,verifiedSession=null) => {
   const customerSpecialRequest = normalizeCustomerSpecialRequest(body);
   if (!parsedStart || !body.shopSlug || !body.customerName || !body.phone) {
     throw new AppointmentMutationError('booking_input_invalid', 400, '请完整填写所有必填信息');
+  }
+  validateBookingPhone(body.phone);
+  if (body.bookingFor === 'someone_else' && body.recipient?.phone) {
+    validateBookingPhone(body.recipient.phone);
   }
   return runInTransaction(req.app.locals.bookingPool, async client => {
     const serverNow = req.app.locals.bookingNow || new Date();
@@ -2921,7 +2963,7 @@ const createMultiServiceBooking = async (req,verifiedSession=null) => {
       parties = await resolveBookingParties(client, { shopId: scope.shop_id, body,verifiedSession });
     } catch (error) {
       if (error instanceof CustomerIdentityError) {
-        throw new AppointmentMutationError(error.code, 409, '顾客联系方式无法唯一识别');
+        throw mapCustomerIdentityBookingError(error);
       }
       throw error;
     }
@@ -3062,6 +3104,22 @@ app.post('/api/new-db', async (req, res) => {
       success: false,
       message: '请完整填写所有必填信息'
     });
+  }
+
+  try {
+    validateBookingPhone(phone);
+    if (req.body.bookingFor === 'someone_else' && req.body.recipient?.phone) {
+      validateBookingPhone(req.body.recipient.phone);
+    }
+  } catch (err) {
+    if (err instanceof AppointmentMutationError) {
+      return res.status(err.status).json({
+        success: false,
+        code: err.code,
+        message: err.publicMessage
+      });
+    }
+    throw err;
   }
 
   if (serviceId !== undefined && !isUuid(serviceId)) {
@@ -3307,7 +3365,7 @@ app.post('/api/new-db', async (req, res) => {
           parties = await resolveBookingParties(client, { shopId, body: req.body,verifiedSession });
         } catch (error) {
           if (error instanceof CustomerIdentityError) {
-            throw new AppointmentMutationError(error.code, 409, '顾客联系方式无法唯一识别');
+            throw mapCustomerIdentityBookingError(error);
           }
           throw error;
         }
