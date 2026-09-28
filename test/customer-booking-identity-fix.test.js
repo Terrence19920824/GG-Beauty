@@ -548,7 +548,7 @@ const makeFixture = () => {
     query: async (sql, params = []) => {
       const normalized = sql.trim();
       if (/^(BEGIN|COMMIT|ROLLBACK)$/.test(normalized)) return { rows: [] };
-      if (/SELECT shop\.id AS shop_id/.test(sql)) return { rows: [{ shop_id: '11111111-1111-4111-8111-111111111111', shop_slug: 'tenant-a', location_id: '22222222-2222-4222-8222-222222222222' }] };
+      if (/SELECT shop\.id AS shop_id/.test(sql)) return { rows: [{ shop_id: '11111111-1111-4111-8111-111111111111', shop_slug: 'tenant-a', location_id: '22222222-2222-4222-8222-222222222222', timezone: 'Asia/Singapore' }] };
       if (/FROM shops/.test(sql)) return { rows: [{ id: '11111111-1111-4111-8111-111111111111', name: 'Tenant A', slug: 'tenant-a' }] };
       if (/FROM locations/.test(sql)) return { rows: [{ id: '22222222-2222-4222-8222-222222222222', timezone: 'Asia/Singapore' }] };
       if (/service\.id=ANY/.test(sql) || /FROM services/.test(sql)) return { rows: [

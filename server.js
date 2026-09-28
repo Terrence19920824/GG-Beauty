@@ -24,7 +24,8 @@ const {
 } = require('./lib/customer-multi-service-booking');
 const {
   computeBatchAvailability,
-  getTodayInTimezone
+  getTodayInTimezone,
+  validateAuthoritativeTimezone
 } = require('./lib/customer-batch-availability');
 const {
   StaffBookabilityError,
@@ -2825,6 +2826,11 @@ app.post('/api/new', (req, res) => {
 const loadMultiServiceContext = async (client, { shopSlug, items, locale }) => {
   const scope = await loadTrustedCustomerBookingScope(client, shopSlug);
   if (!scope) throw new AppointmentMutationError('shop_not_found', 400, '找不到店铺');
+  const validTimezone = validateAuthoritativeTimezone(scope.timezone);
+  if (!validTimezone) {
+    throw new AppointmentMutationError('LOCATION_TIMEZONE_INVALID', 400, '营业地点时区配置无效');
+  }
+  scope.timezone = validTimezone;
   const ids = [...new Set(items.map(item => item.serviceId))];
   const result = await client.query(
     `SELECT service.id,service.duration_minutes,service.price,service.price_is_from,
@@ -2995,9 +3001,7 @@ const createMultiServiceBooking = async (req,verifiedSession=null) => {
     }
     const { scope, services } = await loadMultiServiceContext(client, { shopSlug: body.shopSlug, items, locale });
     const timeline = buildSequentialTimeline(services, parsedStart.toISOString());
-    const businessDate = new Intl.DateTimeFormat('en-CA', {
-      timeZone: scope.timezone || 'Asia/Singapore', year: 'numeric', month: '2-digit', day: '2-digit'
-    }).format(parsedStart);
+    const businessDate = getTodayInTimezone(parsedStart, scope.timezone);
     const planned = await planMultiServiceStaff({ client, scope,
       date: businessDate, timeline, validator: req.app.locals.bookingValidator });
     if (!planned) throw new StaffBookabilityError('NO_AVAILABLE_STAFF');
@@ -3208,7 +3212,7 @@ app.post('/api/new-db', async (req, res) => {
         // 2. 找营业地点
         const locationResult = await client.query(
           `
-          SELECT id
+          SELECT id, timezone
           FROM locations
           WHERE shop_id = $1
             AND is_active = true
@@ -3226,8 +3230,15 @@ app.post('/api/new-db', async (req, res) => {
           );
         }
 
-        const locationId =
-          locationResult.rows[0].id;
+        const locationId = locationResult.rows[0].id;
+        const locationTimezone = validateAuthoritativeTimezone(locationResult.rows[0].timezone);
+        if (!locationTimezone) {
+          throw new AppointmentMutationError(
+            'LOCATION_TIMEZONE_INVALID',
+            400,
+            '营业地点时区配置无效'
+          );
+        }
 
         // 3. 找服务项目，并取得可信快照来源
         const serviceResult = await client.query(
@@ -3577,73 +3588,113 @@ app.post('/api/new-db', async (req, res) => {
 // 暂时保留
 // ==================================================
 
-app.get('/api/available-times', (req, res) => {
-  setPublicBookingNoCacheHeaders(res);
+app.get('/api/available-times', async (req, res) => {
+  setPublicBookingNoCacheHeaders(res, req.query && req.query.shopSlug);
   const {
+    shopSlug,
     date,
     staff
   } = req.query;
 
-  const serverNow = req.app.locals.bookingNow || new Date();
-  const shopTimezone = 'Asia/Singapore';
-  const todayInShop = getTodayInTimezone(serverNow, shopTimezone);
+  let client;
+  try {
+    const slug = typeof shopSlug === 'string' ? shopSlug.trim().toLowerCase() : '';
+    if (!slug) {
+      return res.status(400).json({
+        success: false,
+        message: '找不到预约选项'
+      });
+    }
 
-  if (date && date < todayInShop) {
-    return res.json({
-      success: true,
-      data: []
-    });
-  }
+    client = await req.app.locals.bookingPool.connect();
+    const scope = await loadTrustedCustomerBookingScope(client, slug);
+    if (!scope || !scope.location_id) {
+      return res.status(404).json({
+        success: false,
+        message: '找不到预约选项'
+      });
+    }
 
-  const allTimes = [
-    '10:00', '10:30',
-    '11:00', '11:30',
-    '12:00', '12:30',
-    '13:00', '13:30',
-    '14:00', '14:30',
-    '15:00', '15:30',
-    '16:00', '16:30',
-    '17:00', '17:30',
-    '18:00', '18:30',
-    '19:00', '19:30',
-    '20:00', '20:30'
-  ];
+    const timezone = validateAuthoritativeTimezone(scope.timezone);
+    if (!timezone) {
+      return res.status(400).json({
+        success: false,
+        message: '营业地点时区配置无效'
+      });
+    }
 
-  const filterPastTimes = (times, targetDate) => {
-    if (!targetDate || targetDate !== todayInShop) return times;
-    const nowMs = serverNow.getTime();
-    return times.filter(time => {
-      const instant = new Date(`${targetDate}T${time}:00.000+08:00`);
-      return instant.getTime() > nowMs;
-    });
-  };
+    const serverNow = req.app.locals.bookingNow || new Date();
+    const todayInShop = getTodayInTimezone(serverNow, timezone);
 
-  if (date && staff) {
-    const bookedTimes = bookings
-      .filter(
-        b =>
-          b.date === date &&
-          b.staff === staff
-      )
-      .map(
-        b => b.time
-      );
+    if (date && date < todayInShop) {
+      return res.json({
+        success: true,
+        data: []
+      });
+    }
 
-    const availableTimes =
-      allTimes.filter(
+    const allTimes = [
+      '10:00', '10:30',
+      '11:00', '11:30',
+      '12:00', '12:30',
+      '13:00', '13:30',
+      '14:00', '14:30',
+      '15:00', '15:30',
+      '16:00', '16:30',
+      '17:00', '17:30',
+      '18:00', '18:30',
+      '19:00', '19:30',
+      '20:00', '20:30'
+    ];
+
+    let availableTimes = allTimes;
+    if (date && staff) {
+      const bookedTimes = bookings
+        .filter(
+          b =>
+            b.date === date &&
+            b.staff === staff
+        )
+        .map(
+          b => b.time
+        );
+
+      availableTimes = allTimes.filter(
         t => !bookedTimes.includes(t)
       );
+    }
 
-    res.json({
-      success: true,
-      data: filterPastTimes(availableTimes, date)
-    });
+    if (!date || date !== todayInShop) {
+      return res.json({
+        success: true,
+        data: availableTimes
+      });
+    }
 
-  } else {
-    res.json({
+    const candidateResult = await client.query(
+      `SELECT candidate.time,
+              TO_CHAR(((($1::DATE + candidate.time::TIME) AT TIME ZONE $2) AT TIME ZONE 'UTC'), 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS start_at
+       FROM UNNEST($3::TEXT[]) AS candidate(time)`,
+      [date, timezone, availableTimes]
+    );
+
+    const nowMs = serverNow.getTime();
+    const filteredTimes = candidateResult.rows
+      .filter(row => row.start_at && new Date(row.start_at).getTime() > nowMs)
+      .map(row => row.time);
+
+    return res.json({
       success: true,
-      data: filterPastTimes(allTimes, date)
+      data: filteredTimes
     });
+  } catch (error) {
+    console.error('Available times error:', safeStaffAuthErrorCode(error));
+    return res.status(500).json({
+      success: false,
+      message: '获取可预约时间失败'
+    });
+  } finally {
+    if (client) client.release();
   }
 });
 
@@ -4124,7 +4175,7 @@ app.post('/api/booking/multi-service-eligible-staff', async (req, res) => {
 
       const startObj = new Date(item.startAt);
       const endObj = new Date(item.endAt);
-      const timeDisplay = `${startObj.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: scope.timezone || 'Asia/Singapore' })}–${endObj.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: scope.timezone || 'Asia/Singapore' })}`;
+      const timeDisplay = `${startObj.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: scope.timezone })}–${endObj.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: scope.timezone })}`;
 
       resultData.push({
         clientItemKey: item.clientItemKey,
@@ -4224,7 +4275,7 @@ app.get(
       // 2. 使用与预约创建相同的 server-side location 选择规则
       const locationResult = await client.query(
         `
-        SELECT id
+        SELECT id, timezone
         FROM locations
         WHERE shop_id = $1
           AND is_active = TRUE
@@ -4242,7 +4293,13 @@ app.get(
       }
 
       const locationId = locationResult.rows[0].id;
-      const locationTimezone = 'Asia/Singapore';
+      const locationTimezone = validateAuthoritativeTimezone(locationResult.rows[0].timezone);
+      if (!locationTimezone) {
+        return res.status(400).json({
+          success: false,
+          message: '营业地点时区配置无效'
+        });
+      }
       const serverNow = req.app.locals.bookingNow || new Date();
       const todayInShop = getTodayInTimezone(serverNow, locationTimezone);
 

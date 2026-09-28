@@ -36,7 +36,7 @@ const responseForSql = (sql, params = []) => {
   if (/^(BEGIN|COMMIT|ROLLBACK)$/i.test(sql.trim())) return { rows: [] };
   if (/FROM shops/.test(sql)) return { rows: [{ id: ID.shop }] };
   if (/FROM locations\s/.test(sql) && !/WITH interval_scope/.test(sql)) {
-    return { rows: [{ id: ID.location }] };
+    return { rows: [{ id: ID.location, timezone: 'Asia/Singapore' }] };
   }
   if (/assigned_appointment_count/.test(sql)) {
     return { rows: [

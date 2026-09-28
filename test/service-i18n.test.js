@@ -146,7 +146,7 @@ function publicPool() {
       state.queries.push({ sql: sql.trim(), params });
       if (/FROM shops AS shop/.test(sql)) return { rows: [{ id: ID.service, category: 'Hair', price: '168.00', priceIsFrom: true, durationMinutes: 150, name: params[1] === 'zh-CN' ? '热烫' : 'Digital Perm', description: null, locale: params[1] }] };
       if (/FROM shops\s/.test(sql)) return { rows: [{ id: ID.shop }] };
-      if (/FROM locations\s/.test(sql) && !/WITH scoped_location/.test(sql)) return { rows: [{ id: ID.location }] };
+      if (/FROM locations\s/.test(sql) && !/WITH scoped_location/.test(sql)) return { rows: [{ id: ID.location, timezone: 'Asia/Singapore' }] };
       if (/FROM staff\s/.test(sql)) return { rows: [{ id: ID.staff }] };
       if (/FROM services\s/.test(sql)) return { rows: [{ id: ID.service, duration_minutes: 150 }] };
       if (/WITH scoped_location/.test(sql)) return { rows: [] };

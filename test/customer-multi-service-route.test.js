@@ -37,7 +37,7 @@ const makeFixture = (failOnSql, candidateRows, customerRows) => {
       const normalized = sql.trim(); state.queries.push({ sql: normalized, params });
       const failure = failOnSql && failOnSql(normalized); if (failure) throw failure;
       if (/^(BEGIN|COMMIT|ROLLBACK)$/.test(normalized)) return { rows: [] };
-      if (/SELECT shop\.id AS shop_id/.test(sql)) return { rows: [{ shop_id: ID.shop, shop_slug: 'tenant-a', location_id: ID.location }] };
+      if (/SELECT shop\.id AS shop_id/.test(sql)) return { rows: [{ shop_id: ID.shop, shop_slug: 'tenant-a', location_id: ID.location, timezone: 'Asia/Singapore' }] };
       if (/service\.id=ANY/.test(sql)) return { rows: [
         { id: ID.serviceA, duration_minutes: 60, price: '88', price_is_from: false, category_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', localized_name: 'Basic Facial' },
         { id: ID.serviceB, duration_minutes: 180, price: '238', price_is_from: true, category_id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', localized_name: 'Balayage' }

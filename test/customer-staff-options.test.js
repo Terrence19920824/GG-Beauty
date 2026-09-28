@@ -65,7 +65,7 @@ test('no preference availability returns a slot only when one current candidate 
   const client = {
     query: async sql => {
       if (/SELECT id\s+FROM shops/.test(sql)) return { rows: [{ id: ID.shop }] };
-      if (/SELECT id\s+FROM locations/.test(sql)) return { rows: [{ id: ID.location }] };
+      if (/FROM locations/.test(sql) && !/WITH scoped_location/.test(sql)) return { rows: [{ id: ID.location, timezone: 'Asia/Singapore' }] };
       if (/SELECT\s+id,\s+duration_minutes\s+FROM services/.test(sql)) return { rows: [{ id: ID.service, duration_minutes: 60 }] };
       if (/WITH scoped_location/.test(sql)) return { rows: [{ time: '10:00', start_at: '2030-01-07T02:00:00.000000Z', end_at: '2030-01-07T03:00:00.000000Z', has_database_guard_collision: false }] };
       if (/assigned_appointment_count/.test(sql)) return { rows: [{ staff_id: staffA }, { staff_id: staffB }] };

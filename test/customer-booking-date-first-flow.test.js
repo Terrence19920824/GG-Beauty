@@ -247,7 +247,7 @@ test('5. 日期时间不可用：无可行员工组合时禁用该日期/时间'
     query: async (sql, params = []) => {
       const normalized = sql.trim();
       if (/SELECT shop\.id AS shop_id/.test(sql)) {
-        return { rows: [{ shop_id: ID.shop, shop_slug: 'tenant-a', location_id: ID.location }] };
+        return { rows: [{ shop_id: ID.shop, shop_slug: 'tenant-a', location_id: ID.location, timezone: 'Asia/Singapore' }] };
       }
       if (/service\.id=ANY/.test(sql)) {
         return { rows: [
@@ -314,7 +314,7 @@ test('8. 员工选项按技能、排班、休假、冲突严格过滤', async ()
   const client = {
     query: async (sql, params = []) => {
       if (/SELECT shop\.id AS shop_id/.test(sql)) {
-        return { rows: [{ shop_id: ID.shop, shop_slug: 'tenant-a', location_id: ID.location }] };
+        return { rows: [{ shop_id: ID.shop, shop_slug: 'tenant-a', location_id: ID.location, timezone: 'Asia/Singapore' }] };
       }
       if (/service\.id=ANY/.test(sql)) {
         return { rows: [
@@ -372,7 +372,7 @@ test('9. 多项目连续服务：时间段保证所有项目连续可行', async
   const client = {
     query: async (sql, params = []) => {
       if (/SELECT shop\.id AS shop_id/.test(sql)) {
-        return { rows: [{ shop_id: ID.shop, shop_slug: 'tenant-a', location_id: ID.location }] };
+        return { rows: [{ shop_id: ID.shop, shop_slug: 'tenant-a', location_id: ID.location, timezone: 'Asia/Singapore' }] };
       }
       if (/service\.id=ANY/.test(sql)) {
         return { rows: [
@@ -429,7 +429,7 @@ test('10. 多项目自选员工：员工在对应项目时间段必须可用且�
   const client = {
     query: async (sql, params = []) => {
       if (/SELECT shop\.id AS shop_id/.test(sql)) {
-        return { rows: [{ shop_id: ID.shop, shop_slug: 'tenant-a', location_id: ID.location }] };
+        return { rows: [{ shop_id: ID.shop, shop_slug: 'tenant-a', location_id: ID.location, timezone: 'Asia/Singapore' }] };
       }
       if (/service\.id=ANY/.test(sql)) {
         return { rows: [
@@ -660,7 +660,7 @@ test('21. 维护模式下分类/服务/日期/时间/员工必须正常浏览', 
   const client = {
     query: async (sql, params = []) => {
       if (/SELECT shop\.id AS shop_id/.test(sql)) {
-        return { rows: [{ shop_id: ID.shop, shop_slug: 'tenant-a', location_id: ID.location }] };
+        return { rows: [{ shop_id: ID.shop, shop_slug: 'tenant-a', location_id: ID.location, timezone: 'Asia/Singapore' }] };
       }
       if (/service\.id=ANY/.test(sql)) {
         return { rows: [{ id: ID.serviceA, duration_minutes: 60, price: '88', price_is_from: false, category_id: 'cat-1', localized_name: 'Haircut', name: 'Haircut' }] };
