@@ -84,6 +84,7 @@ const {
 const {
   createOwnerAppointmentEdit
 } = require('./lib/owner-appointment-edit');
+const { createOwnerAppointmentServiceAddon } = require('./lib/owner-appointment-service-addon');
 const { CUSTOMER_READ_ROLES, listCustomers, getCustomer } = require('./lib/owner-customer-profile');
 const { listCustomerTransactions } = require('./lib/owner-customer-transactions');
 const {
@@ -740,6 +741,7 @@ const requireOwnerRole = allowedRoles =>
     ) {
       return res.status(403).json({
         success: false,
+        code: 'PERMISSION_DENIED',
         message: '无权访问此资源'
       });
     }
@@ -795,6 +797,22 @@ app.patch(
   requireOwnerAuth,
   requireOwnerRole(['owner', 'manager', 'admin', 'front_desk']),
   ownerAppointmentEdit.adjustAppointment
+);
+
+const ownerAppointmentServiceAddon = createOwnerAppointmentServiceAddon({
+  pool: { connect: (...args) => app.locals.ownerAuthPool.connect(...args) },
+  crypto,
+  isUuid,
+  validator: (...args) => app.locals.bookingValidator(...args),
+  StaffBookabilityError,
+  safeErrorCode: safeStaffAuthErrorCode
+});
+
+app.post(
+  '/api/owner/appointments/:appointmentId/service-addons',
+  requireOwnerAuth,
+  requireOwnerRole(['owner', 'manager', 'admin', 'front_desk']),
+  ownerAppointmentServiceAddon.addService
 );
 
 app.patch('/api/owner/appointments/:appointmentId/internal-notes', requireOwnerAuth, requireOwnerRole(OWNER_APPOINTMENT_INTERNAL_NOTES_WRITE_ROLES), async (req, res) => {

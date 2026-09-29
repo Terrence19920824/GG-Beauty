@@ -42,6 +42,20 @@ test('1. i18n: all appointment detail and status keys are defined in zh-CN and e
     'callCustomer',
     'openWhatsApp',
     'servicesAndStaff',
+    'activeAddService',
+    'chooseService',
+    'chooseStaff',
+    'confirmAddService',
+    'serviceAddonSaved',
+    'serviceAddonStatusChanged',
+    'serviceAddonCheckoutExists',
+    'serviceAddonUnavailable',
+    'serviceAddonStaffUnavailable',
+    'serviceAddonNotCapable',
+    'serviceAddonConflict',
+    'serviceAddonPermissionDenied',
+    'serviceAddonIdempotencyConflict',
+    'serviceAddonConcurrent',
     'statusUpdatedSuccess',
     'statusUpdateFailed',
     'close',
@@ -363,6 +377,31 @@ test('3b. Internal notes UI permissions: owner/manager can edit and save, admin/
     assert.strictEqual(textarea.disabled, true, 'front_desk must not be able to edit internal notes');
     assert.strictEqual(saveBtn, null, 'save button must not be rendered for front_desk');
   }
+});
+
+test('3c. Add Service is visible only for arrived/in_service and stays fully localized', () => {
+  for (const locale of ['zh-CN', 'en']) {
+    for (const status of ['pending', 'confirmed', 'arrived', 'in_service', 'completed', 'cancelled', 'no_show']) {
+      const { context, elements } = createMockAdminContext({ locale });
+      context.renderAppointmentDrawer({
+        id: `00000000-0000-4000-8000-0000000000${status.length}`,
+        status,
+        start_at: '2031-04-05T01:00:00.000Z',
+        end_at: '2031-04-05T02:00:00.000Z',
+        items: [{ service_name_snapshot: 'Haircut', duration_minutes_snapshot: 60 }]
+      });
+      const action = findDescendant(elements.get('drawerBody'), element => element.id === 'drawerAddServiceBtn');
+      if (['arrived', 'in_service'].includes(status)) {
+        assert.ok(action, `${status} should show Add Service`);
+        assert.equal(action.textContent, i18n.t('activeAddService', locale));
+      } else {
+        assert.equal(action, null, `${status} must hide Add Service`);
+      }
+    }
+  }
+  assert.match(adminHtml, /const idempotencyKey = createServiceAddonKey\(\)/);
+  assert.match(adminHtml, /body: JSON\.stringify\(\{ serviceId: serviceSelect\.value, staffId: staffSelect\.value, locale, idempotencyKey \}\)/);
+  assert.match(adminHtml, /\.drawer-add-service-btn,[\s\S]*?min-height:\s*44px/);
 });
 
 // 4. URI Formatter tests (tel: and wa.me)

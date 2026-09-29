@@ -525,6 +525,38 @@
       color: #ffffff;
     }
 
+    .drawer-add-service-btn,
+    .service-addon-dialog button,
+    .service-addon-dialog select {
+      min-height: 44px;
+    }
+
+    .drawer-add-service-btn {
+      width: 100%;
+      margin-top: 12px;
+      border: 1px solid #111;
+      border-radius: 9px;
+      background: #111;
+      color: #fff;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .service-addon-dialog {
+      width: min(440px, calc(100vw - 32px));
+      border: 0;
+      border-radius: 14px;
+      padding: 20px;
+      box-shadow: 0 20px 60px rgba(0,0,0,.22);
+    }
+
+    .service-addon-dialog::backdrop { background: rgba(0,0,0,.35); }
+    .service-addon-form { display: grid; gap: 14px; }
+    .service-addon-form label { display: grid; gap: 6px; font-weight: 600; }
+    .service-addon-form select { width: 100%; padding: 8px 10px; border: 1px solid #ccc; border-radius: 8px; background: #fff; }
+    .service-addon-summary { min-height: 24px; padding: 10px; border-radius: 8px; background: #f5f5f5; }
+    .service-addon-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
     :focus-visible {
       outline: 2px solid #111;
       outline-offset: 2px;
@@ -3319,6 +3351,121 @@ function appendDrawerSection(body, title) {
   return section;
 }
 
+function createServiceAddonKey() {
+  const randomPart = globalThis.crypto && typeof globalThis.crypto.randomUUID === 'function'
+    ? globalThis.crypto.randomUUID().replace(/-/g, '')
+    : `${Date.now()}_${Math.random().toString(36).slice(2)}`;
+  return `addon_${randomPart}`.slice(0, 128);
+}
+
+function serviceAddonErrorKey(code) {
+  return {
+    APPOINTMENT_STATUS_NOT_ELIGIBLE: 'serviceAddonStatusChanged',
+    CHECKOUT_ALREADY_EXISTS: 'serviceAddonCheckoutExists',
+    SERVICE_UNAVAILABLE: 'serviceAddonUnavailable',
+    STAFF_UNAVAILABLE: 'serviceAddonStaffUnavailable',
+    STAFF_NOT_CAPABLE: 'serviceAddonNotCapable',
+    STAFF_TIME_CONFLICT: 'serviceAddonConflict',
+    PERMISSION_DENIED: 'serviceAddonPermissionDenied',
+    APPOINTMENT_NOT_FOUND: 'serviceAddonPermissionDenied',
+    IDEMPOTENCY_CONFLICT: 'serviceAddonIdempotencyConflict',
+    APPOINTMENT_CHANGED_CONCURRENTLY: 'serviceAddonConcurrent'
+  }[code] || 'operationFailed';
+}
+
+async function openServiceAddonDialog(appointment) {
+  if (!appointment || !['arrived', 'in_service'].includes(String(appointment.status || '').toLowerCase())) return;
+  const locale = globalThis.ownerSelfService?._state?.locale === 'en' ? 'en' : 'zh-CN';
+  // Reuse one durable key if the response is lost and the operator retries save.
+  const idempotencyKey = createServiceAddonKey();
+  const dialog = drawerElement('dialog', 'service-addon-dialog');
+  const form = drawerElement('form', 'service-addon-form');
+  form.method = 'dialog';
+  form.appendChild(drawerElement('h3', '', adminT('activeAddService')));
+  const serviceLabel = drawerElement('label', '', adminT('chooseService'));
+  const serviceSelect = drawerElement('select', 'service-addon-service');
+  serviceSelect.required = true;
+  serviceLabel.appendChild(serviceSelect);
+  const staffLabel = drawerElement('label', '', adminT('chooseStaff'));
+  const staffSelect = drawerElement('select', 'service-addon-staff');
+  staffSelect.required = true;
+  staffSelect.disabled = true;
+  staffLabel.appendChild(staffSelect);
+  const summary = drawerElement('div', 'service-addon-summary', adminT('serviceDurationPrice'));
+  summary.setAttribute('aria-live', 'polite');
+  const actions = drawerElement('div', 'service-addon-actions');
+  const cancel = drawerElement('button', 'secondary-btn', adminT('close'));
+  cancel.type = 'button';
+  const save = drawerElement('button', 'primary-btn', adminT('confirmAddService'));
+  save.type = 'button';
+  actions.append(cancel, save);
+  form.append(serviceLabel, staffLabel, summary, actions);
+  dialog.appendChild(form);
+  document.body.appendChild(dialog);
+
+  const close = () => { try { dialog.close(); } catch (_) {} dialog.remove(); };
+  cancel.addEventListener('click', close);
+  dialog.addEventListener('cancel', event => { event.preventDefault(); close(); });
+
+  try {
+    const [servicesResponse, staffResponse] = await Promise.all([
+      fetch('/api/owner/services', { credentials: 'same-origin', cache: 'no-store' }),
+      fetch('/api/owner/staff', { credentials: 'same-origin', cache: 'no-store' })
+    ]);
+    const servicesPayload = await servicesResponse.json();
+    const staffPayload = await staffResponse.json();
+    if (!servicesResponse.ok || !staffResponse.ok || !servicesPayload.success || !staffPayload.success) throw new Error(adminT('operationFailed'));
+    const services = (servicesPayload.data || []).filter(service => service.is_active === true && service.bookable === true);
+    const staff = (staffPayload.data || []).filter(member => member.is_active === true && member.bookable === true &&
+      (!appointment.location_id || (member.locations || []).some(location => location.id === appointment.location_id)));
+    serviceSelect.appendChild(new Option(adminT('chooseService'), ''));
+    for (const service of services) {
+      const name = (locale === 'en' ? service.nameEn : service.nameZh) || service.name || service.canonicalName;
+      serviceSelect.appendChild(new Option(name, service.id));
+    }
+    serviceSelect.addEventListener('change', async () => {
+      staffSelect.replaceChildren(new Option(adminT('chooseStaff'), ''));
+      staffSelect.disabled = true;
+      const service = services.find(item => item.id === serviceSelect.value);
+      if (!service) { summary.textContent = adminT('serviceDurationPrice'); return; }
+      const displayName = (locale === 'en' ? service.nameEn : service.nameZh) || service.name || service.canonicalName;
+      const numericPrice = Number(service.price);
+      summary.textContent = `${displayName} · ${service.durationMinutes || service.duration_minutes} ${adminT('minutes')} · ${Number.isFinite(numericPrice) ? formatMinorCurrency(Math.round(numericPrice * 100)) : '-'}`;
+      const capabilityResponses = await Promise.all(staff.map(async member => {
+        const response = await fetch(`/api/owner/staff/${encodeURIComponent(member.id)}/services`, { credentials: 'same-origin', cache: 'no-store' });
+        const payload = await response.json().catch(() => ({}));
+        const capable = response.ok && payload.success && (payload.data || []).some(row => row.service_id === service.id && row.assigned === true && row.is_active === true && row.bookable === true);
+        return capable ? member : null;
+      }));
+      for (const member of capabilityResponses.filter(Boolean)) staffSelect.appendChild(new Option(member.name, member.id));
+      staffSelect.disabled = false;
+    });
+    save.addEventListener('click', async () => {
+      if (!serviceSelect.value || !staffSelect.value) { showAdminToast(adminT('walkInNeedsItem'), 'error'); return; }
+      save.disabled = true;
+      try {
+        const response = await fetch(`/api/owner/appointments/${encodeURIComponent(appointment.id)}/service-addons`, {
+          method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ serviceId: serviceSelect.value, staffId: staffSelect.value, locale, idempotencyKey })
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || !payload.success) throw new Error(adminT(serviceAddonErrorKey(payload.code)));
+        close();
+        showAdminToast(adminT('serviceAddonSaved'), 'success');
+        await loadAppointments(currentRequestedLocationId);
+        renderAppointmentDrawerById(appointment.id);
+      } catch (error) {
+        showAdminToast(error.message || adminT('operationFailed'), 'error');
+        save.disabled = false;
+      }
+    });
+    dialog.showModal();
+  } catch (error) {
+    close();
+    showAdminToast(error.message || adminT('operationFailed'), 'error');
+  }
+}
+
 function renderDrawerFooterWithTextContent(footer, canonicalStatus) {
   footer.replaceChildren();
   const transitions = {
@@ -4033,6 +4180,14 @@ function renderAppointmentDrawer(appointment) {
       }
       card.appendChild(rolesBox);
       serviceSection.appendChild(card);
+    }
+
+    if (['arrived', 'in_service'].includes(canonicalStatus)) {
+      const addServiceButton = drawerElement('button', 'drawer-add-service-btn', adminT('activeAddService'));
+      addServiceButton.type = 'button';
+      addServiceButton.id = 'drawerAddServiceBtn';
+      addServiceButton.addEventListener('click', () => openServiceAddonDialog(appointment));
+      serviceSection.appendChild(addServiceButton);
     }
 
     const customerSpecialRequest = typeof appointment.customer_special_request === 'string'
