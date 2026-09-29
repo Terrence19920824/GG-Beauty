@@ -470,7 +470,7 @@ test('7. Status controls and drawer action buttons remain intact', () => {
   const footerText = elements.get('drawerFooter').textContent;
 
   assert.match(footerText, /已到店/, 'Arrived action button must be present in drawer footer');
-  assert.match(footerText, /未到店/, 'No-show action button must be present in drawer footer');
+  assert.doesNotMatch(footerText, /未到店/, 'No-show remains supported by the backend but is not a primary drawer action');
   assert.match(footerText, /取消预约/, 'Cancel action button must be present in drawer footer');
 });
 

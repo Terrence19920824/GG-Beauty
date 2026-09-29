@@ -11,10 +11,15 @@ const admin = fs.readFileSync(path.join(root, 'public', 'admin.html'), 'utf8');
 const i18n = fs.readFileSync(path.join(root, 'public', 'shared-i18n.js'), 'utf8');
 const { getWalkInPhoneCountries } = require(path.join(root, 'lib', 'phone-normalization'));
 
-test('walk-in phone selector is a server-authoritative 16-country subset', () => {
+test('walk-in phone selector is the complete server-authoritative global ISO country list', () => {
   const countries = getWalkInPhoneCountries('en');
-  assert.deepEqual(countries.map(c => c.countryIso2), ['SG','MY','CN','ID','PH','TH','VN','MM','IN','BD','LK','NP','HK','TW','JP','KR']);
-  assert.deepEqual(countries.map(c => c.callingCode), ['+65','+60','+86','+62','+63','+66','+84','+95','+91','+880','+94','+977','+852','+886','+81','+82']);
+  assert.ok(countries.length >= 240);
+  for (const iso of ['SG', 'MY', 'ID', 'PH', 'TH', 'VN', 'CN', 'HK', 'TW', 'JP', 'KR', 'IN', 'AU', 'NZ', 'US', 'CA', 'GB', 'FR', 'DE', 'IT', 'ES', 'NL', 'CH', 'AE', 'SA', 'ZA', 'BR']) {
+    assert.ok(countries.some(country => country.countryIso2 === iso), `${iso} must be selectable`);
+  }
+  assert.equal(countries[0].countryIso2, 'SG');
+  assert.equal(countries[0].callingCode, '+65');
+  assert.equal(countries[0].flag, '🇸🇬');
 });
 
 test('walk-in uses the existing appointment architecture with server-side authority', () => {
@@ -48,6 +53,10 @@ test('walk-in calendar entry is localized and refreshes the existing calendar', 
   assert.match(admin, /\/api\/owner\/walk-in-appointments/);
   assert.match(admin, /await loadAppointments\(context\.location_id\)/);
   assert.match(admin, /select name="countryCode"/);
+  assert.match(admin, /walk-in-country-search/);
+  assert.match(admin, /countrySearch/);
+  assert.match(admin, /country\.localizedName/);
+  assert.match(admin, /country\.callingCode/);
   assert.match(admin, /\/api\/owner\/walk-in-phone-countries/);
   assert.match(server, /getWalkInPhoneCountries/);
   assert.match(admin, /countryCode: fd\.get\('countryCode'\)/);

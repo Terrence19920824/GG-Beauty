@@ -2928,6 +2928,10 @@ async function openWalkInAppointment({ staffId = '', date: prefilledDate = '', t
     }
     if (!services.length) { showAdminToast(adminT('walkInNoBookableServices'), 'error'); return; }
     const now = getAuthoritativeNowMs() || Date.parse(context.server_now);
+    // Until a merchant-country setting exists, Singapore is the current
+    // merchant default.  This is input context only; canonical identity stays
+    // server-normalized E.164 and is not tied to this fallback.
+    const defaultWalkInCountryIso = 'SG';
     const date = prefilledDate || getAuthoritativeLocalDate(now, context.timezone) || '';
     const minutes = getAuthoritativeLocalMinutes(now, context.timezone);
     const roundedMinutes = Number.isInteger(minutes) ? Math.ceil((minutes + 1) / 10) * 10 : null;
@@ -2938,7 +2942,7 @@ async function openWalkInAppointment({ staffId = '', date: prefilledDate = '', t
     dialog.className = 'walk-in-dialog';
     dialog.innerHTML = `<form method="dialog" class="card" style="min-width:min(92vw,620px);margin:0">
       <div class="toolbar"><h2>${escapeHtml(adminT('walkInTitle'))}</h2><button type="button" class="secondary-btn walk-in-close" aria-label="${escapeHtml(adminT('close'))}">×</button></div>
-      <div class="form-grid"><label class="field"><span>${escapeHtml(adminT('name'))}</span><input name="name" maxlength="200"></label><label class="field"><span>${escapeHtml(adminT('countryRegion'))}</span><select name="countryCode">${countries.map(country => `<option value="${escapeHtml(country.countryIso2)}"${country.countryIso2 === 'SG' ? ' selected' : ''}>${escapeHtml(country.localizedName)} (${escapeHtml(country.callingCode)})</option>`).join('')}</select></label><label class="field"><span>${escapeHtml(adminT('phone'))}</span><input name="phone" required maxlength="40" inputmode="tel"></label><label class="field full"><span>${escapeHtml(adminT('email'))}</span><input name="email" type="email" maxlength="320"></label><label class="field"><span>${escapeHtml(adminT('date'))}</span><input name="date" type="date" required value="${escapeHtml(date)}"></label><label class="field"><span>${escapeHtml(adminT('time'))}</span><input name="time" type="time" required value="${escapeHtml(time)}"></label></div>
+      <div class="form-grid"><label class="field"><span>${escapeHtml(adminT('name'))}</span><input name="name" maxlength="200"></label><label class="field"><span>${escapeHtml(adminT('countryRegion'))}</span><input class="walk-in-country-search" type="search" autocomplete="off" placeholder="${escapeHtml(adminT('countrySearch'))}"><select name="countryCode">${countries.map(country => `<option value="${escapeHtml(country.countryIso2)}"${country.countryIso2 === defaultWalkInCountryIso ? ' selected' : ''}>${escapeHtml(country.flag || country.countryIso2)} ${escapeHtml(country.localizedName)} (${escapeHtml(country.callingCode)})</option>`).join('')}</select></label><label class="field"><span>${escapeHtml(adminT('phone'))}</span><input name="phone" required maxlength="40" inputmode="tel"></label><label class="field full"><span>${escapeHtml(adminT('email'))}</span><input name="email" type="email" maxlength="320"></label><label class="field"><span>${escapeHtml(adminT('date'))}</span><input name="date" type="date" required value="${escapeHtml(date)}"></label><label class="field"><span>${escapeHtml(adminT('time'))}</span><input name="time" type="time" required value="${escapeHtml(time)}"></label></div>
       <h3>${escapeHtml(adminT('walkInServices'))}</h3><div class="walk-in-items"></div>
       <div class="form-actions"><button type="button" class="secondary-btn walk-in-add">${escapeHtml(adminT('addServiceItem'))}</button><button type="button" class="primary-btn walk-in-save">${escapeHtml(adminT('walkInCreate'))}</button></div>
     </form>`;
@@ -2949,6 +2953,22 @@ async function openWalkInAppointment({ staffId = '', date: prefilledDate = '', t
     };
     dialog.querySelector('.walk-in-close').addEventListener('click', closeWalkInDialog);
     dialog.addEventListener('cancel', () => dialog.remove(), { once: true });
+    const countrySelect = dialog.querySelector('[name="countryCode"]');
+    const countrySearch = dialog.querySelector('.walk-in-country-search');
+    const renderCountryOptions = query => {
+      const normalized = String(query || '').trim().toLowerCase();
+      const digits = normalized.replace(/^\+/, '');
+      const selected = countrySelect.value || defaultWalkInCountryIso;
+      const visibleCountries = countries.filter(country => !normalized
+        || String(country.countryIso2 || '').toLowerCase().includes(normalized)
+        || String(country.localizedName || '').toLowerCase().includes(normalized)
+        || String(country.callingCode || '').replace(/^\+/, '').startsWith(digits));
+      countrySelect.innerHTML = visibleCountries.length
+        ? visibleCountries.map(country => `<option value="${escapeHtml(country.countryIso2)}"${country.countryIso2 === selected ? ' selected' : ''}>${escapeHtml(country.flag || country.countryIso2)} ${escapeHtml(country.localizedName)} (${escapeHtml(country.callingCode)})</option>`).join('')
+        : `<option value="" disabled selected>${escapeHtml(adminT('countrySearch'))}</option>`;
+      if (visibleCountries.length && !countrySelect.value) countrySelect.value = visibleCountries[0].countryIso2;
+    };
+    countrySearch.addEventListener('input', () => renderCountryOptions(countrySearch.value));
     let conflictOverrideReady = false;
     const conflictWarning = document.createElement('div');
     conflictWarning.className = 'adjust-alert warning';
