@@ -9,6 +9,17 @@ BEGIN
   IF to_regclass('public.appointment_item_mutation_commands') IS NULL THEN
     RAISE EXCEPTION 'appointment item mutation rollback: target table missing';
   END IF;
+END
+$guard$;
+
+-- Take the same lock mode required by DROP TABLE before checking emptiness.
+-- This waits for in-flight INSERT/UPDATE/DELETE transactions and prevents new
+-- writers from crossing the guard before the destructive rollback completes.
+LOCK TABLE public.appointment_item_mutation_commands
+  IN ACCESS EXCLUSIVE MODE;
+
+DO $guard$
+BEGIN
   IF EXISTS (SELECT 1 FROM public.appointment_item_mutation_commands) THEN
     RAISE EXCEPTION 'appointment item mutation rollback refused: audit rows exist';
   END IF;

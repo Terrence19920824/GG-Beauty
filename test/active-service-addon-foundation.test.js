@@ -39,6 +39,10 @@ test('migration chain is staged, read-only at the edges, tenant-safe and append-
   assert.doesNotMatch(forward, /ON DELETE CASCADE/i);
   assert.match(forward, /BEFORE UPDATE OR DELETE/);
   assert.match(rollback, /rollback refused: audit rows exist/);
+  const rollbackLock = rollback.indexOf('LOCK TABLE public.appointment_item_mutation_commands');
+  const rollbackEmptyCheck = rollback.indexOf('IF EXISTS (SELECT 1 FROM public.appointment_item_mutation_commands)');
+  assert.ok(rollbackLock >= 0 && rollbackEmptyCheck > rollbackLock);
+  assert.match(rollback, /LOCK TABLE public\.appointment_item_mutation_commands\s+IN ACCESS EXCLUSIVE MODE/);
   assert.doesNotMatch(forward, /service_locale_snapshot/);
   assert.match(forward, /price_snapshot NUMERIC NOT NULL/);
 });
@@ -65,7 +69,7 @@ test('API route and command transaction preserve authority and lock order', () =
   assert.doesNotMatch(addonSource, /customer_phone|phone_e164|membership_sale|commission/i);
 });
 
-test('strict body rejects client price, duration and fingerprint before opening a transaction', async () => {
+test('strict body rejects client price, duration, fingerprint and numeric idempotency keys before opening a transaction', async () => {
   const pool = { async connect() { assert.fail('invalid request must not connect to PostgreSQL'); } };
   const handler = createOwnerAppointmentServiceAddon({ pool, crypto, isUuid, validator: async () => {}, StaffBookabilityError: BookabilityError });
   const base = {
@@ -73,7 +77,12 @@ test('strict body rejects client price, duration and fingerprint before opening 
     ownerAuth: { shopId: '22222222-2222-4222-8222-222222222222', membershipId: '33333333-3333-4333-8333-333333333333', role: 'owner' },
     body: { serviceId: '44444444-4444-4444-8444-444444444444', staffId: '55555555-5555-4555-8555-555555555555', idempotencyKey: 'addon_0123456789abcdef', locale: 'en' }
   };
-  for (const extra of [{ price: 0 }, { durationMinutes: 1 }, { requestFingerprint: '0'.repeat(64) }]) {
+  for (const extra of [
+    { price: 0 },
+    { durationMinutes: 1 },
+    { requestFingerprint: '0'.repeat(64) },
+    { idempotencyKey: 1234567890123456 }
+  ]) {
     const res = response();
     await handler.addService({ ...base, body: { ...base.body, ...extra } }, res);
     assert.equal(res.statusCode, 400);

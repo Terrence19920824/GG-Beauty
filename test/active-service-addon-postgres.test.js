@@ -193,6 +193,106 @@ test('Active Service Add-on V1 migrations, authority, audit and PostgreSQL concu
       return appointmentId;
     };
 
+    await t.test('rollback waits for an in-flight audit insert and refuses after it commits', async () => {
+      const appointmentId = await createAppointment();
+      const idempotencyKey = `rollback_${uuid().replace(/-/g, '')}`;
+      const writer = await pool.connect();
+      const rollbackClient = await pool.connect();
+      try {
+        await writer.query('BEGIN');
+        const writerPid = Number((await writer.query('SELECT pg_backend_pid() AS pid')).rows[0].pid);
+        const inserted = await writer.query(
+          `INSERT INTO appointment_item_mutation_commands (
+             shop_id,location_id,appointment_id,appointment_item_id,service_id,staff_id,
+             mutation_type,operator_membership_id,operator_role_snapshot,idempotency_key,
+             request_fingerprint,fingerprint_version,appointment_end_at_before,
+             appointment_end_at_after,item_sequence_no,item_start_at,item_end_at,
+             service_name_snapshot,duration_minutes_snapshot,price_snapshot,
+             item_status_snapshot,staff_role_snapshot
+           )
+           SELECT item.shop_id,item.location_id,item.appointment_id,item.id,item.service_id,
+                  assignment.staff_id,'service_item_added',$1,'owner',$2,$3,1,
+                  item.start_at,item.end_at,item.sequence_no,item.start_at,item.end_at,
+                  item.service_name_snapshot,item.duration_minutes_snapshot,
+                  item.price_snapshot,item.status,assignment.role
+             FROM appointment_items item
+             JOIN appointment_item_staff_assignments assignment
+               ON assignment.shop_id=item.shop_id
+              AND assignment.location_id=item.location_id
+              AND assignment.appointment_item_id=item.id
+              AND assignment.role='primary'
+            WHERE item.appointment_id=$4
+           RETURNING id`,
+          [ids.members.owner, idempotencyKey, 'a'.repeat(64), appointmentId]
+        );
+        assert.equal(inserted.rows.length, 1);
+
+        const rollbackPid = Number((await rollbackClient.query('SELECT pg_backend_pid() AS pid')).rows[0].pid);
+        let rollbackError;
+        const rollbackFinished = rollbackClient
+          .query(migration('rollback/088_appointment_item_mutation_commands_rollback.sql'))
+          .then(
+            () => {},
+            error => { rollbackError = error; }
+          );
+
+        let waitingOnProtectiveLock = false;
+        for (let attempt = 0; attempt < 80; attempt += 1) {
+          const activity = await db.query(
+            `SELECT wait_event_type,wait_event FROM pg_stat_activity WHERE pid=$1`,
+            [rollbackPid]
+          );
+          if (activity.rows[0]?.wait_event_type === 'Lock') {
+            waitingOnProtectiveLock = true;
+            break;
+          }
+          await wait(25);
+        }
+        assert.equal(waitingOnProtectiveLock, true);
+
+        const relationLocks = await db.query(
+          `SELECT pid,mode,granted
+             FROM pg_locks
+            WHERE relation='public.appointment_item_mutation_commands'::regclass
+              AND pid=ANY($1::INTEGER[])`,
+          [[writerPid, rollbackPid]]
+        );
+        assert.ok(relationLocks.rows.some(lock =>
+          Number(lock.pid) === writerPid && lock.mode === 'RowExclusiveLock' && lock.granted === true
+        ));
+        assert.ok(relationLocks.rows.some(lock =>
+          Number(lock.pid) === rollbackPid && lock.mode === 'AccessExclusiveLock' && lock.granted === false
+        ));
+
+        await writer.query('COMMIT');
+        await rollbackFinished;
+        assert.match(String(rollbackError?.message || ''), /rollback refused: audit rows exist/);
+        await rollbackClient.query('ROLLBACK');
+
+        assert.ok((await db.query(
+          `SELECT to_regclass('public.appointment_item_mutation_commands') AS relation`
+        )).rows[0].relation);
+        assert.equal(Number((await db.query(
+          `SELECT count(*) FROM appointment_item_mutation_commands WHERE id=$1`,
+          [inserted.rows[0].id]
+        )).rows[0].count), 1);
+        const supporting = await db.query(
+          `SELECT indexname FROM pg_indexes
+            WHERE schemaname='public'
+              AND indexname IN (
+                'owner_shop_memberships_shop_id_id_key',
+                'appointment_items_id_appointment_id_key'
+              )`
+        );
+        assert.equal(supporting.rows.length, 2);
+      } finally {
+        await writer.query('ROLLBACK').catch(() => {});
+        await rollbackClient.query('ROLLBACK').catch(() => {});
+        writer.release();
+        rollbackClient.release();
+      }
+    });
+
     await t.test('arrived/in_service pass with server duration, price, sequence, timing, primary staff and audit', async () => {
       for (const status of ['arrived', 'in_service']) {
         const appointmentId = await createAppointment(status);
