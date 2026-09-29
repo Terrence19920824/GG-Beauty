@@ -1347,7 +1347,7 @@ function isAppointmentLate(appointment, nowMs, localTodayStr) {
   if (!Number.isFinite(startMs)) return false;
 
   const fifteenMinutesMs = 15 * 60 * 1000;
-  return nowMs >= (startMs + fifteenMinutesMs);
+  return nowMs > (startMs + fifteenMinutesMs);
 };
 
 const updateLiveLineAndLateBadges = () => {

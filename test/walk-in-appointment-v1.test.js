@@ -26,7 +26,8 @@ test('walk-in uses the existing appointment architecture with server-side author
   const route = server.slice(server.indexOf("app.post('/api/owner/walk-in-appointments'"));
   assert.match(route, /requireOwnerRole\(\['owner', 'manager', 'front_desk'\]\)/);
   assert.doesNotMatch(route, /requireOwnerRole\(\[[^\]]*'staff'/);
-  assert.match(route, /resolveOrCreateCustomer\(client, \{ shopId: scope\.shop_id, name: customerName, phone, email \}\)/);
+  assert.match(route, /canonicalPhone = validateBookingPhone\(phone, customer\.countryCode\)/);
+  assert.match(route, /resolveOrCreateCustomer\(client, \{ shopId: scope\.shop_id, name: customerName, phone: canonicalPhone, email \}\)/);
   assert.match(route, /booking_source,override_conflict\)\s*VALUES[\s\S]*'walk_in'/);
   assert.match(route, /createMultiServiceRows\(client/);
   assert.match(route, /appointment_item_staff_assignments/);

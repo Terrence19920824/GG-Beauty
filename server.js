@@ -2975,7 +2975,7 @@ const validateBookingPhone = (rawPhone, countryInput) => {
 
   if (trimmed.startsWith('+')) {
     try {
-      validateCustomerIdentityPhone(trimmed, countryIso || undefined);
+      return validateCustomerIdentityPhone(trimmed, countryIso || undefined).e164;
     } catch (err) {
       if (err instanceof PhoneValidationError) {
         throw new AppointmentMutationError('INVALID_PHONE', 400, '请输入有效的手机号码');
@@ -2987,7 +2987,7 @@ const validateBookingPhone = (rawPhone, countryInput) => {
       throw new AppointmentMutationError('INVALID_PHONE', 400, '请输入有效的手机号码');
     }
     try {
-      validateCustomerIdentityPhone(trimmed, countryIso);
+      return validateCustomerIdentityPhone(trimmed, countryIso).e164;
     } catch (err) {
       if (err instanceof PhoneValidationError) {
         throw new AppointmentMutationError('INVALID_PHONE', 400, '请输入有效的手机号码');
@@ -3968,7 +3968,8 @@ app.post('/api/owner/walk-in-appointments',
     if (!isUuid(locationId) || !isValidCalendarDate(date) || !isValidClockTime(time) || name.length > 200 || !phone) {
       return res.status(400).json({ success: false, code: 'WALK_IN_INPUT_INVALID', message: '到店预约资料无效' });
     }
-    try { validateBookingPhone(phone, customer.countryCode); }
+    let canonicalPhone;
+    try { canonicalPhone = validateBookingPhone(phone, customer.countryCode); }
     catch (error) {
       return res.status(error instanceof AppointmentMutationError ? error.status : 400).json({
         success: false, code: error.code || 'INVALID_PHONE', message: error.publicMessage || '请输入有效的手机号码'
@@ -4056,7 +4057,7 @@ app.post('/api/owner/walk-in-appointments',
           throw conflict;
         }
         const customerName = name || null;
-        const identity = await resolveOrCreateCustomer(client, { shopId: scope.shop_id, name: customerName, phone, email });
+        const identity = await resolveOrCreateCustomer(client, { shopId: scope.shop_id, name: customerName, phone: canonicalPhone, email });
         const first = timeline[0], last = timeline[timeline.length - 1];
         const appointmentResult = await client.query(
           `INSERT INTO appointments (shop_id,location_id,customer_id,booker_customer_id,recipient_customer_id,
@@ -6012,6 +6013,7 @@ module.exports = {
   invalidateShopCatalogCache,
   getShopCatalogRevision,
   normalizeCustomerSpecialRequest,
+  validateBookingPhone,
   loadMultiServiceAvailableTimes,
   loadMultiServiceAvailableDates
 };
