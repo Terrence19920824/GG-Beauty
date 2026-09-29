@@ -9,12 +9,19 @@ const root = path.join(__dirname, '..');
 const server = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
 const admin = fs.readFileSync(path.join(root, 'public', 'admin.html'), 'utf8');
 const i18n = fs.readFileSync(path.join(root, 'public', 'shared-i18n.js'), 'utf8');
+const { getWalkInPhoneCountries } = require(path.join(root, 'lib', 'phone-normalization'));
+
+test('walk-in phone selector is a server-authoritative 16-country subset', () => {
+  const countries = getWalkInPhoneCountries('en');
+  assert.deepEqual(countries.map(c => c.countryIso2), ['SG','MY','CN','ID','PH','TH','VN','MM','IN','BD','LK','NP','HK','TW','JP','KR']);
+  assert.deepEqual(countries.map(c => c.callingCode), ['+65','+60','+86','+62','+63','+66','+84','+95','+91','+880','+94','+977','+852','+886','+81','+82']);
+});
 
 test('walk-in uses the existing appointment architecture with server-side authority', () => {
   const route = server.slice(server.indexOf("app.post('/api/owner/walk-in-appointments'"));
   assert.match(route, /requireOwnerRole\(\['owner', 'manager', 'front_desk'\]\)/);
   assert.doesNotMatch(route, /requireOwnerRole\(\[[^\]]*'staff'/);
-  assert.match(route, /resolveOrCreateCustomer\(client, \{ shopId: scope\.shop_id, name, phone, email \}\)/);
+  assert.match(route, /resolveOrCreateCustomer\(client, \{ shopId: scope\.shop_id, name: customerName, phone, email \}\)/);
   assert.match(route, /booking_source,override_conflict\)\s*VALUES[\s\S]*'walk_in'/);
   assert.match(route, /createMultiServiceRows\(client/);
   assert.match(route, /appointment_item_staff_assignments/);
@@ -41,10 +48,8 @@ test('walk-in calendar entry is localized and refreshes the existing calendar', 
   assert.match(admin, /\/api\/owner\/walk-in-appointments/);
   assert.match(admin, /await loadAppointments\(context\.location_id\)/);
   assert.match(admin, /select name="countryCode"/);
-  assert.match(admin, /option value="SG"[^>]*>[^<]*\(\+65\)/);
-  assert.match(admin, /option value="CN"[^>]*>[^<]*\(\+86\)/);
-  assert.match(admin, /option value="MY"[^>]*>[^<]*\(\+60\)/);
-  assert.doesNotMatch(admin, /option value="ID"|option value="US"/);
+  assert.match(admin, /\/api\/owner\/walk-in-phone-countries/);
+  assert.match(server, /getWalkInPhoneCountries/);
   assert.match(admin, /countryCode: fd\.get\('countryCode'\)/);
   assert.match(admin, /\/api\/owner\/staff\/\$\{encodeURIComponent\(safeStaffId\)\}\/services/);
   assert.match(admin, /s\.assigned === true/);

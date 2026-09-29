@@ -57,6 +57,7 @@ const {
   PhoneValidationError,
   isSupportedCountryIso,
   getSupportedPhoneCountries,
+  getWalkInPhoneCountries,
   REGION_KINDS
 } = require('./lib/phone-normalization');
 const {
@@ -3941,6 +3942,11 @@ const loadEligibleBookingStaff = async (
 // A walk-in remains an ordinary appointment.  This owner-only entry point is
 // intentionally separate from public booking: it derives every tenant, price,
 // duration, staff eligibility, and instant from server-owned data.
+app.get('/api/owner/walk-in-phone-countries', requireOwnerAuth, requireOwnerRole(['owner', 'manager', 'front_desk']), (req, res) => {
+  const locale = normalizeLocale(req.query?.locale);
+  return res.json({ success: true, data: getWalkInPhoneCountries(locale) });
+});
+
 app.post('/api/owner/walk-in-appointments',
   requireOwnerAuth,
   requireOwnerRole(['owner', 'manager', 'front_desk']),
@@ -3959,7 +3965,7 @@ app.post('/api/owner/walk-in-appointments',
     const phone = typeof customer.phone === 'string' ? customer.phone.trim() : '';
     const email = typeof customer.email === 'string' && customer.email.trim() ? customer.email.trim() : null;
 
-    if (!isUuid(locationId) || !isValidCalendarDate(date) || !isValidClockTime(time) || !name || name.length > 200 || !phone) {
+    if (!isUuid(locationId) || !isValidCalendarDate(date) || !isValidClockTime(time) || name.length > 200 || !phone) {
       return res.status(400).json({ success: false, code: 'WALK_IN_INPUT_INVALID', message: '到店预约资料无效' });
     }
     try { validateBookingPhone(phone, customer.countryCode); }
@@ -4049,7 +4055,8 @@ app.post('/api/owner/walk-in-appointments',
           conflict.canOverride = false;
           throw conflict;
         }
-        const identity = await resolveOrCreateCustomer(client, { shopId: scope.shop_id, name, phone, email });
+        const customerName = name || null;
+        const identity = await resolveOrCreateCustomer(client, { shopId: scope.shop_id, name: customerName, phone, email });
         const first = timeline[0], last = timeline[timeline.length - 1];
         const appointmentResult = await client.query(
           `INSERT INTO appointments (shop_id,location_id,customer_id,booker_customer_id,recipient_customer_id,
@@ -4057,7 +4064,7 @@ app.post('/api/owner/walk-in-appointments',
              service_id,staff_id,start_at,end_at,status,booking_source,override_conflict)
            VALUES ($1,$2,$3,$3,$3,$4,$5,$6,$4,$5,$6,$7,$8,$9,$10,'pending','walk_in',$11)
            RETURNING id,shop_id,location_id,customer_id,appointment_no,start_at,end_at,status,override_conflict,created_at`,
-          [scope.shop_id, scope.location_id, identity.customerId, name, identity.phone, email,
+          [scope.shop_id, scope.location_id, identity.customerId, customerName, identity.phone, email,
             first.serviceId, first.staffId, first.startAt, last.endAt, hasTimeConflict]);
         const appointment = appointmentResult.rows[0];
         if (!appointment) throw new AppointmentMutationError('APPOINTMENT_INSERT_MISMATCH', 500, '到店预约创建失败');

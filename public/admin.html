@@ -2168,7 +2168,7 @@ const renderAppointmentsView = () => {
           serviceSummary = item.service_name;
         }
 
-        const recipientName = (item.recipient_name_snapshot || item.customer_name || item.recipient_name || '').trim() || '-';
+        const recipientName = (item.recipient_name_snapshot || item.customer_name || item.recipient_name || '').trim() || (item.recipient_phone_snapshot || item.customer_phone || item.recipient_phone || '').trim() || '-';
         const recipientPhone = (item.recipient_phone_snapshot || item.customer_phone || item.recipient_phone || '').trim();
 
         const isVerifiedMember = String(item.identity_status || '').trim().toLowerCase() === 'verified_member';
@@ -2397,7 +2397,7 @@ const renderAppointmentsView = () => {
               )}
             </td>
             <td class="notranslate" translate="no">
-              ${escapeHtml(item.recipient_name_snapshot || item.customer_name || item.recipient_name || '-')}
+              ${escapeHtml(item.recipient_name_snapshot || item.customer_name || item.recipient_name || item.recipient_phone_snapshot || item.customer_phone || item.recipient_phone || '-')}
             </td>
             <td>
               ${escapeHtml(item.recipient_phone_snapshot || item.customer_phone || item.recipient_phone || '-')}
@@ -2912,12 +2912,18 @@ async function openWalkInAppointment({ staffId = '', date: prefilledDate = '', t
     const context = await fetchCalendarContext(currentRequestedLocationId);
     const safeStaffId = String(staffId || '').trim();
     if (!UUID_REGEX.test(safeStaffId)) { showAdminToast(adminT('operationFailed'), 'error'); return; }
-    const servicesResponse = await fetch(`/api/owner/staff/${encodeURIComponent(safeStaffId)}/services`, { credentials: 'same-origin', cache: 'no-store' });
+    const locale = globalThis.ownerSelfService?._state?.locale || 'zh-CN';
+    const [servicesResponse, countriesResponse] = await Promise.all([
+      fetch(`/api/owner/staff/${encodeURIComponent(safeStaffId)}/services`, { credentials: 'same-origin', cache: 'no-store' }),
+      fetch(`/api/owner/walk-in-phone-countries?locale=${encodeURIComponent(locale)}`, { credentials: 'same-origin', cache: 'no-store' })
+    ]);
     const servicesJson = await servicesResponse.json().catch(() => ({}));
+    const countriesJson = await countriesResponse.json().catch(() => ({}));
+    const countries = Array.isArray(countriesJson.data) ? countriesJson.data : [];
     const services = Array.isArray(servicesJson.data)
       ? servicesJson.data.filter(s => s.assigned === true && s.is_active !== false && s.bookable !== false)
       : [];
-    if (!servicesResponse.ok || !servicesJson.success || !Array.isArray(servicesJson.data) || !context || !context.location_id || !Array.isArray(currentStaffSnapshot) || !currentStaffSnapshot.length) {
+    if (!servicesResponse.ok || !servicesJson.success || !Array.isArray(servicesJson.data) || !countriesResponse.ok || !countriesJson.success || !countries.length || !context || !context.location_id || !Array.isArray(currentStaffSnapshot) || !currentStaffSnapshot.length) {
       showAdminToast(adminT('loadFailed'), 'error'); return;
     }
     if (!services.length) { showAdminToast(adminT('walkInNoBookableServices'), 'error'); return; }
@@ -2932,7 +2938,7 @@ async function openWalkInAppointment({ staffId = '', date: prefilledDate = '', t
     dialog.className = 'walk-in-dialog';
     dialog.innerHTML = `<form method="dialog" class="card" style="min-width:min(92vw,620px);margin:0">
       <div class="toolbar"><h2>${escapeHtml(adminT('walkInTitle'))}</h2><button type="button" class="secondary-btn walk-in-close" aria-label="${escapeHtml(adminT('close'))}">×</button></div>
-      <div class="form-grid"><label class="field"><span>${escapeHtml(adminT('name'))}</span><input name="name" required maxlength="200"></label><label class="field"><span>${escapeHtml(adminT('countryRegion'))}</span><select name="countryCode"><option value="SG">${escapeHtml(adminT('countrySingapore'))} (+65)</option><option value="CN">${escapeHtml(adminT('countryChina'))} (+86)</option><option value="MY">${escapeHtml(adminT('countryMalaysia'))} (+60)</option></select></label><label class="field"><span>${escapeHtml(adminT('phone'))}</span><input name="phone" required maxlength="40" inputmode="tel"></label><label class="field full"><span>${escapeHtml(adminT('email'))}</span><input name="email" type="email" maxlength="320"></label><label class="field"><span>${escapeHtml(adminT('date'))}</span><input name="date" type="date" required value="${escapeHtml(date)}"></label><label class="field"><span>${escapeHtml(adminT('time'))}</span><input name="time" type="time" required value="${escapeHtml(time)}"></label></div>
+      <div class="form-grid"><label class="field"><span>${escapeHtml(adminT('name'))}</span><input name="name" maxlength="200"></label><label class="field"><span>${escapeHtml(adminT('countryRegion'))}</span><select name="countryCode">${countries.map(country => `<option value="${escapeHtml(country.countryIso2)}"${country.countryIso2 === 'SG' ? ' selected' : ''}>${escapeHtml(country.localizedName)} (${escapeHtml(country.callingCode)})</option>`).join('')}</select></label><label class="field"><span>${escapeHtml(adminT('phone'))}</span><input name="phone" required maxlength="40" inputmode="tel"></label><label class="field full"><span>${escapeHtml(adminT('email'))}</span><input name="email" type="email" maxlength="320"></label><label class="field"><span>${escapeHtml(adminT('date'))}</span><input name="date" type="date" required value="${escapeHtml(date)}"></label><label class="field"><span>${escapeHtml(adminT('time'))}</span><input name="time" type="time" required value="${escapeHtml(time)}"></label></div>
       <h3>${escapeHtml(adminT('walkInServices'))}</h3><div class="walk-in-items"></div>
       <div class="form-actions"><button type="button" class="secondary-btn walk-in-add">${escapeHtml(adminT('addServiceItem'))}</button><button type="button" class="primary-btn walk-in-save">${escapeHtml(adminT('walkInCreate'))}</button></div>
     </form>`;
@@ -3840,7 +3846,7 @@ function renderAppointmentDrawer(appointment) {
 
   const currentAdminLocale = globalThis.ownerSelfService?._state?.locale || globalThis.ggI18n?.DEFAULT_LOCALE || 'zh-CN';
 
-  const recipientName = (appointment.recipient_name_snapshot || appointment.customer_name || appointment.recipient_name || '').trim() || '-';
+  const recipientName = (appointment.recipient_name_snapshot || appointment.customer_name || appointment.recipient_name || '').trim() || (appointment.recipient_phone_snapshot || appointment.customer_phone || appointment.recipient_phone || '').trim() || '-';
   const recipientPhone = (appointment.recipient_phone_snapshot || appointment.customer_phone || appointment.recipient_phone || '').trim();
   const recipientEmail = (appointment.recipient_email_snapshot || appointment.customer_email || appointment.recipient_email || '').trim();
 
