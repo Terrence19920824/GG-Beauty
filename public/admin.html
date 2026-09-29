@@ -702,7 +702,6 @@
           <span data-i18n="calendar">日历</span>
         </button>
       </div>
-      <button type="button" class="primary-btn" id="walkInButton" onclick="openWalkInAppointment()" data-i18n="walkIn">到店顾客</button>
     </div>
 
     <div id="content" class="loading" aria-busy="true" aria-live="polite">
@@ -2547,6 +2546,29 @@ const renderAppointmentsView = () => {
         });
       });
     }
+
+    // Calendar-first creation: only the empty portion of a real staff column
+    // is actionable.  Appointment cards and their controls retain their own
+    // click behavior above and are explicitly excluded here.
+    if (currentViewMode === 'calendar') {
+      const columns = content.querySelectorAll('.owner-calendar-staff-column[data-staff-id]');
+      if (columns && typeof columns.forEach === 'function') {
+        columns.forEach(column => {
+          column.addEventListener('click', event => {
+            if (event.target.closest('.owner-calendar-appointment, button, a, input, select, textarea')) return;
+            const staffId = String(column.getAttribute('data-staff-id') || '').trim();
+            if (!UUID_REGEX.test(staffId)) return;
+            const rect = column.getBoundingClientRect();
+            const y = Number(event.clientY) - rect.top;
+            if (!Number.isFinite(y) || y < 0 || y > rect.height) return;
+            const rawMinutes = 540 + (y / 1.25);
+            const snappedMinutes = Math.max(540, Math.min(1250, Math.round(rawMinutes / 10) * 10));
+            const time = `${String(Math.floor(snappedMinutes / 60)).padStart(2, '0')}:${String(snappedMinutes % 60).padStart(2, '0')}`;
+            openWalkInAppointment({ staffId, date: currentCalendarDate, time });
+          });
+        });
+      }
+    }
   }
 
   localActionMap.clear();
@@ -2881,46 +2903,71 @@ function getStatusText(status) {
 
 // Compact, receptionist-oriented flow. The server remains authoritative for
 // customer identity, service snapshots, availability, timezone and collisions.
-async function openWalkInAppointment() {
+async function openWalkInAppointment({ staffId = '', date: prefilledDate = '', time: prefilledTime = '' } = {}) {
   const role = getAdminActorRole();
   if (!['owner', 'manager', 'front_desk'].includes(role)) {
     showAdminToast(adminT('operationFailed'), 'error');
     return;
   }
-  const button = safeGetElement('walkInButton');
-  if (button) button.disabled = true;
   try {
-    const [servicesResponse, context] = await Promise.all([
-      fetch('/api/owner/services', { credentials: 'same-origin', cache: 'no-store' }),
-      fetchCalendarContext(currentRequestedLocationId)
-    ]);
+    const context = await fetchCalendarContext(currentRequestedLocationId);
+    const safeStaffId = String(staffId || '').trim();
+    if (!UUID_REGEX.test(safeStaffId)) { showAdminToast(adminT('operationFailed'), 'error'); return; }
+    const servicesResponse = await fetch(`/api/owner/staff/${encodeURIComponent(safeStaffId)}/services`, { credentials: 'same-origin', cache: 'no-store' });
     const servicesJson = await servicesResponse.json().catch(() => ({}));
-    const services = Array.isArray(servicesJson.data) ? servicesJson.data.filter(s => s.is_active !== false && s.bookable !== false) : [];
+    const services = Array.isArray(servicesJson.data)
+      ? servicesJson.data.filter(s => s.assigned === true && s.is_active !== false && s.bookable !== false)
+      : [];
     if (!context || !context.location_id || !services.length || !Array.isArray(currentStaffSnapshot) || !currentStaffSnapshot.length) {
       showAdminToast(adminT('loadFailed'), 'error'); return;
     }
     const now = getAuthoritativeNowMs() || Date.parse(context.server_now);
-    const date = getAuthoritativeLocalDate(now, context.timezone) || '';
+    const date = prefilledDate || getAuthoritativeLocalDate(now, context.timezone) || '';
     const minutes = getAuthoritativeLocalMinutes(now, context.timezone);
     const roundedMinutes = Number.isInteger(minutes) ? Math.ceil((minutes + 1) / 10) * 10 : null;
-    const time = Number.isInteger(roundedMinutes) && roundedMinutes < 1440
+    const time = prefilledTime || (Number.isInteger(roundedMinutes) && roundedMinutes < 1440
       ? `${String(Math.floor(roundedMinutes / 60)).padStart(2, '0')}:${String(roundedMinutes % 60).padStart(2, '0')}`
-      : '';
+      : '');
     const dialog = document.createElement('dialog');
     dialog.className = 'walk-in-dialog';
     dialog.innerHTML = `<form method="dialog" class="card" style="min-width:min(92vw,620px);margin:0">
       <div class="toolbar"><h2>${escapeHtml(adminT('walkInTitle'))}</h2><button value="cancel" class="secondary-btn">×</button></div>
-      <div class="form-grid"><label class="field"><span>${escapeHtml(adminT('name'))}</span><input name="name" required maxlength="200"></label><label class="field"><span>${escapeHtml(adminT('phone'))}</span><input name="phone" required maxlength="40" inputmode="tel"></label><label class="field full"><span>${escapeHtml(adminT('email'))}</span><input name="email" type="email" maxlength="320"></label><label class="field"><span>${escapeHtml(adminT('date'))}</span><input name="date" type="date" required value="${escapeHtml(date)}"></label><label class="field"><span>${escapeHtml(adminT('time'))}</span><input name="time" type="time" required value="${escapeHtml(time)}"></label></div>
+      <div class="form-grid"><label class="field"><span>${escapeHtml(adminT('name'))}</span><input name="name" required maxlength="200"></label><label class="field"><span>${escapeHtml(adminT('phone'))} (+65)</span><input name="phone" required maxlength="40" inputmode="tel"></label><label class="field full"><span>${escapeHtml(adminT('email'))}</span><input name="email" type="email" maxlength="320"></label><label class="field"><span>${escapeHtml(adminT('date'))}</span><input name="date" type="date" required value="${escapeHtml(date)}"></label><label class="field"><span>${escapeHtml(adminT('time'))}</span><input name="time" type="time" required value="${escapeHtml(time)}"></label></div>
       <h3>${escapeHtml(adminT('walkInServices'))}</h3><div class="walk-in-items"></div>
       <div class="form-actions"><button type="button" class="secondary-btn walk-in-add">${escapeHtml(adminT('addServiceItem'))}</button><button type="button" class="primary-btn walk-in-save">${escapeHtml(adminT('walkInCreate'))}</button></div>
     </form>`;
     const rows = dialog.querySelector('.walk-in-items');
+    let conflictOverrideReady = false;
+    const conflictWarning = document.createElement('div');
+    conflictWarning.className = 'adjust-alert warning';
+    conflictWarning.hidden = true;
+    dialog.querySelector('.form-actions').before(conflictWarning);
+    const loadEligibleServices = async nextStaffId => {
+      const response = await fetch(`/api/owner/staff/${encodeURIComponent(nextStaffId)}/services`, { credentials: 'same-origin', cache: 'no-store' });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || !payload.success || !Array.isArray(payload.data)) throw new Error(adminT('staffUnavailable'));
+      return payload.data.filter(s => s.assigned === true && s.is_active !== false && s.bookable !== false);
+    };
+    const serviceOptionsFor = eligible => {
+      const locale = globalThis.ownerSelfService?._state?.locale || 'zh-CN';
+      return eligible.map(s => `<option value="${escapeHtml(String(s.service_id || s.id))}">${escapeHtml(locale === 'zh-CN' ? (s.name_zh || s.canonical_name || s.name) : (s.name_en || s.canonical_name || s.name))}</option>`).join('');
+    };
+    const staffOptions = currentStaffSnapshot.filter(s => s && s.is_active !== false && (!Array.isArray(s.locations) || !s.locations.length || s.locations.some(l => String(l.id) === String(context.location_id))))
+      .map(s => `<option value="${escapeHtml(String(s.id))}"${String(s.id) === safeStaffId ? ' selected' : ''}>${escapeHtml(s.name || '')}</option>`).join('');
     const addRow = () => {
       const row = document.createElement('div'); row.className = 'form-grid';
-      const serviceOptions = services.map(s => `<option value="${escapeHtml(String(s.id))}">${escapeHtml(s.localized_name || s.name || s.name_en || s.name_zh || '')}</option>`).join('');
-      const staffOptions = currentStaffSnapshot.filter(s => s && s.is_active !== false && (!Array.isArray(s.locations) || !s.locations.length || s.locations.some(l => String(l.id) === String(context.location_id))))
-        .map(s => `<option value="${escapeHtml(String(s.id))}">${escapeHtml(s.name || '')}</option>`).join('');
-      row.innerHTML = `<label class="field"><span>${escapeHtml(adminT('service'))}</span><select class="walk-in-service">${serviceOptions}</select></label><label class="field"><span>${escapeHtml(adminT('selectStaff'))}</span><select class="walk-in-staff">${staffOptions}</select></label><button type="button" class="secondary-btn walk-in-remove">${escapeHtml(adminT('remove'))}</button>`;
+      row.innerHTML = `<label class="field"><span>${escapeHtml(adminT('service'))}</span><select class="walk-in-service">${serviceOptionsFor(services)}</select></label><label class="field"><span>${escapeHtml(adminT('selectStaff'))}</span><select class="walk-in-staff">${staffOptions}</select></label><button type="button" class="secondary-btn walk-in-remove">${escapeHtml(adminT('remove'))}</button>`;
+      row.querySelector('.walk-in-staff').addEventListener('change', async event => {
+        const serviceSelect = row.querySelector('.walk-in-service');
+        serviceSelect.disabled = true;
+        try {
+          const eligible = await loadEligibleServices(String(event.target.value || '').trim());
+          serviceSelect.innerHTML = serviceOptionsFor(eligible);
+        } catch (error) {
+          serviceSelect.innerHTML = '';
+          showAdminToast(error.message || adminT('operationFailed'), 'error');
+        } finally { serviceSelect.disabled = false; }
+      });
       row.querySelector('.walk-in-remove').onclick = () => row.remove(); rows.appendChild(row);
     };
     addRow();
@@ -2932,14 +2979,37 @@ async function openWalkInAppointment() {
       const save = dialog.querySelector('.walk-in-save'); save.disabled = true;
       const fd = new FormData(form);
       try {
-        const response = await fetch('/api/owner/walk-in-appointments', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ locationId: context.location_id, date: fd.get('date'), time: fd.get('time'), customer: { name: fd.get('name'), phone: fd.get('phone'), email: fd.get('email') }, items }) });
+        const response = await fetch('/api/owner/walk-in-appointments', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ locationId: context.location_id, date: fd.get('date'), time: fd.get('time'), customer: { name: fd.get('name'), phone: fd.get('phone'), email: fd.get('email'), countryCode: 'SG' }, items, ...(conflictOverrideReady ? { overrideConflict: true } : {}) }) });
         const result = await response.json().catch(() => ({}));
-        if (!response.ok || !result.success) throw new Error(adminResultMessage(result, 'operationFailed'));
+        if (response.status === 409 && result.code === 'APPOINTMENT_COLLISION' && result.canOverride === true) {
+          conflictOverrideReady = true;
+          conflictWarning.textContent = adminT('conflictNoticeOwner');
+          conflictWarning.hidden = false;
+          save.textContent = adminT('continueAnyway');
+          save.disabled = false;
+          return;
+        }
+        if (!response.ok || !result.success) {
+          const knownErrorKey = {
+            INVALID_PHONE: 'invalidPhone',
+            BOOKING_TIME_IN_PAST: 'bookingTimeInPast',
+            BOOKING_NOT_AVAILABLE: 'slotUnavailable',
+            APPOINTMENT_COLLISION: 'slotUnavailable',
+            LOCATION_TIMEZONE_INVALID: 'operationFailed',
+            SERVICE_NOT_FOUND: 'serviceUnavailable',
+            STAFF_NOT_ELIGIBLE: 'staffUnavailable',
+            STAFF_SERVICE_NOT_ALLOWED: 'staffUnavailable',
+            CUSTOMER_IDENTITY_CONFLICT: 'identityConflict'
+          }[result.code];
+          throw new Error(knownErrorKey ? adminT(knownErrorKey) : adminResultMessage(result, 'operationFailed'));
+        }
         dialog.close(); dialog.remove(); showAdminToast(adminT('walkInCreated'), 'success'); await loadAppointments(context.location_id);
       } catch (error) { showAdminToast(error.message || adminT('operationFailed'), 'error'); save.disabled = false; }
     };
     document.body.appendChild(dialog); dialog.showModal();
-  } finally { if (button) button.disabled = false; }
+  } finally {
+    // No global trigger state to restore: calendar cells invoke this flow directly.
+  }
 }
 
 
@@ -3459,32 +3529,6 @@ function renderAppointmentAdjustDrawer(appointment, canonicalStatus) {
   conflictMessage.id = 'adjustConflictMessage';
   conflictBox.appendChild(conflictMessage);
 
-  const overrideFields = drawerElement('div', '');
-  overrideFields.id = 'adjustOverrideFields';
-  overrideFields.hidden = true;
-
-  const overrideRow = drawerElement('label', 'adjust-checkbox-row');
-  const overrideCheckbox = drawerElement('input', 'adjust-checkbox');
-  overrideCheckbox.type = 'checkbox';
-  overrideCheckbox.id = 'adjustOverrideConflict';
-  overrideRow.appendChild(overrideCheckbox);
-  overrideRow.appendChild(drawerElement('span', '', adminT('overrideConflict')));
-  overrideFields.appendChild(overrideRow);
-
-  const conflictReasonGroup = drawerElement('div', 'adjust-field-group');
-  conflictReasonGroup.id = 'adjustConflictReasonGroup';
-  conflictReasonGroup.hidden = true;
-  const conflictReasonLabel = drawerElement('label', 'adjust-label', adminT('conflictReason'));
-  conflictReasonLabel.setAttribute('for', 'adjustConflictReason');
-  const conflictReasonTextarea = drawerElement('textarea', 'adjust-textarea');
-  conflictReasonTextarea.id = 'adjustConflictReason';
-  conflictReasonTextarea.rows = 2;
-  conflictReasonTextarea.placeholder = adminT('conflictReasonPlaceholder');
-  conflictReasonGroup.appendChild(conflictReasonLabel);
-  conflictReasonGroup.appendChild(conflictReasonTextarea);
-  overrideFields.appendChild(conflictReasonGroup);
-
-  conflictBox.appendChild(overrideFields);
   form.appendChild(conflictBox);
 
   drawerBody.appendChild(form);
@@ -3505,6 +3549,7 @@ function renderAppointmentAdjustDrawer(appointment, canonicalStatus) {
   drawerFooter.appendChild(saveBtn);
 
   let eligibleStaffSet = null;
+  let conflictOverrideReady = false;
   const uniqueServiceIds = [...new Set(items.map(it => it.service_id).filter(Boolean))];
 
   const initSkillCheck = async () => {
@@ -3611,13 +3656,7 @@ function renderAppointmentAdjustDrawer(appointment, canonicalStatus) {
         saveBtn.disabled = true;
         return;
       }
-      if (overrideCheckbox.checked) {
-        const reason = conflictReasonTextarea.value.trim();
-        if (reason.length < 2) {
-          saveBtn.disabled = true;
-          return;
-        }
-      } else {
+      if (!conflictOverrideReady) {
         saveBtn.disabled = true;
         return;
       }
@@ -3627,29 +3666,30 @@ function renderAppointmentAdjustDrawer(appointment, canonicalStatus) {
   };
 
   staffSelect.addEventListener('change', () => {
+    if (!conflictBox.hidden) conflictBox.hidden = true;
+    conflictOverrideReady = false;
+    saveBtn.textContent = adminT('saveAdjustment');
     validateStaffSkill();
     updateReassignmentVisibility();
   });
 
   dateInput.addEventListener('change', () => {
     if (!conflictBox.hidden) conflictBox.hidden = true;
+    conflictOverrideReady = false;
+    saveBtn.textContent = adminT('saveAdjustment');
     updateFormValidation();
   });
 
   timeInput.addEventListener('change', () => {
     if (!conflictBox.hidden) conflictBox.hidden = true;
+    conflictOverrideReady = false;
+    saveBtn.textContent = adminT('saveAdjustment');
     updateFormValidation();
   });
 
   reasonTextarea.addEventListener('input', updateFormValidation);
   notifiedCheckbox.addEventListener('change', updateFormValidation);
   agreedCheckbox.addEventListener('change', updateFormValidation);
-
-  overrideCheckbox.addEventListener('change', () => {
-    conflictReasonGroup.hidden = !overrideCheckbox.checked;
-    updateFormValidation();
-  });
-  conflictReasonTextarea.addEventListener('input', updateFormValidation);
 
   initSkillCheck();
   validateStaffSkill();
@@ -3695,14 +3735,8 @@ function renderAppointmentAdjustDrawer(appointment, canonicalStatus) {
       payload.customerAgreed = true;
     }
 
-    if (!conflictBox.hidden && overrideCheckbox.checked) {
-      const reason = conflictReasonTextarea.value.trim();
-      if (reason.length < 2) {
-        showAdminToast(adminT('conflictReasonRequired'), 'error');
-        return;
-      }
+    if (!conflictBox.hidden && conflictOverrideReady) {
       payload.overrideConflict = true;
-      payload.conflictReason = reason;
     }
 
     saveBtn.disabled = true;
@@ -3739,15 +3773,13 @@ function renderAppointmentAdjustDrawer(appointment, canonicalStatus) {
           conflictBox.className = 'adjust-conflict-box error-box';
           conflictMessage.className = 'adjust-alert danger';
           conflictMessage.textContent = adminT('conflictNoticeFrontDesk');
-          overrideFields.hidden = true;
+          conflictOverrideReady = false;
         } else {
           conflictBox.className = 'adjust-conflict-box override-box';
           conflictMessage.className = 'adjust-alert warning';
           conflictMessage.textContent = adminT('conflictNoticeOwner');
-          overrideFields.hidden = false;
-          overrideCheckbox.checked = false;
-          conflictReasonGroup.hidden = true;
-          conflictReasonTextarea.value = '';
+          conflictOverrideReady = true;
+          saveBtn.textContent = adminT('continueAnyway');
         }
         updateFormValidation();
         return;
@@ -3764,7 +3796,7 @@ function renderAppointmentAdjustDrawer(appointment, canonicalStatus) {
     } catch (_) {
       showAdminToast(adminT('operationFailed'), 'error');
     } finally {
-      saveBtn.textContent = adminT('saveAdjustment');
+      saveBtn.textContent = conflictOverrideReady ? adminT('continueAnyway') : adminT('saveAdjustment');
       cancelBtn.disabled = false;
       dateInput.disabled = false;
       timeInput.disabled = false;

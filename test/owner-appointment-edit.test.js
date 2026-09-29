@@ -484,7 +484,7 @@ test('9. front_desk role conflict rules: can save without conflict, strictly blo
   assert.equal(fixtureConflict.state.appointmentUpdates.length, 0);
 });
 
-test('10. owner/manager conflict rules: returns 409 canOverride: true when unforced, requires reason when forced', async () => {
+test('10. owner/manager conflict rules: returns 409 canOverride: true when unforced and accepts an explicit override without a reason', async () => {
   const fixture = makeMockPool({ role: 'owner', hasConflict: true, staffSelectionType: 'no_preference' });
 
   // 10a: overrideConflict not set -> 409 with canOverride: true and conflict list
@@ -500,19 +500,18 @@ test('10. owner/manager conflict rules: returns 409 canOverride: true when unfor
   assert.equal(Array.isArray(json1.conflicts), true);
   assert.equal(json1.conflicts.length, 1);
 
-  // 10b: overrideConflict true but empty conflictReason -> 400 CONFLICT_REASON_REQUIRED
+  // 10b: overrideConflict true is an explicit second action; V1 has no reason field.
   const res2 = await runRequest(fixture, ID.appointmentA, {
     newDate: '2026-10-02',
     newTime: '14:30',
     newStaffId: ID.staffTarget,
-    overrideConflict: true,
-    conflictReason: '   '
+    overrideConflict: true
   });
-  assert.equal(res2.status, 400);
+  assert.equal(res2.status, 200);
   const json2 = await res2.json();
-  assert.equal(json2.code, 'CONFLICT_REASON_REQUIRED');
+  assert.equal(json2.data.overrideConflict, true);
 
-  // 10c: overrideConflict true and valid reason -> 200 OK, override_conflict = true
+  // 10c: an optional forged client reason is ignored; audit keeps conflict_reason null.
   const res3 = await runRequest(fixture, ID.appointmentA, {
     newDate: '2026-10-02',
     newTime: '14:30',
@@ -523,10 +522,10 @@ test('10. owner/manager conflict rules: returns 409 canOverride: true when unfor
   assert.equal(res3.status, 200);
   const json3 = await res3.json();
   assert.equal(json3.data.overrideConflict, true);
-  assert.equal(fixture.state.appointmentUpdates.length, 1);
+  assert.equal(fixture.state.appointmentUpdates.length, 2);
   assert.equal(fixture.state.appointmentUpdates[0].params[3], true); // override_conflict = true
   assert.equal(fixture.state.auditInserts[0].params[14], true); // override_conflict = true
-  assert.equal(fixture.state.auditInserts[0].params[15], 'Client waiting on sofa during hair drying phase');
+  assert.equal(fixture.state.auditInserts[0].params[15], 'authorized_time_conflict_override');
 });
 
 test('11. no service or price modification and no checkout writes occur during adjustment', async () => {

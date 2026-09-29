@@ -36,9 +36,7 @@ test('1. i18n: all appointment adjustment keys are defined in zh-CN and en with 
     'customerAgreed',
     'conflictNoticeFrontDesk',
     'conflictNoticeOwner',
-    'overrideConflict',
-    'conflictReason',
-    'conflictReasonPlaceholder',
+    'continueAnyway',
     'saveAdjustment',
     'adjusting',
     'appointmentAdjustedSuccess',
@@ -563,7 +561,7 @@ test('7. Reassignment: triggers reason and consent checkboxes when requested sta
 });
 
 // 8. Conflict Handling Branch by Role
-test('8. Conflict handling: front_desk cannot override; owner/manager can check override + reason', async () => {
+test('8. Conflict handling: front_desk cannot override; owner/manager explicitly continue without a reason', async () => {
   let requestCount = 0;
   let sentPayload = null;
 
@@ -615,11 +613,9 @@ test('8. Conflict handling: front_desk cannot override; owner/manager can check 
 
     const conflictBox = elements.get('adjustConflictBox');
     const conflictMsg = elements.get('adjustConflictMessage');
-    const overrideFields = elements.get('adjustOverrideFields');
 
     assert.strictEqual(conflictBox.hidden, false);
     assert.strictEqual(conflictMsg.textContent, '所选时间与现有预约存在冲突，前台角色无权强制重叠安排');
-    assert.strictEqual(overrideFields.hidden, true, 'Override fields must be hidden for front_desk');
     assert.strictEqual(saveBtn.disabled, true);
   }
 
@@ -646,30 +642,15 @@ test('8. Conflict handling: front_desk cannot override; owner/manager can check 
 
     const conflictBox = elements.get('adjustConflictBox');
     const conflictMsg = elements.get('adjustConflictMessage');
-    const overrideFields = elements.get('adjustOverrideFields');
-    const overrideCheckbox = elements.get('adjustOverrideConflict');
-    const conflictReasonGroup = elements.get('adjustConflictReasonGroup');
-    const conflictReason = elements.get('adjustConflictReason');
-
     assert.strictEqual(conflictBox.hidden, false);
-    assert.strictEqual(conflictMsg.textContent, '所选时间与现有预约存在冲突。如需插单，请勾选强制重叠并填写原因。');
-    assert.strictEqual(overrideFields.hidden, false, 'Override fields must be visible for owner');
-    assert.strictEqual(saveBtn.disabled, true, 'Save should be disabled before checking override and reason');
+    assert.strictEqual(conflictMsg.textContent, '该员工当前没有足够的连续服务时间。是否仍然安排？');
+    assert.strictEqual(saveBtn.textContent, '仍然安排');
+    assert.strictEqual(saveBtn.disabled, false, 'The explicit second action must be available to an owner');
 
-    // Check override
-    overrideCheckbox.checked = true;
-    overrideCheckbox.dispatchEvent({ type: 'change' });
-    assert.strictEqual(conflictReasonGroup.hidden, false);
-
-    // Enter reason
-    conflictReason.value = 'VIP customer urgent accommodation';
-    conflictReason.dispatchEvent({ type: 'input' });
-    assert.strictEqual(saveBtn.disabled, false);
-
-    // Click save again
+    // Click the explicit second action. No free-text reason is collected.
     await saveBtn.click();
     assert.strictEqual(sentPayload.overrideConflict, true);
-    assert.strictEqual(sentPayload.conflictReason, 'VIP customer urgent accommodation');
+    assert.strictEqual(sentPayload.conflictReason, undefined);
   }
 });
 

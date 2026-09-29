@@ -3946,6 +3946,11 @@ app.post('/api/owner/walk-in-appointments',
   requireOwnerRole(['owner', 'manager', 'front_desk']),
   async (req, res) => {
     const body = req.body || {};
+    const overrideConflictRequested = body.overrideConflict === true;
+    // Keep this aligned with the existing appointment-adjustment override
+    // policy.  A front-desk session must never gain this authority merely by
+    // posting an override flag from the browser.
+    const canOverrideConflict = ['owner', 'manager'].includes(req.ownerAuth?.role);
     const customer = body.customer || {};
     const locationId = typeof body.locationId === 'string' ? body.locationId.trim() : '';
     const date = typeof body.date === 'string' ? body.date.trim() : '';
@@ -4018,20 +4023,42 @@ app.post('/api/owner/walk-in-appointments',
           return { ...item, serviceId: service.id, durationMinutes: Number(service.duration_minutes),
             duration_minutes: Number(service.duration_minutes), price: service.price, localizedName: service.localized_name };
         }), startAt);
+        let hasTimeConflict = false;
         for (const item of timeline) {
-          await req.app.locals.bookingValidator({ dbClient: client, shopId: scope.shop_id, locationId: scope.location_id,
-            staffId: item.staffId, serviceId: item.serviceId, requestedStartAt: item.startAt, requestedEndAt: item.endAt });
+          try {
+            await req.app.locals.bookingValidator({ dbClient: client, shopId: scope.shop_id, locationId: scope.location_id,
+              staffId: item.staffId, serviceId: item.serviceId, requestedStartAt: item.startAt, requestedEndAt: item.endAt });
+          } catch (error) {
+            // The validator has already checked staff capability, tenant and
+            // schedule before reporting a collision.  Only that final time
+            // conflict can enter the existing privileged override path.
+            if (error instanceof StaffBookabilityError && error.code === 'APPOINTMENT_COLLISION') {
+              hasTimeConflict = true;
+              continue;
+            }
+            throw error;
+          }
+        }
+        if (hasTimeConflict && !overrideConflictRequested) {
+          const conflict = new AppointmentMutationError('APPOINTMENT_COLLISION', 409, '该员工当前没有足够的连续服务时间');
+          conflict.canOverride = canOverrideConflict;
+          throw conflict;
+        }
+        if (hasTimeConflict && !canOverrideConflict) {
+          const conflict = new AppointmentMutationError('APPOINTMENT_COLLISION', 409, '该员工当前没有足够的连续服务时间');
+          conflict.canOverride = false;
+          throw conflict;
         }
         const identity = await resolveOrCreateCustomer(client, { shopId: scope.shop_id, name, phone, email });
         const first = timeline[0], last = timeline[timeline.length - 1];
         const appointmentResult = await client.query(
           `INSERT INTO appointments (shop_id,location_id,customer_id,booker_customer_id,recipient_customer_id,
              booker_name_snapshot,booker_phone_snapshot,booker_email_snapshot,recipient_name_snapshot,recipient_phone_snapshot,recipient_email_snapshot,
-             service_id,staff_id,start_at,end_at,status,booking_source)
-           VALUES ($1,$2,$3,$3,$3,$4,$5,$6,$4,$5,$6,$7,$8,$9,$10,'pending','walk_in')
-           RETURNING id,shop_id,location_id,customer_id,appointment_no,start_at,end_at,status,created_at`,
+             service_id,staff_id,start_at,end_at,status,booking_source,override_conflict)
+           VALUES ($1,$2,$3,$3,$3,$4,$5,$6,$4,$5,$6,$7,$8,$9,$10,'pending','walk_in',$11)
+           RETURNING id,shop_id,location_id,customer_id,appointment_no,start_at,end_at,status,override_conflict,created_at`,
           [scope.shop_id, scope.location_id, identity.customerId, name, identity.phone, email,
-            first.serviceId, first.staffId, first.startAt, last.endAt]);
+            first.serviceId, first.staffId, first.startAt, last.endAt, hasTimeConflict]);
         const appointment = appointmentResult.rows[0];
         if (!appointment) throw new AppointmentMutationError('APPOINTMENT_INSERT_MISMATCH', 500, '到店预约创建失败');
         await createMultiServiceRows(client, { appointment, items: timeline, serviceLocale: normalizeLocale(body.locale) });
@@ -4041,7 +4068,9 @@ app.post('/api/owner/walk-in-appointments',
           await client.query(`UPDATE appointment_items SET status=$1, updated_at=NOW() WHERE shop_id=$2 AND location_id=$3 AND appointment_id=$4`,
             [nextStatus, scope.shop_id, scope.location_id, appointment.id]);
           await recordStatusHistory(client, { appointment, fromStatus: appointment.status, toStatus: nextStatus,
-            operatorType: 'owner', operatorId: req.ownerAuth.ownerAccountId, source: 'owner_walk_in' });
+            operatorType: req.ownerAuth.role, operatorId: req.ownerAuth.ownerAccountId,
+            source: hasTimeConflict ? 'owner_walk_in_conflict_override' : 'owner_walk_in',
+            reason: hasTimeConflict ? 'authorized_time_conflict_override' : null });
           appointment.status = nextStatus;
         }
         return { appointment, customerId: identity.customerId, reusedCustomer: Boolean(identity.customerId && !identity.verified) };
@@ -4052,6 +4081,7 @@ app.post('/api/owner/walk-in-appointments',
       const status = unavailable ? 409 : (error instanceof AppointmentMutationError ? error.status : 500);
       console.error('Create walk-in appointment error:', safeStaffAuthErrorCode(error));
       return res.status(status).json({ success: false, code: unavailable ? 'BOOKING_NOT_AVAILABLE' : (error.code || 'INTERNAL_ERROR'),
+        ...(error.canOverride !== undefined ? { canOverride: error.canOverride } : {}),
         message: unavailable ? '该时间暂不可安排' : (error.publicMessage || '到店预约创建失败') });
     }
   }
