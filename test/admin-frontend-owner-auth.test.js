@@ -250,8 +250,8 @@ test('owner status actions expose only the canonical lifecycle transitions', asy
   assert.match(pending, /data-target-status="confirmed"/); assert.match(pending, /data-target-status="cancelled"/);
   assert.doesNotMatch(pending, /data-target-status="arrived"|data-target-status="no_show"|data-target-status="in_service"|data-target-status="completed"/);
   const confirmed = await render('confirmed');
-  assert.match(confirmed, /data-target-status="arrived"/); assert.match(confirmed, /data-target-status="no_show"/); assert.match(confirmed, /data-target-status="cancelled"/);
-  assert.doesNotMatch(confirmed, /data-target-status="pending"|data-target-status="in_service"|data-target-status="completed"/);
+  assert.match(confirmed, /data-target-status="arrived"/); assert.match(confirmed, /data-target-status="cancelled"/);
+  assert.doesNotMatch(confirmed, /data-target-status="pending"|data-target-status="no_show"|data-target-status="in_service"|data-target-status="completed"/);
   assert.match(await render('arrived'), /data-target-status="in_service"/);
   assert.match(await render('in_service'), /data-target-status="completed"/);
   for (const terminal of ['completed', 'no_show', 'cancelled']) assert.doesNotMatch(await render(terminal), /data-action="status"/);

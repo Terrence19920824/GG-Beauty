@@ -40,7 +40,12 @@ test('walk-in calendar entry is localized and refreshes the existing calendar', 
   assert.match(admin, /openWalkInAppointment\(\{ staffId, date: currentCalendarDate, time \}\)/);
   assert.match(admin, /\/api\/owner\/walk-in-appointments/);
   assert.match(admin, /await loadAppointments\(context\.location_id\)/);
-  assert.match(admin, /countryCode: 'SG'/);
+  assert.match(admin, /select name="countryCode"/);
+  assert.match(admin, /option value="SG"[^>]*>[^<]*\(\+65\)/);
+  assert.match(admin, /option value="CN"[^>]*>[^<]*\(\+86\)/);
+  assert.match(admin, /option value="MY"[^>]*>[^<]*\(\+60\)/);
+  assert.doesNotMatch(admin, /option value="ID"|option value="US"/);
+  assert.match(admin, /countryCode: fd\.get\('countryCode'\)/);
   assert.match(admin, /\/api\/owner\/staff\/\$\{encodeURIComponent\(safeStaffId\)\}\/services/);
   assert.match(admin, /s\.assigned === true/);
   assert.match(admin, /walkInNoBookableServices/);
@@ -48,6 +53,24 @@ test('walk-in calendar entry is localized and refreshes the existing calendar', 
   assert.match(i18n, /walkInNoBookableServices: 'No bookable services are available for this staff member\.'/);
   assert.match(admin, /loadEligibleServices = async nextStaffId/);
   assert.match(admin, /walk-in-staff'\)\.addEventListener\('change'/);
-  assert.match(admin, /countryCode: 'SG'/);
+  assert.match(admin, /button type="button" class="secondary-btn walk-in-close"/);
+  assert.match(admin, /walk-in-close'\)\.addEventListener\('click', closeWalkInDialog\)/);
+  assert.match(admin, /if \(dialog\.open\) dialog\.close\(\);/);
+  assert.match(admin, /calendarActionMap/);
+  assert.doesNotMatch(admin, /localKeySeq|localActionMap/);
   assert.match(admin, /INVALID_PHONE: 'invalidPhone'/);
+});
+
+test('walk-in acceptance actions remain server-authoritative and non-mutating until save', () => {
+  const route = server.slice(server.indexOf("app.post('/api/owner/walk-in-appointments'"));
+  assert.match(route, /validateBookingPhone\(phone, customer\.countryCode\)/);
+  assert.match(server, /const resolveCountryIso = countryInput/);
+  assert.match(server, /validateCustomerIdentityPhone/);
+  assert.doesNotMatch(route, /phone_verified_at/);
+  assert.match(admin, /data-target-status="arrived"/);
+  assert.match(admin, /data-target-status="cancelled"/);
+  assert.doesNotMatch(admin, /data-target-status="no_show"/);
+  assert.match(admin, /isAppointmentLate\(item, nowMs, authToday\)/);
+  assert.match(admin, /canonicalStatus !== 'pending' && canonicalStatus !== 'confirmed'/);
+  assert.match(admin, /startMs \+ fifteenMinutesMs/);
 });

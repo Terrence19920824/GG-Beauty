@@ -447,9 +447,10 @@ test('5. Drawer rendering: displays customer, unmasked phone, email (when presen
   // Status badge
   assert.ok(findDescendant(drawerBody, el => String(el.className).includes('status-confirmed')), 'Status confirmed badge must be displayed');
 
-  // Footer status action buttons for confirmed: arrived, no_show, cancelled
+  // Footer status action buttons for confirmed: arrived and cancelled. No-show
+  // remains a server-supported status but is not a primary merchant action.
   assert.match(drawerFooter.textContent, /已到店/, 'Arrived button must exist');
-  assert.match(drawerFooter.textContent, /未到店/, 'No-show button must exist');
+  assert.doesNotMatch(drawerFooter.textContent, /未到店/, 'No-show button must not be a primary action');
   assert.match(drawerFooter.textContent, /取消预约/, 'Cancel button must exist');
 });
 

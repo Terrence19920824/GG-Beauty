@@ -1149,6 +1149,10 @@ let currentRenderGeneration = 0;
 let currentAppointmentsSnapshot = [];
 let currentStaffSnapshot = [];
 const currentAppointmentMap = new Map();
+// Action records must survive rendering so in-place status refreshes can bind
+// replacement buttons without reaching into render-local state.
+const calendarActionMap = new Map();
+let calendarActionKeySeq = 0;
 let currentAdminProfile = null;
 let activeDrawerMode = 'view';
 const serviceEligibleStaffCache = new Map();
@@ -2024,8 +2028,8 @@ const renderAppointmentsView = () => {
 
   updateCalendarToolbarUI();
 
-  const localActionMap = new Map();
-  let localKeySeq = 0;
+  calendarActionMap.clear();
+  calendarActionKeySeq = 0;
 
   if (currentViewMode === 'calendar') {
     const dayAppointments = (currentAppointmentsSnapshot || []).filter(item => {
@@ -2110,8 +2114,8 @@ const renderAppointmentsView = () => {
         const canCheckout = (globalScope.FEATURE_CHECKOUT_ENABLED === true) && (canStartCheckout(item) === true);
         let checkoutBtnHtml = '';
         if (canCheckout) {
-          const kCheckout = String(++localKeySeq);
-          localActionMap.set(kCheckout, {
+          const kCheckout = String(++calendarActionKeySeq);
+          calendarActionMap.set(kCheckout, {
             type: 'checkout',
             appointmentId: item.id,
             can_start_checkout: item.can_start_checkout === true
@@ -2121,26 +2125,24 @@ const renderAppointmentsView = () => {
 
         let statusBtnsHtml = '';
         if (canonicalStatus === 'pending') {
-          const kConfirm = String(++localKeySeq);
-          localActionMap.set(kConfirm, { type: 'status', appointmentId: item.id, targetStatus: 'confirmed' });
-          const kCancel = String(++localKeySeq);
-          localActionMap.set(kCancel, { type: 'status', appointmentId: item.id, targetStatus: 'cancelled' });
+          const kConfirm = String(++calendarActionKeySeq);
+          calendarActionMap.set(kConfirm, { type: 'status', appointmentId: item.id, targetStatus: 'confirmed' });
+          const kCancel = String(++calendarActionKeySeq);
+          calendarActionMap.set(kCancel, { type: 'status', appointmentId: item.id, targetStatus: 'cancelled' });
           statusBtnsHtml = `<button type="button" data-action="status" data-action-key="${kConfirm}" data-target-status="confirmed">${escapeHtml(adminT('confirm'))}</button><button type="button" data-action="status" data-action-key="${kCancel}" data-target-status="cancelled">${escapeHtml(adminT('cancel'))}</button>`;
         } else if (canonicalStatus === 'confirmed') {
-          const kArrive = String(++localKeySeq);
-          localActionMap.set(kArrive, { type: 'status', appointmentId: item.id, targetStatus: 'arrived' });
-          const kNoShow = String(++localKeySeq);
-          localActionMap.set(kNoShow, { type: 'status', appointmentId: item.id, targetStatus: 'no_show' });
-          const kCancel = String(++localKeySeq);
-          localActionMap.set(kCancel, { type: 'status', appointmentId: item.id, targetStatus: 'cancelled' });
-          statusBtnsHtml = `<button type="button" data-action="status" data-action-key="${kArrive}" data-target-status="arrived">${escapeHtml(adminT('arrived'))}</button><button type="button" data-action="status" data-action-key="${kNoShow}" data-target-status="no_show">${escapeHtml(adminT('noShow'))}</button><button type="button" data-action="status" data-action-key="${kCancel}" data-target-status="cancelled">${escapeHtml(adminT('cancel'))}</button>`;
+          const kArrive = String(++calendarActionKeySeq);
+          calendarActionMap.set(kArrive, { type: 'status', appointmentId: item.id, targetStatus: 'arrived' });
+          const kCancel = String(++calendarActionKeySeq);
+          calendarActionMap.set(kCancel, { type: 'status', appointmentId: item.id, targetStatus: 'cancelled' });
+          statusBtnsHtml = `<button type="button" data-action="status" data-action-key="${kArrive}" data-target-status="arrived">${escapeHtml(adminT('arrived'))}</button><button type="button" data-action="status" data-action-key="${kCancel}" data-target-status="cancelled">${escapeHtml(adminT('cancel'))}</button>`;
         } else if (canonicalStatus === 'arrived') {
-          const kInService = String(++localKeySeq);
-          localActionMap.set(kInService, { type: 'status', appointmentId: item.id, targetStatus: 'in_service' });
+          const kInService = String(++calendarActionKeySeq);
+          calendarActionMap.set(kInService, { type: 'status', appointmentId: item.id, targetStatus: 'in_service' });
           statusBtnsHtml = `<button type="button" data-action="status" data-action-key="${kInService}" data-target-status="in_service">${escapeHtml(adminT('in_service'))}</button>`;
         } else if (canonicalStatus === 'in_service') {
-          const kComplete = String(++localKeySeq);
-          localActionMap.set(kComplete, { type: 'status', appointmentId: item.id, targetStatus: 'completed' });
+          const kComplete = String(++calendarActionKeySeq);
+          calendarActionMap.set(kComplete, { type: 'status', appointmentId: item.id, targetStatus: 'completed' });
           statusBtnsHtml = `<button type="button" data-action="status" data-action-key="${kComplete}" data-target-status="completed">${escapeHtml(adminT('complete'))}</button>`;
         }
 
@@ -2337,8 +2339,8 @@ const renderAppointmentsView = () => {
         const canCheckout = (globalScope.FEATURE_CHECKOUT_ENABLED === true) && (canStartCheckout(item) === true);
         let checkoutBtnHtml = '';
         if (canCheckout) {
-          const kCheckout = String(++localKeySeq);
-          localActionMap.set(kCheckout, {
+          const kCheckout = String(++calendarActionKeySeq);
+          calendarActionMap.set(kCheckout, {
             type: 'checkout',
             appointmentId: item.id,
             can_start_checkout: item.can_start_checkout === true
@@ -2348,26 +2350,24 @@ const renderAppointmentsView = () => {
 
         let statusBtnsHtml = '';
         if (canonicalStatus === 'pending') {
-          const kConfirm = String(++localKeySeq);
-          localActionMap.set(kConfirm, { type: 'status', appointmentId: item.id, targetStatus: 'confirmed' });
-          const kCancel = String(++localKeySeq);
-          localActionMap.set(kCancel, { type: 'status', appointmentId: item.id, targetStatus: 'cancelled' });
+          const kConfirm = String(++calendarActionKeySeq);
+          calendarActionMap.set(kConfirm, { type: 'status', appointmentId: item.id, targetStatus: 'confirmed' });
+          const kCancel = String(++calendarActionKeySeq);
+          calendarActionMap.set(kCancel, { type: 'status', appointmentId: item.id, targetStatus: 'cancelled' });
           statusBtnsHtml = `<button type="button" data-action="status" data-action-key="${kConfirm}" data-target-status="confirmed">${escapeHtml(adminT('confirm'))}</button><button type="button" data-action="status" data-action-key="${kCancel}" data-target-status="cancelled">${escapeHtml(adminT('cancel'))}</button>`;
         } else if (canonicalStatus === 'confirmed') {
-          const kArrive = String(++localKeySeq);
-          localActionMap.set(kArrive, { type: 'status', appointmentId: item.id, targetStatus: 'arrived' });
-          const kNoShow = String(++localKeySeq);
-          localActionMap.set(kNoShow, { type: 'status', appointmentId: item.id, targetStatus: 'no_show' });
-          const kCancel = String(++localKeySeq);
-          localActionMap.set(kCancel, { type: 'status', appointmentId: item.id, targetStatus: 'cancelled' });
-          statusBtnsHtml = `<button type="button" data-action="status" data-action-key="${kArrive}" data-target-status="arrived">${escapeHtml(adminT('arrived'))}</button><button type="button" data-action="status" data-action-key="${kNoShow}" data-target-status="no_show">${escapeHtml(adminT('noShow'))}</button><button type="button" data-action="status" data-action-key="${kCancel}" data-target-status="cancelled">${escapeHtml(adminT('cancel'))}</button>`;
+          const kArrive = String(++calendarActionKeySeq);
+          calendarActionMap.set(kArrive, { type: 'status', appointmentId: item.id, targetStatus: 'arrived' });
+          const kCancel = String(++calendarActionKeySeq);
+          calendarActionMap.set(kCancel, { type: 'status', appointmentId: item.id, targetStatus: 'cancelled' });
+          statusBtnsHtml = `<button type="button" data-action="status" data-action-key="${kArrive}" data-target-status="arrived">${escapeHtml(adminT('arrived'))}</button><button type="button" data-action="status" data-action-key="${kCancel}" data-target-status="cancelled">${escapeHtml(adminT('cancel'))}</button>`;
         } else if (canonicalStatus === 'arrived') {
-          const kInService = String(++localKeySeq);
-          localActionMap.set(kInService, { type: 'status', appointmentId: item.id, targetStatus: 'in_service' });
+          const kInService = String(++calendarActionKeySeq);
+          calendarActionMap.set(kInService, { type: 'status', appointmentId: item.id, targetStatus: 'in_service' });
           statusBtnsHtml = `<button type="button" data-action="status" data-action-key="${kInService}" data-target-status="in_service">${escapeHtml(adminT('in_service'))}</button>`;
         } else if (canonicalStatus === 'in_service') {
-          const kComplete = String(++localKeySeq);
-          localActionMap.set(kComplete, { type: 'status', appointmentId: item.id, targetStatus: 'completed' });
+          const kComplete = String(++calendarActionKeySeq);
+          calendarActionMap.set(kComplete, { type: 'status', appointmentId: item.id, targetStatus: 'completed' });
           statusBtnsHtml = `<button type="button" data-action="status" data-action-key="${kComplete}" data-target-status="completed">${escapeHtml(adminT('complete'))}</button>`;
         }
 
@@ -2453,7 +2453,7 @@ const renderAppointmentsView = () => {
     if (buttons && typeof buttons.forEach === 'function') {
       buttons.forEach(btn => {
         const key = btn?.getAttribute ? btn.getAttribute('data-action-key') : (btn?.dataset?.actionKey || btn?.['data-action-key']);
-        const record = localActionMap.get(String(key));
+        const record = calendarActionMap.get(String(key));
         if (!record) return;
 
         if (typeof btn?.removeAttribute === 'function') {
@@ -2571,7 +2571,6 @@ const renderAppointmentsView = () => {
     }
   }
 
-  localActionMap.clear();
 };
 
 const acceptAuthoritativeAppointments = (apiAppointments) => {
@@ -2932,12 +2931,18 @@ async function openWalkInAppointment({ staffId = '', date: prefilledDate = '', t
     const dialog = document.createElement('dialog');
     dialog.className = 'walk-in-dialog';
     dialog.innerHTML = `<form method="dialog" class="card" style="min-width:min(92vw,620px);margin:0">
-      <div class="toolbar"><h2>${escapeHtml(adminT('walkInTitle'))}</h2><button value="cancel" class="secondary-btn">×</button></div>
-      <div class="form-grid"><label class="field"><span>${escapeHtml(adminT('name'))}</span><input name="name" required maxlength="200"></label><label class="field"><span>${escapeHtml(adminT('phone'))} (+65)</span><input name="phone" required maxlength="40" inputmode="tel"></label><label class="field full"><span>${escapeHtml(adminT('email'))}</span><input name="email" type="email" maxlength="320"></label><label class="field"><span>${escapeHtml(adminT('date'))}</span><input name="date" type="date" required value="${escapeHtml(date)}"></label><label class="field"><span>${escapeHtml(adminT('time'))}</span><input name="time" type="time" required value="${escapeHtml(time)}"></label></div>
+      <div class="toolbar"><h2>${escapeHtml(adminT('walkInTitle'))}</h2><button type="button" class="secondary-btn walk-in-close" aria-label="${escapeHtml(adminT('close'))}">×</button></div>
+      <div class="form-grid"><label class="field"><span>${escapeHtml(adminT('name'))}</span><input name="name" required maxlength="200"></label><label class="field"><span>${escapeHtml(adminT('countryRegion'))}</span><select name="countryCode"><option value="SG">${escapeHtml(adminT('countrySingapore'))} (+65)</option><option value="CN">${escapeHtml(adminT('countryChina'))} (+86)</option><option value="MY">${escapeHtml(adminT('countryMalaysia'))} (+60)</option></select></label><label class="field"><span>${escapeHtml(adminT('phone'))}</span><input name="phone" required maxlength="40" inputmode="tel"></label><label class="field full"><span>${escapeHtml(adminT('email'))}</span><input name="email" type="email" maxlength="320"></label><label class="field"><span>${escapeHtml(adminT('date'))}</span><input name="date" type="date" required value="${escapeHtml(date)}"></label><label class="field"><span>${escapeHtml(adminT('time'))}</span><input name="time" type="time" required value="${escapeHtml(time)}"></label></div>
       <h3>${escapeHtml(adminT('walkInServices'))}</h3><div class="walk-in-items"></div>
       <div class="form-actions"><button type="button" class="secondary-btn walk-in-add">${escapeHtml(adminT('addServiceItem'))}</button><button type="button" class="primary-btn walk-in-save">${escapeHtml(adminT('walkInCreate'))}</button></div>
     </form>`;
     const rows = dialog.querySelector('.walk-in-items');
+    const closeWalkInDialog = () => {
+      if (dialog.open) dialog.close();
+      dialog.remove();
+    };
+    dialog.querySelector('.walk-in-close').addEventListener('click', closeWalkInDialog);
+    dialog.addEventListener('cancel', () => dialog.remove(), { once: true });
     let conflictOverrideReady = false;
     const conflictWarning = document.createElement('div');
     conflictWarning.className = 'adjust-alert warning';
@@ -2981,7 +2986,7 @@ async function openWalkInAppointment({ staffId = '', date: prefilledDate = '', t
       const save = dialog.querySelector('.walk-in-save'); save.disabled = true;
       const fd = new FormData(form);
       try {
-        const response = await fetch('/api/owner/walk-in-appointments', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ locationId: context.location_id, date: fd.get('date'), time: fd.get('time'), customer: { name: fd.get('name'), phone: fd.get('phone'), email: fd.get('email'), countryCode: 'SG' }, items, ...(conflictOverrideReady ? { overrideConflict: true } : {}) }) });
+        const response = await fetch('/api/owner/walk-in-appointments', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ locationId: context.location_id, date: fd.get('date'), time: fd.get('time'), customer: { name: fd.get('name'), phone: fd.get('phone'), email: fd.get('email'), countryCode: fd.get('countryCode') }, items, ...(conflictOverrideReady ? { overrideConflict: true } : {}) }) });
         const result = await response.json().catch(() => ({}));
         if (response.status === 409 && result.code === 'APPOINTMENT_COLLISION' && result.canOverride === true) {
           conflictOverrideReady = true;
@@ -3292,7 +3297,7 @@ function renderDrawerFooterWithTextContent(footer, canonicalStatus) {
   footer.replaceChildren();
   const transitions = {
     pending: [['confirmed', 'btn-confirmed', 'confirm'], ['cancelled', 'btn-cancelled', 'markCancelled']],
-    confirmed: [['arrived', 'btn-arrived', 'markArrived'], ['no_show', 'btn-no_show', 'markNoShow'], ['cancelled', 'btn-cancelled', 'markCancelled']],
+    confirmed: [['arrived', 'btn-arrived', 'markArrived'], ['cancelled', 'btn-cancelled', 'markCancelled']],
     arrived: [['in_service', 'btn-in_service', 'markInService']],
     in_service: [['completed', 'btn-completed', 'complete']]
   };
@@ -4164,7 +4169,7 @@ function bindActionButtonsIn(container) {
   if (!buttons || typeof buttons.forEach !== 'function') return;
   buttons.forEach(btn => {
     const key = btn?.getAttribute ? btn.getAttribute('data-action-key') : (btn?.dataset?.actionKey || btn?.['data-action-key']);
-    const record = localActionMap.get(String(key));
+    const record = calendarActionMap.get(String(key));
     if (!record) return;
 
     if (typeof btn?.removeAttribute === 'function') {
@@ -4242,8 +4247,8 @@ function renderActionButtonsForAppointment(item) {
   const canCheckout = (globalScope.FEATURE_CHECKOUT_ENABLED === true) && (canStartCheckout(item) === true);
   let checkoutBtnHtml = '';
   if (canCheckout) {
-    const kCheckout = String(++localKeySeq);
-    localActionMap.set(kCheckout, {
+    const kCheckout = String(++calendarActionKeySeq);
+    calendarActionMap.set(kCheckout, {
       type: 'checkout',
       appointmentId: item.id,
       can_start_checkout: item.can_start_checkout === true
@@ -4253,26 +4258,24 @@ function renderActionButtonsForAppointment(item) {
 
   let statusBtnsHtml = '';
   if (canonicalStatus === 'pending') {
-    const kConfirm = String(++localKeySeq);
-    localActionMap.set(kConfirm, { type: 'status', appointmentId: item.id, targetStatus: 'confirmed' });
-    const kCancel = String(++localKeySeq);
-    localActionMap.set(kCancel, { type: 'status', appointmentId: item.id, targetStatus: 'cancelled' });
+    const kConfirm = String(++calendarActionKeySeq);
+    calendarActionMap.set(kConfirm, { type: 'status', appointmentId: item.id, targetStatus: 'confirmed' });
+    const kCancel = String(++calendarActionKeySeq);
+    calendarActionMap.set(kCancel, { type: 'status', appointmentId: item.id, targetStatus: 'cancelled' });
     statusBtnsHtml = `<button type="button" data-action="status" data-action-key="${kConfirm}" data-target-status="confirmed">${escapeHtml(adminT('confirm'))}</button><button type="button" data-action="status" data-action-key="${kCancel}" data-target-status="cancelled">${escapeHtml(adminT('cancel'))}</button>`;
   } else if (canonicalStatus === 'confirmed') {
-    const kArrive = String(++localKeySeq);
-    localActionMap.set(kArrive, { type: 'status', appointmentId: item.id, targetStatus: 'arrived' });
-    const kNoShow = String(++localKeySeq);
-    localActionMap.set(kNoShow, { type: 'status', appointmentId: item.id, targetStatus: 'no_show' });
-    const kCancel = String(++localKeySeq);
-    localActionMap.set(kCancel, { type: 'status', appointmentId: item.id, targetStatus: 'cancelled' });
-    statusBtnsHtml = `<button type="button" data-action="status" data-action-key="${kArrive}" data-target-status="arrived">${escapeHtml(adminT('arrived'))}</button><button type="button" data-action="status" data-action-key="${kNoShow}" data-target-status="no_show">${escapeHtml(adminT('noShow'))}</button><button type="button" data-action="status" data-action-key="${kCancel}" data-target-status="cancelled">${escapeHtml(adminT('cancel'))}</button>`;
+    const kArrive = String(++calendarActionKeySeq);
+    calendarActionMap.set(kArrive, { type: 'status', appointmentId: item.id, targetStatus: 'arrived' });
+    const kCancel = String(++calendarActionKeySeq);
+    calendarActionMap.set(kCancel, { type: 'status', appointmentId: item.id, targetStatus: 'cancelled' });
+    statusBtnsHtml = `<button type="button" data-action="status" data-action-key="${kArrive}" data-target-status="arrived">${escapeHtml(adminT('arrived'))}</button><button type="button" data-action="status" data-action-key="${kCancel}" data-target-status="cancelled">${escapeHtml(adminT('cancel'))}</button>`;
   } else if (canonicalStatus === 'arrived') {
-    const kInService = String(++localKeySeq);
-    localActionMap.set(kInService, { type: 'status', appointmentId: item.id, targetStatus: 'in_service' });
+    const kInService = String(++calendarActionKeySeq);
+    calendarActionMap.set(kInService, { type: 'status', appointmentId: item.id, targetStatus: 'in_service' });
     statusBtnsHtml = `<button type="button" data-action="status" data-action-key="${kInService}" data-target-status="in_service">${escapeHtml(adminT('in_service'))}</button>`;
   } else if (canonicalStatus === 'in_service') {
-    const kComplete = String(++localKeySeq);
-    localActionMap.set(kComplete, { type: 'status', appointmentId: item.id, targetStatus: 'completed' });
+    const kComplete = String(++calendarActionKeySeq);
+    calendarActionMap.set(kComplete, { type: 'status', appointmentId: item.id, targetStatus: 'completed' });
     statusBtnsHtml = `<button type="button" data-action="status" data-action-key="${kComplete}" data-target-status="completed">${escapeHtml(adminT('complete'))}</button>`;
   }
 
