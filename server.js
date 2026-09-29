@@ -68,7 +68,7 @@ const {
   CustomerAccountError,
   createCustomerAccountService
 } = require('./lib/customer-account-service');
-const { isKnownStatus, canTransition, recordStatusHistory } = require('./lib/appointment-status');
+const { isKnownStatus, canTransition, ownerStatusHistoryActorType, recordStatusHistory } = require('./lib/appointment-status');
 const { createCheckoutPos } = require('./lib/checkout-pos');
 const { createCheckoutPosRead } = require('./lib/checkout-pos-read');
 const {
@@ -1363,7 +1363,7 @@ const ownerStaffCapabilityManagement =
 app.get(
   '/api/owner/staff/:staffId/services',
   requireOwnerAuth,
-  requireOwnerRole(['owner', 'manager', 'admin']),
+  requireOwnerRole(['owner', 'manager', 'admin', 'front_desk']),
   ownerStaffCapabilityManagement.listStaffServices
 );
 
@@ -4068,7 +4068,7 @@ app.post('/api/owner/walk-in-appointments',
           await client.query(`UPDATE appointment_items SET status=$1, updated_at=NOW() WHERE shop_id=$2 AND location_id=$3 AND appointment_id=$4`,
             [nextStatus, scope.shop_id, scope.location_id, appointment.id]);
           await recordStatusHistory(client, { appointment, fromStatus: appointment.status, toStatus: nextStatus,
-            operatorType: req.ownerAuth.role, operatorId: req.ownerAuth.ownerAccountId,
+            operatorType: ownerStatusHistoryActorType(req.ownerAuth.role), operatorId: req.ownerAuth.ownerAccountId,
             source: hasTimeConflict ? 'owner_walk_in_conflict_override' : 'owner_walk_in',
             reason: hasTimeConflict ? 'authorized_time_conflict_override' : null });
           appointment.status = nextStatus;

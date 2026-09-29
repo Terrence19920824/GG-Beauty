@@ -85,9 +85,20 @@ const makePool = ({
         return { rows: row && row.shop_id === params[1] ? [{ id: row.id }] : [] };
       }
       if (/^SELECT[\s\S]+FROM services AS service/.test(normalized)) {
+        const bookingOnly = /AND capability\.is_active = TRUE/.test(normalized);
         return {
           rows: Object.values(state.services)
             .filter(service => service.shop_id === params[0])
+            .filter(service => !bookingOnly || (
+              service.is_active &&
+              service.bookable &&
+              state.mappings.some(mapping =>
+                mapping.shop_id === params[0] &&
+                mapping.staff_id === params[1] &&
+                mapping.service_id === service.id &&
+                mapping.is_active
+              )
+            ))
             .sort((a, b) => a.sort_order - b.sort_order)
             .map(service => ({
               service_id: service.id,
@@ -206,6 +217,27 @@ for (const role of ['owner', 'manager', 'admin']) {
   });
 }
 
+test('front desk capability read is restricted to assigned active bookable services', async () => {
+  const fixture = makePool({ role: 'front_desk' });
+  const response = await run(fixture, `/api/owner/staff/${ID.staffA}/services`);
+  assert.equal(response.status, 200);
+  const serviceQuery = fixture.state.queries.find(query => /FROM services AS service/.test(query.sql));
+  assert.match(serviceQuery.sql, /capability\.is_active = TRUE/);
+  assert.match(serviceQuery.sql, /service\.is_active = TRUE/);
+  assert.match(serviceQuery.sql, /service\.bookable = TRUE/);
+  assert.match(serviceQuery.sql, /category\.is_active = TRUE/);
+  assert.deepEqual((await response.json()).data.map(row => row.service_id), [ID.serviceA]);
+});
+
+test('front desk capability replacement is denied before capability transaction', async () => {
+  const fixture = makePool({ role: 'front_desk' });
+  const response = await run(fixture, `/api/owner/staff/${ID.staffA}/services`, {
+    method: 'PUT', body: { serviceIds: [] }
+  });
+  assert.equal(response.status, 403);
+  assert.equal(fixture.state.queries.length, 0);
+});
+
 for (const role of ['owner', 'manager']) {
   test(`${role} may atomically replace staff capabilities`, async () => {
     const fixture = makePool({ role });
@@ -247,6 +279,13 @@ test('cross-tenant staff GET and PUT return safe 404', async () => {
     assert.equal(response.status, 404);
     assert.equal(JSON.stringify(await response.json()).includes('Other Shop'), false);
   }
+});
+
+test('front desk cross-tenant capability read returns safe 404', async () => {
+  const fixture = makePool({ role: 'front_desk' });
+  const response = await run(fixture, `/api/owner/staff/${ID.staffB}/services`);
+  assert.equal(response.status, 404);
+  assert.equal(JSON.stringify(await response.json()).includes('Other Shop'), false);
 });
 
 test('client shop identity cannot change authenticated tenant', async () => {

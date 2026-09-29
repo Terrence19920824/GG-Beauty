@@ -8,6 +8,7 @@ const test = require('node:test');
 const root = path.join(__dirname, '..');
 const server = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
 const admin = fs.readFileSync(path.join(root, 'public', 'admin.html'), 'utf8');
+const i18n = fs.readFileSync(path.join(root, 'public', 'shared-i18n.js'), 'utf8');
 
 test('walk-in uses the existing appointment architecture with server-side authority', () => {
   const route = server.slice(server.indexOf("app.post('/api/owner/walk-in-appointments'"));
@@ -22,6 +23,8 @@ test('walk-in uses the existing appointment architecture with server-side author
   assert.match(route, /BOOKING_TIME_IN_PAST/);
   assert.match(route, /\['confirmed', 'arrived'\]/);
   assert.match(route, /recordStatusHistory/);
+  assert.match(route, /operatorType: ownerStatusHistoryActorType\(req\.ownerAuth\.role\)/);
+  assert.match(route, /operatorId: req\.ownerAuth\.ownerAccountId/);
   assert.match(route, /const canOverrideConflict = \['owner', 'manager'\]/);
   assert.match(route, /error\.code === 'APPOINTMENT_COLLISION'/);
   assert.match(route, /hasTimeConflict && !overrideConflictRequested/);
@@ -40,6 +43,9 @@ test('walk-in calendar entry is localized and refreshes the existing calendar', 
   assert.match(admin, /countryCode: 'SG'/);
   assert.match(admin, /\/api\/owner\/staff\/\$\{encodeURIComponent\(safeStaffId\)\}\/services/);
   assert.match(admin, /s\.assigned === true/);
+  assert.match(admin, /walkInNoBookableServices/);
+  assert.match(i18n, /walkInNoBookableServices: '该员工暂无可预约项目'/);
+  assert.match(i18n, /walkInNoBookableServices: 'No bookable services are available for this staff member\.'/);
   assert.match(admin, /loadEligibleServices = async nextStaffId/);
   assert.match(admin, /walk-in-staff'\)\.addEventListener\('change'/);
   assert.match(admin, /countryCode: 'SG'/);

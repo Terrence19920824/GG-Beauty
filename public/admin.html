@@ -2918,9 +2918,10 @@ async function openWalkInAppointment({ staffId = '', date: prefilledDate = '', t
     const services = Array.isArray(servicesJson.data)
       ? servicesJson.data.filter(s => s.assigned === true && s.is_active !== false && s.bookable !== false)
       : [];
-    if (!context || !context.location_id || !services.length || !Array.isArray(currentStaffSnapshot) || !currentStaffSnapshot.length) {
+    if (!servicesResponse.ok || !servicesJson.success || !Array.isArray(servicesJson.data) || !context || !context.location_id || !Array.isArray(currentStaffSnapshot) || !currentStaffSnapshot.length) {
       showAdminToast(adminT('loadFailed'), 'error'); return;
     }
+    if (!services.length) { showAdminToast(adminT('walkInNoBookableServices'), 'error'); return; }
     const now = getAuthoritativeNowMs() || Date.parse(context.server_now);
     const date = prefilledDate || getAuthoritativeLocalDate(now, context.timezone) || '';
     const minutes = getAuthoritativeLocalMinutes(now, context.timezone);
@@ -2963,6 +2964,7 @@ async function openWalkInAppointment({ staffId = '', date: prefilledDate = '', t
         try {
           const eligible = await loadEligibleServices(String(event.target.value || '').trim());
           serviceSelect.innerHTML = serviceOptionsFor(eligible);
+          if (!eligible.length) showAdminToast(adminT('walkInNoBookableServices'), 'error');
         } catch (error) {
           serviceSelect.innerHTML = '';
           showAdminToast(error.message || adminT('operationFailed'), 'error');

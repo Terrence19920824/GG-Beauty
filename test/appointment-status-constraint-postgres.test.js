@@ -8,7 +8,7 @@ const path = require('node:path');
 const { spawn, spawnSync } = require('node:child_process');
 const { Client } = require('pg');
 const { syncAppointmentItemStatus, loadAndValidatePhaseAStructure } = require('../lib/appointment-multi-service');
-const { recordStatusHistory, canTransition } = require('../lib/appointment-status');
+const { recordStatusHistory, canTransition, ownerStatusHistoryActorType } = require('../lib/appointment-status');
 
 const ROOT = path.resolve(__dirname, '..');
 const PG_BIN = process.env.PG17_BIN || '/opt/homebrew/opt/postgresql@17/bin';
@@ -128,6 +128,29 @@ test('PostgreSQL 17 appointment status constraint migration: arrived/in_service 
       VALUES ($1, $2, $3, $4, $5, '2026-10-01 10:00:00Z', '2026-10-01 11:00:00Z', 'pending'),
              ($6, $2, $3, $4, $5, '2026-10-01 11:00:00Z', '2026-10-01 12:00:00Z', 'confirmed')
     `, [IDS.appointment1, IDS.shop, IDS.location, IDS.staff, IDS.service, IDS.appointment2]);
+
+    // Walk-in is an owner-facing operation even when the authenticated
+    // business role is manager/admin/front_desk. The history schema accepts
+    // actor categories, not those literal business-role values.
+    for (const role of ['owner', 'manager', 'admin', 'front_desk']) {
+      assert.equal(ownerStatusHistoryActorType(role), 'owner');
+      await recordStatusHistory(db, {
+        appointment: { id: IDS.appointment1, shop_id: IDS.shop },
+        fromStatus: 'pending',
+        toStatus: 'confirmed',
+        operatorType: ownerStatusHistoryActorType(role),
+        operatorId: IDS.staff,
+        source: `walk_in_${role}`
+      });
+    }
+    const walkInAudit = await db.query(`
+      SELECT operator_type, operator_id, source
+      FROM appointment_status_history
+      WHERE shop_id = $1 AND source LIKE 'walk_in_%'
+      ORDER BY source
+    `, [IDS.shop]);
+    assert.equal(walkInAudit.rows.length, 4);
+    assert.ok(walkInAudit.rows.every(row => row.operator_type === 'owner' && row.operator_id === IDS.staff));
 
     await db.query(`
       INSERT INTO appointment_items (id, shop_id, location_id, appointment_id, service_id, sequence_no, start_at, end_at, status)
