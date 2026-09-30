@@ -302,9 +302,9 @@ test('C. Phone privacy: Staff route projection remains strictly masked', () => {
 });
 
 // =========================================================================
-// D. Member UI: Verified badge & Member Code
+// D. Member UI: authoritative membership record & Member Code
 // =========================================================================
-test('D1. Member UI: Verified badge renders on card and in drawer only when identity_status === verified_member', () => {
+test('D1. Member UI: active badge requires enabled authoritative membership', () => {
   const { context, elements } = createMockAdminContext({ locale: 'zh-CN' });
 
   const verifiedAppt = {
@@ -313,13 +313,17 @@ test('D1. Member UI: Verified badge renders on card and in drawer only when iden
     customer_phone: '+65 9123 4567',
     identity_status: 'verified_member',
     member_code: 'MEM-8888',
+    membership_enabled: true,
+    membership_is_active: true,
+    membership_status: 'active',
+    membership_tier_name: 'VIP',
     status: 'pending'
   };
 
   context.renderAppointmentDrawer(verifiedAppt);
   const drawerBody = elements.get('drawerBody');
   const badgeEl = findDescendant(drawerBody, el => el.classList && el.classList.has('drawer-member-badge'));
-  assert.ok(badgeEl, 'Verified member badge must be rendered in drawer');
+  assert.ok(badgeEl, 'Active authoritative membership badge must be rendered in drawer');
   assert.equal(badgeEl.textContent, '会员', 'Badge text in zh-CN must be 会员');
 
   const memberCodeEl = findDescendant(drawerBody, el => el.classList && el.classList.has('drawer-member-code'));
@@ -327,14 +331,17 @@ test('D1. Member UI: Verified badge renders on card and in drawer only when iden
   assert.match(memberCodeEl.textContent, /MEM-8888/, 'Accurate member code must be displayed');
 });
 
-test('D2. Member UI: Non-verified or missing identity_status does not render verified badge or fabricate code', () => {
+test('D2. Member UI: identity_status alone does not render active membership or fabricate code', () => {
   const { context, elements } = createMockAdminContext({ locale: 'zh-CN' });
 
   const nonMemberAppt = {
     id: '00000000-0000-4000-8000-000000000002',
     recipient_name_snapshot: 'Bob Guest',
     customer_phone: '+65 9123 0000',
-    identity_status: 'unverified',
+    identity_status: 'verified_member',
+    membership_enabled: true,
+    membership_is_active: false,
+    membership_status: 'expired',
     member_code: null,
     status: 'pending'
   };
@@ -342,11 +349,33 @@ test('D2. Member UI: Non-verified or missing identity_status does not render ver
   context.renderAppointmentDrawer(nonMemberAppt);
   const drawerBody = elements.get('drawerBody');
   const badgeEl = findDescendant(drawerBody, el => el.classList && el.classList.has('drawer-member-badge'));
-  assert.equal(badgeEl, null, 'Unverified customer must not show verified badge');
+  assert.equal(badgeEl, null, 'Expired membership must not show active member badge');
+  assert.match(drawerBody.textContent, /已过期/, 'Expired authoritative status must be visible');
 
   const codeEl = findDescendant(drawerBody, el => el.classList && el.classList.has('drawer-member-code'));
   assert.equal(codeEl, null, 'NULL member_code must not render member code element');
   assert.doesNotMatch(drawerBody.textContent, /null|undefined/, 'Drawer must not display literal null or undefined');
+});
+
+test('D3. Member UI: merchant-disabled membership hides entitlement even with an active record', () => {
+  const { context, elements } = createMockAdminContext({ locale: 'en' });
+  context.renderAppointmentDrawer({
+    id: '00000000-0000-4000-8000-000000000012',
+    recipient_name_snapshot: 'Disabled Membership',
+    customer_phone: '+65 9123 1111',
+    identity_status: 'verified_member',
+    member_code: 'MEM-9999',
+    membership_enabled: false,
+    membership_is_active: false,
+    membership_status: 'active',
+    membership_tier_name: 'VIP',
+    status: 'confirmed'
+  });
+  const drawerBody = elements.get('drawerBody');
+  const badgeEl = findDescendant(drawerBody, el => el.classList && el.classList.has('drawer-member-badge'));
+  assert.equal(badgeEl, null);
+  assert.doesNotMatch(drawerBody.textContent, /Membership tier|Membership status/);
+  assert.match(drawerBody.textContent, /MEM-9999/, 'Member code remains an identifier, not entitlement proof');
 });
 
 // =========================================================================

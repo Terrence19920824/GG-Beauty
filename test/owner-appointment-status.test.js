@@ -148,7 +148,7 @@ const makePool = ({
         };
       }
       if (/^INSERT INTO appointment_status_history/.test(normalized)) {
-        state.history.push({ from: params[2], to: params[3], operatorType: params[4], operatorId: params[5] });
+        state.history.push({ from: params[2], to: params[3], operatorType: params[4], operatorId: params[5], reason: params[7] });
         return { rows: [] };
       }
       throw new Error(`Unexpected SQL: ${normalized}`);
@@ -314,13 +314,14 @@ test('initial parent/item inconsistency fails closed', async () => {
 
 test('cancellation synchronizes parent and items and preserves cancellation timestamp semantics', async () => {
   const fixture = makePool();
-  const response = await runRequest(fixture, { id: ID.appointmentA, status: 'cancelled' });
+  const response = await runRequest(fixture, { id: ID.appointmentA, status: 'cancelled', reason: 'Customer requested' });
   assert.equal(response.status, 200);
   assert.equal(fixture.state.parentStatus, 'cancelled');
   assert.deepEqual(fixture.state.itemStatuses, ['cancelled', 'cancelled']);
   assert.ok(fixture.state.cancelledAt);
   const parentUpdate = fixture.state.queries.find(query => /^UPDATE appointments/.test(query.sql));
   assert.match(parentUpdate.sql, /WHEN \$1 = 'cancelled'\s+THEN NOW\(\)\s+ELSE cancelled_at/);
+  assert.equal(fixture.state.history[0].reason, 'Customer requested');
 });
 
 test('same status is a validated no-op success', async () => {
@@ -335,6 +336,8 @@ for (const [from, to] of [
   ['pending', 'completed'],
   ['pending', 'no_show'],
   ['confirmed', 'pending'],
+  ['arrived', 'cancelled'],
+  ['in_service', 'cancelled'],
   ['completed', 'pending'],
   ['cancelled', 'pending'],
   ['no_show', 'confirmed']

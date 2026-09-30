@@ -75,6 +75,12 @@ const { createCheckoutPosRead } = require('./lib/checkout-pos-read');
 const {
   projectOwnerAppointmentCheckout
 } = require('./lib/owner-appointment-checkout-projection');
+const {
+  createOwnerAppointmentArriveStart
+} = require('./lib/owner-appointment-arrive-start');
+const {
+  getOwnerFrontDeskCreationPolicy
+} = require('./lib/owner-front-desk-creation-policy');
 const { validateSettings: validateMerchantContactSettings, publicPresentation: merchantContactPresentation } = require('./lib/merchant-contact');
 const {
   checkRateLimit,
@@ -2463,6 +2469,32 @@ app.get(
         c.identity_status,
         c.profile_notes,
 
+        COALESCE(customer_settings.membership_enabled, FALSE) AS membership_enabled,
+        membership.tier_code AS membership_tier_code,
+        membership.tier_name AS membership_tier_name,
+        membership.started_at AS membership_started_at,
+        membership.expires_at AS membership_expires_at,
+        CASE
+          WHEN membership.membership_id IS NULL THEN NULL
+          WHEN membership.record_status = 'active'
+            AND membership.expires_at IS NOT NULL
+            AND membership.expires_at <= NOW()
+          THEN 'expired'
+          WHEN membership.record_status = 'active'
+            AND membership.tier_active IS NOT TRUE
+          THEN 'inactive'
+          ELSE membership.record_status
+        END AS membership_status,
+        (
+          COALESCE(customer_settings.membership_enabled, FALSE) = TRUE
+          AND membership.record_status = 'active'
+          AND membership.tier_active = TRUE
+          AND (
+            membership.expires_at IS NULL
+            OR membership.expires_at > NOW()
+          )
+        ) AS membership_is_active,
+
         s.name AS service_name,
         s.duration_minutes,
         s.price,
@@ -2502,6 +2534,43 @@ app.get(
       JOIN customers c
         ON c.id = a.customer_id
        AND c.shop_id = a.shop_id
+
+      LEFT JOIN shop_customer_settings customer_settings
+        ON customer_settings.shop_id = a.shop_id
+
+      LEFT JOIN LATERAL (
+        SELECT
+          customer_membership.id AS membership_id,
+          customer_membership.status AS record_status,
+          customer_membership.started_at,
+          customer_membership.expires_at,
+          tier.tier_code,
+          tier.name AS tier_name,
+          tier.is_active AS tier_active
+        FROM customer_memberships customer_membership
+        JOIN membership_tiers tier
+          ON tier.shop_id = customer_membership.shop_id
+         AND tier.id = customer_membership.tier_id
+        WHERE customer_membership.shop_id = a.shop_id
+          AND customer_membership.customer_id = COALESCE(
+            a.recipient_customer_id,
+            a.customer_id
+          )
+        ORDER BY
+          CASE
+            WHEN customer_membership.status = 'active'
+              AND tier.is_active = TRUE
+              AND (
+                customer_membership.expires_at IS NULL
+                OR customer_membership.expires_at > NOW()
+              )
+            THEN 0
+            ELSE 1
+          END,
+          customer_membership.created_at DESC,
+          customer_membership.id DESC
+        LIMIT 1
+      ) membership ON TRUE
 
       JOIN services s
         ON s.id = a.service_id
@@ -3790,6 +3859,13 @@ const isValidClockTime = value =>
   typeof value === 'string' &&
   /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value);
 
+const OWNER_APPOINTMENT_SLOT_MINUTES = 15;
+const isAllowedOwnerAppointmentSlotTime = value => {
+  if (!isValidClockTime(value)) return false;
+  const minutes = Number(value.slice(3, 5));
+  return minutes % OWNER_APPOINTMENT_SLOT_MINUTES === 0;
+};
+
 const filterBookableCandidateSlots = async ({
   dbClient,
   candidates,
@@ -3965,10 +4041,10 @@ app.get('/api/owner/walk-in-phone-countries', requireOwnerAuth, requireOwnerRole
   return res.json({ success: true, data: getWalkInPhoneCountries(locale) });
 });
 
-app.post('/api/owner/walk-in-appointments',
-  requireOwnerAuth,
-  requireOwnerRole(['owner', 'manager', 'front_desk']),
+const createOwnerFrontDeskAppointmentHandler = ({ walkIn }) =>
   async (req, res) => {
+    const creationPolicy = getOwnerFrontDeskCreationPolicy(walkIn);
+    const { bookingSource, historySource } = creationPolicy;
     const body = req.body || {};
     const overrideConflictRequested = body.overrideConflict === true;
     // Keep this aligned with the existing appointment-adjustment override
@@ -3983,8 +4059,8 @@ app.post('/api/owner/walk-in-appointments',
     const phone = typeof customer.phone === 'string' ? customer.phone.trim() : '';
     const email = typeof customer.email === 'string' && customer.email.trim() ? customer.email.trim() : null;
 
-    if (!isUuid(locationId) || !isValidCalendarDate(date) || !isValidClockTime(time) || name.length > 200 || !phone) {
-      return res.status(400).json({ success: false, code: 'WALK_IN_INPUT_INVALID', message: '到店预约资料无效' });
+    if (!isUuid(locationId) || !isValidCalendarDate(date) || !isAllowedOwnerAppointmentSlotTime(time) || name.length > 200 || !phone) {
+      return res.status(400).json({ success: false, code: 'FRONT_DESK_INPUT_INVALID', message: '预约资料无效' });
     }
     let canonicalPhone;
     try { canonicalPhone = validateBookingPhone(phone, customer.countryCode); }
@@ -4081,21 +4157,21 @@ app.post('/api/owner/walk-in-appointments',
           `INSERT INTO appointments (shop_id,location_id,customer_id,booker_customer_id,recipient_customer_id,
              booker_name_snapshot,booker_phone_snapshot,booker_email_snapshot,recipient_name_snapshot,recipient_phone_snapshot,recipient_email_snapshot,
              service_id,staff_id,start_at,end_at,status,booking_source,override_conflict)
-           VALUES ($1,$2,$3,$3,$3,$4,$5,$6,$4,$5,$6,$7,$8,$9,$10,'pending','walk_in',$11)
+           VALUES ($1,$2,$3,$3,$3,$4,$5,$6,$4,$5,$6,$7,$8,$9,$10,'pending',$11,$12)
            RETURNING id,shop_id,location_id,customer_id,appointment_no,start_at,end_at,status,override_conflict,created_at`,
           [scope.shop_id, scope.location_id, identity.customerId, customerName, identity.phone, email,
-            first.serviceId, first.staffId, first.startAt, last.endAt, hasTimeConflict]);
+            first.serviceId, first.staffId, first.startAt, last.endAt, bookingSource, hasTimeConflict]);
         const appointment = appointmentResult.rows[0];
-        if (!appointment) throw new AppointmentMutationError('APPOINTMENT_INSERT_MISMATCH', 500, '到店预约创建失败');
+        if (!appointment) throw new AppointmentMutationError('APPOINTMENT_INSERT_MISMATCH', 500, '预约创建失败');
         await createMultiServiceRows(client, { appointment, items: timeline, serviceLocale: normalizeLocale(body.locale) });
-        for (const nextStatus of ['confirmed', 'arrived']) {
+        for (const nextStatus of creationPolicy.transitions) {
           await client.query(`UPDATE appointments SET status=$1, updated_at=NOW() WHERE id=$2 AND shop_id=$3 AND location_id=$4`,
             [nextStatus, appointment.id, scope.shop_id, scope.location_id]);
           await client.query(`UPDATE appointment_items SET status=$1, updated_at=NOW() WHERE shop_id=$2 AND location_id=$3 AND appointment_id=$4`,
             [nextStatus, scope.shop_id, scope.location_id, appointment.id]);
           await recordStatusHistory(client, { appointment, fromStatus: appointment.status, toStatus: nextStatus,
             operatorType: ownerStatusHistoryActorType(req.ownerAuth.role), operatorId: req.ownerAuth.ownerAccountId,
-            source: hasTimeConflict ? 'owner_walk_in_conflict_override' : 'owner_walk_in',
+            source: hasTimeConflict ? `${historySource}_conflict_override` : historySource,
             reason: hasTimeConflict ? 'authorized_time_conflict_override' : null });
           appointment.status = nextStatus;
         }
@@ -4105,12 +4181,23 @@ app.post('/api/owner/walk-in-appointments',
     } catch (error) {
       const unavailable = error instanceof StaffBookabilityError || error instanceof MultiServicePlanningError || error.code === '23P01';
       const status = unavailable ? 409 : (error instanceof AppointmentMutationError ? error.status : 500);
-      console.error('Create walk-in appointment error:', safeStaffAuthErrorCode(error));
+      console.error('Create front-desk appointment error:', safeStaffAuthErrorCode(error));
       return res.status(status).json({ success: false, code: unavailable ? 'BOOKING_NOT_AVAILABLE' : (error.code || 'INTERNAL_ERROR'),
         ...(error.canOverride !== undefined ? { canOverride: error.canOverride } : {}),
-        message: unavailable ? '该时间暂不可安排' : (error.publicMessage || '到店预约创建失败') });
+        message: unavailable ? '该时间暂不可安排' : (error.publicMessage || '预约创建失败') });
     }
-  }
+  };
+
+app.post('/api/owner/assisted-appointments',
+  requireOwnerAuth,
+  requireOwnerRole(['owner', 'manager', 'front_desk']),
+  createOwnerFrontDeskAppointmentHandler({ walkIn: false })
+);
+
+app.post('/api/owner/walk-in-appointments',
+  requireOwnerAuth,
+  requireOwnerRole(['owner', 'manager', 'front_desk']),
+  createOwnerFrontDeskAppointmentHandler({ walkIn: true })
 );
 
 const filterAnyStaffCandidateSlots = async ({
@@ -5761,6 +5848,27 @@ app.post(
 // 新版修改预约状态
 // 写入 Supabase PostgreSQL
 // ==================================================
+
+app.post(
+  '/api/owner/appointments/:appointmentId/arrive-and-start',
+  requireOwnerAuth,
+  requireOwnerRole(['owner', 'manager', 'admin', 'front_desk']),
+  createOwnerAppointmentArriveStart({
+    pool: {
+      connect: (...args) => app.locals.ownerAuthPool.connect(...args)
+    },
+    isUuid,
+    runInTransaction,
+    AppointmentMutationError,
+    loadAndValidatePhaseAStructure,
+    syncAppointmentItemStatus,
+    isKnownStatus,
+    canTransition,
+    ownerStatusHistoryActorType,
+    recordStatusHistory,
+    safeErrorCode: safeStaffAuthErrorCode
+  })
+);
 
 app.post(
   '/api/admin/update-status-db',

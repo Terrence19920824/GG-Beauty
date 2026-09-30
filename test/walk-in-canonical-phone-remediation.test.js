@@ -74,7 +74,10 @@ test('canonical identity remains tenant scoped across shops', async () => {
 });
 
 test('Walk-in route passes canonical E.164 through identity and appointment snapshots', () => {
-  const route = serverSource.slice(serverSource.indexOf("app.post('/api/owner/walk-in-appointments'"));
+  const route = serverSource.slice(
+    serverSource.indexOf('const createOwnerFrontDeskAppointmentHandler'),
+    serverSource.indexOf('const filterAnyStaffCandidateSlots')
+  );
   assert.match(route, /canonicalPhone = validateBookingPhone\(phone, customer\.countryCode\)/);
   assert.match(route, /resolveOrCreateCustomer\(client, \{ shopId: scope\.shop_id, name: customerName, phone: canonicalPhone, email \}\)/);
   assert.match(route, /identity\.phone, email,[\s\S]*first\.serviceId/);

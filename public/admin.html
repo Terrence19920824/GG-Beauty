@@ -2122,10 +2122,13 @@ const renderAppointmentsView = () => {
     }).join('');
 
     let timeAxisHtml = '';
-    for (let h = 0; h <= 12; h++) {
-      const hourNum = 9 + h;
-      const timeStr = `${String(hourNum).padStart(2, '0')}:00`;
-      timeAxisHtml += `<div class="owner-calendar-time-tick" style="top: ${h * 75}px;">${escapeHtml(timeStr)}</div>`;
+    for (let slot = 0; slot <= 48; slot++) {
+      const totalMinutes = CALENDAR_START_MINUTES + (slot * FRONT_DESK_SLOT_MINUTES);
+      const hourNum = Math.floor(totalMinutes / 60);
+      const minuteNum = totalMinutes % 60;
+      const timeStr = `${String(hourNum).padStart(2, '0')}:${String(minuteNum).padStart(2, '0')}`;
+      const tickClass = minuteNum === 0 ? 'owner-calendar-time-tick is-major' : 'owner-calendar-time-tick is-minor';
+      timeAxisHtml += `<div class="${tickClass}" style="top: ${(totalMinutes - CALENDAR_START_MINUTES) * CALENDAR_PIXELS_PER_MINUTE}px;">${escapeHtml(timeStr)}</div>`;
     }
 
     const bodyColsHtml = columnsToRender.map(staff => {
@@ -2143,40 +2146,7 @@ const renderAppointmentsView = () => {
         const statusClass = escapeHtml(canonicalStatus);
         const checkoutFinancialState = resolveCheckoutFinancialState(item);
 
-        const canCheckout = (globalScope.FEATURE_CHECKOUT_ENABLED === true) && (canStartCheckout(item) === true);
-        let checkoutBtnHtml = '';
-        if (canCheckout) {
-          const kCheckout = String(++calendarActionKeySeq);
-          calendarActionMap.set(kCheckout, {
-            type: 'checkout',
-            appointmentId: item.id,
-            can_start_checkout: item.can_start_checkout === true
-          });
-          checkoutBtnHtml = `<button type="button" class="checkout-btn" data-action="checkout" data-action-key="${kCheckout}" title="${escapeHtml(adminT('goToCheckout'))}">${escapeHtml(adminT('goToCheckout'))}</button>`;
-        }
-
-        let statusBtnsHtml = '';
-        if (canonicalStatus === 'pending') {
-          const kConfirm = String(++calendarActionKeySeq);
-          calendarActionMap.set(kConfirm, { type: 'status', appointmentId: item.id, targetStatus: 'confirmed' });
-          const kCancel = String(++calendarActionKeySeq);
-          calendarActionMap.set(kCancel, { type: 'status', appointmentId: item.id, targetStatus: 'cancelled' });
-          statusBtnsHtml = `<button type="button" data-action="status" data-action-key="${kConfirm}" data-target-status="confirmed">${escapeHtml(adminT('confirm'))}</button><button type="button" data-action="status" data-action-key="${kCancel}" data-target-status="cancelled">${escapeHtml(adminT('cancel'))}</button>`;
-        } else if (canonicalStatus === 'confirmed') {
-          const kArrive = String(++calendarActionKeySeq);
-          calendarActionMap.set(kArrive, { type: 'status', appointmentId: item.id, targetStatus: 'arrived' });
-          const kCancel = String(++calendarActionKeySeq);
-          calendarActionMap.set(kCancel, { type: 'status', appointmentId: item.id, targetStatus: 'cancelled' });
-          statusBtnsHtml = `<button type="button" data-action="status" data-action-key="${kArrive}" data-target-status="arrived">${escapeHtml(adminT('arrived'))}</button><button type="button" data-action="status" data-action-key="${kCancel}" data-target-status="cancelled">${escapeHtml(adminT('cancel'))}</button>`;
-        } else if (canonicalStatus === 'arrived') {
-          const kInService = String(++calendarActionKeySeq);
-          calendarActionMap.set(kInService, { type: 'status', appointmentId: item.id, targetStatus: 'in_service' });
-          statusBtnsHtml = `<button type="button" data-action="status" data-action-key="${kInService}" data-target-status="in_service">${escapeHtml(adminT('in_service'))}</button>`;
-        } else if (canonicalStatus === 'in_service') {
-          const kComplete = String(++calendarActionKeySeq);
-          calendarActionMap.set(kComplete, { type: 'status', appointmentId: item.id, targetStatus: 'completed' });
-          statusBtnsHtml = `<button type="button" data-action="status" data-action-key="${kComplete}" data-target-status="completed">${escapeHtml(adminT('complete'))}</button>`;
-        }
+        const { statusBtnsHtml, checkoutBtnHtml } = renderActionButtonsForAppointment(item);
 
         const topPx = Math.max(0, (Math.min(1260, layout.startMin) - 540) * 1.25);
         const bottomPx = Math.min(900, (Math.min(1260, layout.endMin) - 540) * 1.25);
@@ -2203,8 +2173,8 @@ const renderAppointmentsView = () => {
         const recipientName = (item.recipient_name_snapshot || item.customer_name || item.recipient_name || '').trim() || (item.recipient_phone_snapshot || item.customer_phone || item.recipient_phone || '').trim() || '-';
         const recipientPhone = (item.recipient_phone_snapshot || item.customer_phone || item.recipient_phone || '').trim();
 
-        const isVerifiedMember = String(item.identity_status || '').trim().toLowerCase() === 'verified_member';
-        const memberBadgeHtml = isVerifiedMember
+        const isActiveMember = item.membership_enabled === true && item.membership_is_active === true;
+        const memberBadgeHtml = isActiveMember
           ? `<span class="calendar-card-member-badge" role="status" aria-label="${escapeHtml(adminT('member'))}">${escapeHtml(adminT('member'))}</span>`
           : '';
         const returningCustomerHtml = item.is_returning_customer === true
@@ -2323,7 +2293,7 @@ const renderAppointmentsView = () => {
       <div class="owner-calendar-wrapper" role="region" aria-label="${escapeHtml(adminT('calendar'))}">
         <div class="owner-calendar-grid">
           <div class="owner-calendar-header-row">
-            <div class="owner-calendar-corner" aria-hidden="true">TIME</div>
+            <div class="owner-calendar-corner" aria-hidden="true">${escapeHtml(adminT('time'))}</div>
             ${headerColsHtml}
           </div>
           <div class="owner-calendar-body">
@@ -2368,40 +2338,7 @@ const renderAppointmentsView = () => {
         const checkoutFinancialState =
           resolveCheckoutFinancialState(item);
 
-        const canCheckout = (globalScope.FEATURE_CHECKOUT_ENABLED === true) && (canStartCheckout(item) === true);
-        let checkoutBtnHtml = '';
-        if (canCheckout) {
-          const kCheckout = String(++calendarActionKeySeq);
-          calendarActionMap.set(kCheckout, {
-            type: 'checkout',
-            appointmentId: item.id,
-            can_start_checkout: item.can_start_checkout === true
-          });
-          checkoutBtnHtml = `<button type="button" class="checkout-btn" data-action="checkout" data-action-key="${kCheckout}" title="${escapeHtml(adminT('goToCheckout'))}">${escapeHtml(adminT('goToCheckout'))}</button>`;
-        }
-
-        let statusBtnsHtml = '';
-        if (canonicalStatus === 'pending') {
-          const kConfirm = String(++calendarActionKeySeq);
-          calendarActionMap.set(kConfirm, { type: 'status', appointmentId: item.id, targetStatus: 'confirmed' });
-          const kCancel = String(++calendarActionKeySeq);
-          calendarActionMap.set(kCancel, { type: 'status', appointmentId: item.id, targetStatus: 'cancelled' });
-          statusBtnsHtml = `<button type="button" data-action="status" data-action-key="${kConfirm}" data-target-status="confirmed">${escapeHtml(adminT('confirm'))}</button><button type="button" data-action="status" data-action-key="${kCancel}" data-target-status="cancelled">${escapeHtml(adminT('cancel'))}</button>`;
-        } else if (canonicalStatus === 'confirmed') {
-          const kArrive = String(++calendarActionKeySeq);
-          calendarActionMap.set(kArrive, { type: 'status', appointmentId: item.id, targetStatus: 'arrived' });
-          const kCancel = String(++calendarActionKeySeq);
-          calendarActionMap.set(kCancel, { type: 'status', appointmentId: item.id, targetStatus: 'cancelled' });
-          statusBtnsHtml = `<button type="button" data-action="status" data-action-key="${kArrive}" data-target-status="arrived">${escapeHtml(adminT('arrived'))}</button><button type="button" data-action="status" data-action-key="${kCancel}" data-target-status="cancelled">${escapeHtml(adminT('cancel'))}</button>`;
-        } else if (canonicalStatus === 'arrived') {
-          const kInService = String(++calendarActionKeySeq);
-          calendarActionMap.set(kInService, { type: 'status', appointmentId: item.id, targetStatus: 'in_service' });
-          statusBtnsHtml = `<button type="button" data-action="status" data-action-key="${kInService}" data-target-status="in_service">${escapeHtml(adminT('in_service'))}</button>`;
-        } else if (canonicalStatus === 'in_service') {
-          const kComplete = String(++calendarActionKeySeq);
-          calendarActionMap.set(kComplete, { type: 'status', appointmentId: item.id, targetStatus: 'completed' });
-          statusBtnsHtml = `<button type="button" data-action="status" data-action-key="${kComplete}" data-target-status="completed">${escapeHtml(adminT('complete'))}</button>`;
-        }
+        const { statusBtnsHtml, checkoutBtnHtml } = renderActionButtonsForAppointment(item);
 
         const nowMs = getAuthoritativeNowMs();
         const authTz = (nowMs && timeAnchor.isValid) ? timeAnchor.timezone : null;
@@ -2543,6 +2480,11 @@ const renderAppointmentsView = () => {
               }
 
               console.info('Checkout workflow initiated for appointment:', safeId);
+            } else if (recordType === 'arrive_and_start') {
+              if (btn.disabled) return;
+              btn.disabled = true;
+              const didSave = await arriveAndStartAppointment(safeId);
+              if (!didSave) btn.disabled = false;
             } else if (recordType === 'status') {
               if (!ALLOWED_STATUS_MUTATIONS.has(targetStatus)) {
                 console.warn('Invalid status mutation rejected');
@@ -2593,10 +2535,11 @@ const renderAppointmentsView = () => {
             const rect = column.getBoundingClientRect();
             const y = Number(event.clientY) - rect.top;
             if (!Number.isFinite(y) || y < 0 || y > rect.height) return;
-            const rawMinutes = 540 + (y / 1.25);
-            const snappedMinutes = Math.max(540, Math.min(1250, Math.round(rawMinutes / 10) * 10));
+            const rawMinutes = CALENDAR_START_MINUTES + (y / CALENDAR_PIXELS_PER_MINUTE);
+            const snappedMinutes = normalizeCalendarSlotMinutes(rawMinutes);
+            if (!Number.isInteger(snappedMinutes)) return;
             const time = `${String(Math.floor(snappedMinutes / 60)).padStart(2, '0')}:${String(snappedMinutes % 60).padStart(2, '0')}`;
-            openWalkInAppointment({ staffId, date: currentCalendarDate, time });
+            openFrontDeskAppointment({ staffId, date: currentCalendarDate, time, mode: 'assisted' });
           });
         });
       }
@@ -2932,9 +2875,28 @@ function getStatusText(status) {
   return escapeHtml(String(status || '-'));
 }
 
-// Compact, receptionist-oriented flow. The server remains authoritative for
-// customer identity, service snapshots, availability, timezone and collisions.
-async function openWalkInAppointment({ staffId = '', date: prefilledDate = '', time: prefilledTime = '' } = {}) {
+const FRONT_DESK_SLOT_MINUTES = 15;
+const CALENDAR_START_MINUTES = 9 * 60;
+const CALENDAR_END_MINUTES = 21 * 60;
+const CALENDAR_PIXELS_PER_MINUTE = 1.25;
+
+function normalizeCalendarSlotMinutes(rawMinutes) {
+  if (!Number.isFinite(rawMinutes)) return null;
+  const normalized = Math.round(rawMinutes / FRONT_DESK_SLOT_MINUTES) * FRONT_DESK_SLOT_MINUTES;
+  return Math.max(CALENDAR_START_MINUTES, Math.min(CALENDAR_END_MINUTES, normalized));
+}
+
+function isNormalizedFrontDeskSlotTime(value) {
+  if (typeof value !== 'string' || !/^\d{2}:\d{2}$/.test(value)) return false;
+  const [hours, minutes] = value.split(':').map(Number);
+  return Number.isInteger(hours) && Number.isInteger(minutes) && hours >= 0 && hours <= 23 &&
+    minutes >= 0 && minutes < 60 && minutes % FRONT_DESK_SLOT_MINUTES === 0;
+}
+
+// Compact, receptionist-oriented flow. Assisted future bookings are the
+// default; physically present walk-ins remain an explicit choice. The server
+// remains authoritative for identity, snapshots, availability and collisions.
+async function openFrontDeskAppointment({ staffId = '', date: prefilledDate = '', time: prefilledTime = '', mode = 'assisted' } = {}) {
   const role = getAdminActorRole();
   if (!['owner', 'manager', 'front_desk'].includes(role)) {
     showAdminToast(adminT('operationFailed'), 'error');
@@ -2944,6 +2906,13 @@ async function openWalkInAppointment({ staffId = '', date: prefilledDate = '', t
     const context = await fetchCalendarContext(currentRequestedLocationId);
     const safeStaffId = String(staffId || '').trim();
     if (!UUID_REGEX.test(safeStaffId)) { showAdminToast(adminT('operationFailed'), 'error'); return; }
+    const selectedStaff = currentStaffSnapshot.find(member => member && String(member.id) === safeStaffId);
+    if (!selectedStaff || selectedStaff.is_active !== true || selectedStaff.bookable !== true ||
+      !Array.isArray(selectedStaff.locations) ||
+      !selectedStaff.locations.some(location => String(location.id) === String(context?.location_id || ''))) {
+      showAdminToast(adminT('staffUnavailable'), 'error');
+      return;
+    }
     const locale = globalThis.ownerSelfService?._state?.locale || 'zh-CN';
     const [servicesResponse, countriesResponse] = await Promise.all([
       fetch(`/api/owner/staff/${encodeURIComponent(safeStaffId)}/services`, { credentials: 'same-origin', cache: 'no-store' }),
@@ -2953,7 +2922,7 @@ async function openWalkInAppointment({ staffId = '', date: prefilledDate = '', t
     const countriesJson = await countriesResponse.json().catch(() => ({}));
     const countries = Array.isArray(countriesJson.data) ? countriesJson.data : [];
     const services = Array.isArray(servicesJson.data)
-      ? servicesJson.data.filter(s => s.assigned === true && s.is_active !== false && s.bookable !== false)
+      ? servicesJson.data.filter(s => s.assigned === true && s.is_active === true && s.bookable === true && s.category_active === true)
       : [];
     if (!servicesResponse.ok || !servicesJson.success || !Array.isArray(servicesJson.data) || !countriesResponse.ok || !countriesJson.success || !countries.length || !context || !context.location_id || !Array.isArray(currentStaffSnapshot) || !currentStaffSnapshot.length) {
       showAdminToast(adminT('loadFailed'), 'error'); return;
@@ -2966,17 +2935,20 @@ async function openWalkInAppointment({ staffId = '', date: prefilledDate = '', t
     const defaultWalkInCountryIso = 'SG';
     const date = prefilledDate || getAuthoritativeLocalDate(now, context.timezone) || '';
     const minutes = getAuthoritativeLocalMinutes(now, context.timezone);
-    const roundedMinutes = Number.isInteger(minutes) ? Math.ceil((minutes + 1) / 10) * 10 : null;
+    const roundedMinutes = Number.isInteger(minutes) ? Math.ceil((minutes + 1) / FRONT_DESK_SLOT_MINUTES) * FRONT_DESK_SLOT_MINUTES : null;
     const time = prefilledTime || (Number.isInteger(roundedMinutes) && roundedMinutes < 1440
       ? `${String(Math.floor(roundedMinutes / 60)).padStart(2, '0')}:${String(roundedMinutes % 60).padStart(2, '0')}`
       : '');
     const dialog = document.createElement('dialog');
     dialog.className = 'walk-in-dialog';
+    const initialMode = mode === 'walk_in' ? 'walk_in' : 'assisted';
     dialog.innerHTML = `<form method="dialog" class="card" style="min-width:min(92vw,620px);margin:0">
-      <div class="toolbar"><h2>${escapeHtml(adminT('walkInTitle'))}</h2><button type="button" class="secondary-btn walk-in-close" aria-label="${escapeHtml(adminT('close'))}">×</button></div>
-      <div class="form-grid"><label class="field"><span>${escapeHtml(adminT('name'))}</span><input name="name" maxlength="200"></label><label class="field"><span>${escapeHtml(adminT('countryRegion'))}</span><input class="walk-in-country-search" type="search" autocomplete="off" placeholder="${escapeHtml(adminT('countrySearch'))}"><select name="countryCode">${countries.map(country => `<option value="${escapeHtml(country.countryIso2)}"${country.countryIso2 === defaultWalkInCountryIso ? ' selected' : ''}>${escapeHtml(country.flag || country.countryIso2)} ${escapeHtml(country.localizedName)} (${escapeHtml(country.callingCode)})</option>`).join('')}</select></label><label class="field"><span>${escapeHtml(adminT('phone'))}</span><input name="phone" required maxlength="40" inputmode="tel"></label><label class="field full"><span>${escapeHtml(adminT('email'))}</span><input name="email" type="email" maxlength="320"></label><label class="field"><span>${escapeHtml(adminT('date'))}</span><input name="date" type="date" required value="${escapeHtml(date)}"></label><label class="field"><span>${escapeHtml(adminT('time'))}</span><input name="time" type="time" required value="${escapeHtml(time)}"></label></div>
+      <div class="toolbar"><h2 class="front-desk-create-title">${escapeHtml(adminT(initialMode === 'walk_in' ? 'walkInTitle' : 'assistedAppointmentTitle'))}</h2><button type="button" class="secondary-btn walk-in-close" aria-label="${escapeHtml(adminT('close'))}">×</button></div>
+      <fieldset class="front-desk-booking-mode"><legend>${escapeHtml(adminT('bookingType'))}</legend><label><input type="radio" name="bookingMode" value="assisted"${initialMode === 'assisted' ? ' checked' : ''}><span>${escapeHtml(adminT('assistedAppointment'))}</span></label><label><input type="radio" name="bookingMode" value="walk_in"${initialMode === 'walk_in' ? ' checked' : ''}><span>${escapeHtml(adminT('walkIn'))}</span></label></fieldset>
+      <p class="front-desk-booking-help">${escapeHtml(adminT(initialMode === 'walk_in' ? 'walkInHelp' : 'assistedAppointmentHelp'))}</p>
+      <div class="form-grid"><label class="field"><span>${escapeHtml(adminT('name'))}</span><input name="name" maxlength="200"></label><label class="field"><span>${escapeHtml(adminT('countryRegion'))}</span><input class="walk-in-country-search" type="search" autocomplete="off" placeholder="${escapeHtml(adminT('countrySearch'))}"><select name="countryCode">${countries.map(country => `<option value="${escapeHtml(country.countryIso2)}"${country.countryIso2 === defaultWalkInCountryIso ? ' selected' : ''}>${escapeHtml(country.flag || country.countryIso2)} ${escapeHtml(country.localizedName)} (${escapeHtml(country.callingCode)})</option>`).join('')}</select></label><label class="field"><span>${escapeHtml(adminT('phone'))}</span><input name="phone" required maxlength="40" inputmode="tel"></label><label class="field full"><span>${escapeHtml(adminT('email'))}</span><input name="email" type="email" maxlength="320"></label><label class="field"><span>${escapeHtml(adminT('date'))}</span><input name="date" type="date" required value="${escapeHtml(date)}"></label><label class="field"><span>${escapeHtml(adminT('time'))}</span><input name="time" type="time" step="900" required value="${escapeHtml(time)}"></label></div>
       <h3>${escapeHtml(adminT('walkInServices'))}</h3><div class="walk-in-items"></div>
-      <div class="form-actions"><button type="button" class="secondary-btn walk-in-add">${escapeHtml(adminT('addServiceItem'))}</button><button type="button" class="primary-btn walk-in-save">${escapeHtml(adminT('walkInCreate'))}</button></div>
+      <div class="form-actions"><button type="button" class="secondary-btn walk-in-add">${escapeHtml(adminT('addServiceItem'))}</button><button type="button" class="primary-btn walk-in-save">${escapeHtml(adminT(initialMode === 'walk_in' ? 'walkInCreate' : 'assistedAppointmentCreate'))}</button></div>
     </form>`;
     const rows = dialog.querySelector('.walk-in-items');
     const closeWalkInDialog = () => {
@@ -2985,6 +2957,15 @@ async function openWalkInAppointment({ staffId = '', date: prefilledDate = '', t
     };
     dialog.querySelector('.walk-in-close').addEventListener('click', closeWalkInDialog);
     dialog.addEventListener('cancel', () => dialog.remove(), { once: true });
+    const updateBookingModePresentation = () => {
+      const selectedMode = dialog.querySelector('[name="bookingMode"]:checked')?.value === 'walk_in' ? 'walk_in' : 'assisted';
+      dialog.querySelector('.front-desk-create-title').textContent = adminT(selectedMode === 'walk_in' ? 'walkInTitle' : 'assistedAppointmentTitle');
+      dialog.querySelector('.front-desk-booking-help').textContent = adminT(selectedMode === 'walk_in' ? 'walkInHelp' : 'assistedAppointmentHelp');
+      dialog.querySelector('.walk-in-save').textContent = adminT(selectedMode === 'walk_in' ? 'walkInCreate' : 'assistedAppointmentCreate');
+      conflictOverrideReady = false;
+      conflictWarning.hidden = true;
+    };
+    dialog.querySelectorAll('[name="bookingMode"]').forEach(input => input.addEventListener('change', updateBookingModePresentation));
     const countrySelect = dialog.querySelector('[name="countryCode"]');
     const countrySearch = dialog.querySelector('.walk-in-country-search');
     const renderCountryOptions = query => {
@@ -3010,13 +2991,13 @@ async function openWalkInAppointment({ staffId = '', date: prefilledDate = '', t
       const response = await fetch(`/api/owner/staff/${encodeURIComponent(nextStaffId)}/services`, { credentials: 'same-origin', cache: 'no-store' });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok || !payload.success || !Array.isArray(payload.data)) throw new Error(adminT('staffUnavailable'));
-      return payload.data.filter(s => s.assigned === true && s.is_active !== false && s.bookable !== false);
+      return payload.data.filter(s => s.assigned === true && s.is_active === true && s.bookable === true && s.category_active === true);
     };
     const serviceOptionsFor = eligible => {
       const locale = globalThis.ownerSelfService?._state?.locale || 'zh-CN';
       return eligible.map(s => `<option value="${escapeHtml(String(s.service_id || s.id))}">${escapeHtml(locale === 'zh-CN' ? (s.name_zh || s.canonical_name || s.name) : (s.name_en || s.canonical_name || s.name))}</option>`).join('');
     };
-    const staffOptions = currentStaffSnapshot.filter(s => s && s.is_active !== false && (!Array.isArray(s.locations) || !s.locations.length || s.locations.some(l => String(l.id) === String(context.location_id))))
+    const staffOptions = currentStaffSnapshot.filter(s => s && s.is_active === true && s.bookable === true && Array.isArray(s.locations) && s.locations.some(l => String(l.id) === String(context.location_id)))
       .map(s => `<option value="${escapeHtml(String(s.id))}"${String(s.id) === safeStaffId ? ' selected' : ''}>${escapeHtml(s.name || '')}</option>`).join('');
     const addRow = () => {
       const row = document.createElement('div'); row.className = 'form-grid';
@@ -3043,8 +3024,15 @@ async function openWalkInAppointment({ staffId = '', date: prefilledDate = '', t
       if (!items.length || items.some(item => !item.serviceId || !item.staffId)) { showAdminToast(adminT('walkInNeedsItem'), 'error'); return; }
       const save = dialog.querySelector('.walk-in-save'); save.disabled = true;
       const fd = new FormData(form);
+      if (!isNormalizedFrontDeskSlotTime(String(fd.get('time') || ''))) {
+        showAdminToast(adminT('invalidAppointmentSlot'), 'error');
+        save.disabled = false;
+        return;
+      }
       try {
-        const response = await fetch('/api/owner/walk-in-appointments', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ locationId: context.location_id, date: fd.get('date'), time: fd.get('time'), customer: { name: fd.get('name'), phone: fd.get('phone'), email: fd.get('email'), countryCode: fd.get('countryCode') }, items, ...(conflictOverrideReady ? { overrideConflict: true } : {}) }) });
+        const bookingMode = fd.get('bookingMode') === 'walk_in' ? 'walk_in' : 'assisted';
+        const endpoint = bookingMode === 'walk_in' ? '/api/owner/walk-in-appointments' : '/api/owner/assisted-appointments';
+        const response = await fetch(endpoint, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ locationId: context.location_id, date: fd.get('date'), time: fd.get('time'), customer: { name: fd.get('name'), phone: fd.get('phone'), email: fd.get('email'), countryCode: fd.get('countryCode') }, items, ...(conflictOverrideReady ? { overrideConflict: true } : {}) }) });
         const result = await response.json().catch(() => ({}));
         if (response.status === 409 && result.code === 'APPOINTMENT_COLLISION' && result.canOverride === true) {
           conflictOverrideReady = true;
@@ -3056,6 +3044,7 @@ async function openWalkInAppointment({ staffId = '', date: prefilledDate = '', t
         }
         if (!response.ok || !result.success) {
           const knownErrorKey = {
+            FRONT_DESK_INPUT_INVALID: 'invalidAppointmentSlot',
             INVALID_PHONE: 'invalidPhone',
             BOOKING_TIME_IN_PAST: 'bookingTimeInPast',
             BOOKING_NOT_AVAILABLE: 'slotUnavailable',
@@ -3068,13 +3057,17 @@ async function openWalkInAppointment({ staffId = '', date: prefilledDate = '', t
           }[result.code];
           throw new Error(knownErrorKey ? adminT(knownErrorKey) : adminResultMessage(result, 'operationFailed'));
         }
-        dialog.close(); dialog.remove(); showAdminToast(adminT('walkInCreated'), 'success'); await loadAppointments(context.location_id);
+        dialog.close(); dialog.remove(); showAdminToast(adminT(bookingMode === 'walk_in' ? 'walkInCreated' : 'assistedAppointmentCreated'), 'success'); await loadAppointments(context.location_id);
       } catch (error) { showAdminToast(error.message || adminT('operationFailed'), 'error'); save.disabled = false; }
     };
     document.body.appendChild(dialog); dialog.showModal();
   } finally {
     // No global trigger state to restore: calendar cells invoke this flow directly.
   }
+}
+
+async function openWalkInAppointment(options = {}) {
+  return openFrontDeskAppointment({ ...options, mode: 'walk_in' });
 }
 
 
@@ -3344,8 +3337,8 @@ function appendDrawerField(section, label, value, className = '') {
   section.appendChild(field);
 }
 
-function appendDrawerSection(body, title) {
-  const section = drawerElement('section', 'drawer-section');
+function appendDrawerSection(body, title, className = '') {
+  const section = drawerElement('section', `drawer-section ${className}`.trim());
   section.appendChild(drawerElement('div', 'drawer-section-title', title));
   body.appendChild(section);
   return section;
@@ -3502,16 +3495,21 @@ async function openServiceAddonDialog(appointment) {
 function renderDrawerFooterWithTextContent(footer, canonicalStatus) {
   footer.replaceChildren();
   const transitions = {
-    pending: [['confirmed', 'btn-confirmed', 'confirm'], ['cancelled', 'btn-cancelled', 'markCancelled']],
-    confirmed: [['arrived', 'btn-arrived', 'markArrived'], ['cancelled', 'btn-cancelled', 'markCancelled']],
-    arrived: [['in_service', 'btn-in_service', 'markInService']],
+    pending: [['arrive_and_start', 'btn-arrived', 'markArrived'], ['cancelled', 'btn-cancelled', 'markCancelled']],
+    confirmed: [['arrive_and_start', 'btn-arrived', 'markArrived'], ['cancelled', 'btn-cancelled', 'markCancelled'], ['no_show', 'btn-no_show', 'markNoShow']],
+    arrived: [['arrive_and_start', 'btn-in_service', 'markInService']],
     in_service: [['completed', 'btn-completed', 'complete']]
   };
-  for (const [status, className, key] of transitions[canonicalStatus] || []) {
+  for (const [operation, className, key] of transitions[canonicalStatus] || []) {
     const button = drawerElement('button', `drawer-status-btn ${className}`, adminT(key));
     button.type = 'button';
-    button.addEventListener('click', () => {
-      if (activeDrawerAppointmentId) updateAppointmentStatus(activeDrawerAppointmentId, status);
+    button.addEventListener('click', async () => {
+      if (!activeDrawerAppointmentId || button.disabled) return;
+      button.disabled = true;
+      const didSave = operation === 'arrive_and_start'
+        ? await arriveAndStartAppointment(activeDrawerAppointmentId)
+        : await updateAppointmentStatus(activeDrawerAppointmentId, operation);
+      if (!didSave) button.disabled = false;
     });
     footer.appendChild(button);
   }
@@ -4073,7 +4071,7 @@ function renderAppointmentDrawer(appointment) {
 
   const hasDistinctBooker = hasDistinctIds || (!sameIds && (hasDistinctNames || hasDistinctPhones));
 
-  const isVerifiedMember = String(appointment.identity_status || '').trim().toLowerCase() === 'verified_member';
+  const isActiveMember = appointment.membership_enabled === true && appointment.membership_is_active === true;
   const memberCode = (typeof appointment.member_code === 'string' && appointment.member_code.trim()) ? appointment.member_code.trim() : null;
 
   const dateFormatted = appointment.start_at ? getSingaporeDateString(appointment.start_at) : '-';
@@ -4104,7 +4102,7 @@ function renderAppointmentDrawer(appointment) {
     drawerBody.appendChild(statusBar);
 
     // Section A: Appointment / 预约信息
-    const appointmentSection = appendDrawerSection(drawerBody, adminT('appointmentInfo'));
+    const appointmentSection = appendDrawerSection(drawerBody, adminT('appointmentInfo'), 'drawer-appointment-section');
     if (appointment.appointment_no) {
       appendDrawerField(appointmentSection, adminT('appointmentNoLabel'), appointment.appointment_no, 'drawer-appointment-no notranslate');
     }
@@ -4123,12 +4121,19 @@ function renderAppointmentDrawer(appointment) {
     }
 
     // Section B: Customer / 顾客
-    const customerSection = appendDrawerSection(drawerBody, adminT('customers'));
+    const customerSection = appendDrawerSection(drawerBody, adminT('customers'), 'drawer-customer-section');
     const customerNameField = drawerElement('div', 'drawer-field');
     customerNameField.appendChild(drawerElement('span', 'drawer-field-label', hasDistinctBooker ? adminT('recipient') : adminT('customerName')));
     const customerNameVal = drawerElement('span', 'drawer-field-value drawer-customer-name notranslate', recipientName);
     customerNameVal.setAttribute('translate', 'no');
-    if (isVerifiedMember) {
+    if (appointment.is_returning_customer === true) {
+      const returningSignal = drawerElement('span', 'drawer-returning-signal', '❤️');
+      returningSignal.setAttribute('role', 'img');
+      returningSignal.setAttribute('aria-label', adminT('returningCustomer'));
+      returningSignal.title = adminT('returningCustomer');
+      customerNameVal.appendChild(returningSignal);
+    }
+    if (isActiveMember) {
       const memberBadge = drawerElement('span', 'drawer-member-badge', adminT('member'));
       memberBadge.setAttribute('role', 'status');
       customerNameVal.appendChild(memberBadge);
@@ -4138,6 +4143,23 @@ function renderAppointmentDrawer(appointment) {
 
     if (memberCode) {
       appendDrawerField(customerSection, adminT('memberCode'), memberCode, 'drawer-member-code notranslate');
+    }
+
+    if (appointment.membership_enabled === true && appointment.membership_status) {
+      const membershipStatusKey = {
+        active: 'membershipStatusActive',
+        expired: 'membershipStatusExpired',
+        suspended: 'membershipStatusSuspended',
+        revoked: 'membershipStatusRevoked',
+        inactive: 'membershipStatusInactive'
+      }[String(appointment.membership_status).toLowerCase()] || 'membershipStatusInactive';
+      if (appointment.membership_tier_name) {
+        appendDrawerField(customerSection, adminT('membershipTier'), appointment.membership_tier_name, 'drawer-membership-tier notranslate');
+      }
+      appendDrawerField(customerSection, adminT('membershipStatus'), adminT(membershipStatusKey), 'drawer-membership-status');
+      if (appointment.membership_expires_at) {
+        appendDrawerField(customerSection, adminT('membershipExpiry'), getSingaporeDateString(appointment.membership_expires_at), 'drawer-membership-expiry notranslate');
+      }
     }
 
     appendDrawerField(customerSection, adminT('phone'), recipientPhone || adminT('noCustomerPhone'), 'drawer-customer-phone notranslate');
@@ -4171,7 +4193,7 @@ function renderAppointmentDrawer(appointment) {
     }
 
     // Section C: Services / 服务项目
-    const serviceSection = appendDrawerSection(drawerBody, adminT('servicesAndStaff'));
+    const serviceSection = appendDrawerSection(drawerBody, adminT('servicesAndStaff'), 'drawer-services-section');
     const itemsList = Array.isArray(appointment.items) && appointment.items.length ? appointment.items : [appointment];
     for (const it of itemsList) {
       const card = drawerElement('div', 'drawer-item-card');
@@ -4227,12 +4249,12 @@ function renderAppointmentDrawer(appointment) {
       ? appointment.customer_special_request.trim()
       : '';
     if (customerSpecialRequest) {
-      const customerSpecialRequestSection = appendDrawerSection(drawerBody, adminT('customerSpecialRequest'));
+      const customerSpecialRequestSection = appendDrawerSection(drawerBody, adminT('customerSpecialRequest'), 'drawer-notes-section');
       customerSpecialRequestSection.appendChild(drawerElement('div', 'drawer-notes-box notranslate', customerSpecialRequest));
     }
 
     // Section E: Internal Notes / 内部备注
-    const internalNotesSection = appendDrawerSection(drawerBody, adminT('internalNotes'));
+    const internalNotesSection = appendDrawerSection(drawerBody, adminT('internalNotes'), 'drawer-notes-section');
     internalNotesSection.appendChild(drawerElement('div', 'drawer-field-label', adminT('internalNotesVisibility')));
     const internalNotesInput = drawerElement('textarea', 'drawer-internal-notes-input notranslate');
     internalNotesInput.id = 'drawerInternalNotesInput';
@@ -4282,7 +4304,7 @@ function renderAppointmentDrawer(appointment) {
     }
 
     // Section: Customer Profile Notes / 顾客档案备注
-    const customerProfileNotesSection = appendDrawerSection(drawerBody, adminT('customerProfileNotes'));
+    const customerProfileNotesSection = appendDrawerSection(drawerBody, adminT('customerProfileNotes'), 'drawer-notes-section');
     customerProfileNotesSection.appendChild(drawerElement('div', 'drawer-field-label', adminT('customerProfileNotesHelp')));
     const customerProfileNotesInput = drawerElement('textarea', 'drawer-profile-notes-input notranslate');
     customerProfileNotesInput.id = 'drawerCustomerProfileNotesInput';
@@ -4346,7 +4368,7 @@ function renderAppointmentDrawer(appointment) {
 
     // Section F: Checkout / 收银 (read-only projection when available)
     if (appointment.checkout && appointment.checkout.exists) {
-      const checkoutSection = appendDrawerSection(drawerBody, adminT('checkout'));
+      const checkoutSection = appendDrawerSection(drawerBody, adminT('checkout'), 'drawer-checkout-section');
       const checkoutStatusText = globalThis.ggI18n?.formatCheckoutStatus
         ? globalThis.ggI18n.formatCheckoutStatus(appointment.checkout.payment_state || appointment.checkout.checkout_status, currentAdminLocale)
         : (appointment.checkout.payment_state || appointment.checkout.checkout_status);
@@ -4437,6 +4459,11 @@ function bindActionButtonsIn(container) {
           }
 
           console.info('Checkout workflow initiated for appointment:', safeId);
+        } else if (recordType === 'arrive_and_start') {
+          if (btn.disabled) return;
+          btn.disabled = true;
+          const didSave = await arriveAndStartAppointment(safeId);
+          if (!didSave) btn.disabled = false;
         } else if (recordType === 'status') {
           if (!ALLOWED_STATUS_MUTATIONS.has(targetStatus)) {
             console.warn('Invalid status mutation rejected');
@@ -4472,21 +4499,23 @@ function renderActionButtonsForAppointment(item) {
 
   let statusBtnsHtml = '';
   if (canonicalStatus === 'pending') {
-    const kConfirm = String(++calendarActionKeySeq);
-    calendarActionMap.set(kConfirm, { type: 'status', appointmentId: item.id, targetStatus: 'confirmed' });
+    const kArrive = String(++calendarActionKeySeq);
+    calendarActionMap.set(kArrive, { type: 'arrive_and_start', appointmentId: item.id, targetStatus: 'in_service' });
     const kCancel = String(++calendarActionKeySeq);
     calendarActionMap.set(kCancel, { type: 'status', appointmentId: item.id, targetStatus: 'cancelled' });
-    statusBtnsHtml = `<button type="button" data-action="status" data-action-key="${kConfirm}" data-target-status="confirmed">${escapeHtml(adminT('confirm'))}</button><button type="button" data-action="status" data-action-key="${kCancel}" data-target-status="cancelled">${escapeHtml(adminT('cancel'))}</button>`;
+    statusBtnsHtml = `<button type="button" data-action="arrive-and-start" data-action-key="${kArrive}" data-target-status="in_service">${escapeHtml(adminT('markArrived'))}</button><button type="button" data-action="status" data-action-key="${kCancel}" data-target-status="cancelled">${escapeHtml(adminT('cancel'))}</button>`;
   } else if (canonicalStatus === 'confirmed') {
     const kArrive = String(++calendarActionKeySeq);
-    calendarActionMap.set(kArrive, { type: 'status', appointmentId: item.id, targetStatus: 'arrived' });
+    calendarActionMap.set(kArrive, { type: 'arrive_and_start', appointmentId: item.id, targetStatus: 'in_service' });
     const kCancel = String(++calendarActionKeySeq);
     calendarActionMap.set(kCancel, { type: 'status', appointmentId: item.id, targetStatus: 'cancelled' });
-    statusBtnsHtml = `<button type="button" data-action="status" data-action-key="${kArrive}" data-target-status="arrived">${escapeHtml(adminT('arrived'))}</button><button type="button" data-action="status" data-action-key="${kCancel}" data-target-status="cancelled">${escapeHtml(adminT('cancel'))}</button>`;
+    const kNoShow = String(++calendarActionKeySeq);
+    calendarActionMap.set(kNoShow, { type: 'status', appointmentId: item.id, targetStatus: 'no_show' });
+    statusBtnsHtml = `<button type="button" data-action="arrive-and-start" data-action-key="${kArrive}" data-target-status="in_service">${escapeHtml(adminT('markArrived'))}</button><button type="button" data-action="status" data-action-key="${kCancel}" data-target-status="cancelled">${escapeHtml(adminT('cancel'))}</button><button type="button" data-action="status" data-action-key="${kNoShow}" data-target-status="no_show">${escapeHtml(adminT('markNoShow'))}</button>`;
   } else if (canonicalStatus === 'arrived') {
     const kInService = String(++calendarActionKeySeq);
-    calendarActionMap.set(kInService, { type: 'status', appointmentId: item.id, targetStatus: 'in_service' });
-    statusBtnsHtml = `<button type="button" data-action="status" data-action-key="${kInService}" data-target-status="in_service">${escapeHtml(adminT('in_service'))}</button>`;
+    calendarActionMap.set(kInService, { type: 'arrive_and_start', appointmentId: item.id, targetStatus: 'in_service' });
+    statusBtnsHtml = `<button type="button" data-action="arrive-and-start" data-action-key="${kInService}" data-target-status="in_service">${escapeHtml(adminT('markInService'))}</button>`;
   } else if (canonicalStatus === 'in_service') {
     const kComplete = String(++calendarActionKeySeq);
     calendarActionMap.set(kComplete, { type: 'status', appointmentId: item.id, targetStatus: 'completed' });
@@ -4613,9 +4642,17 @@ async function updateAppointmentStatus(id, status) {
     return false;
   }
 
-  const promptKey = { confirmed: 'confirmAppointmentPrompt', arrived: 'arrivedAppointmentPrompt', in_service: 'startServicePrompt', completed: 'completeAppointmentPrompt', no_show: 'noShowAppointmentPrompt', cancelled: 'cancelAppointmentPrompt' }[status];
-
-  if (promptKey && typeof confirm === 'function' && !confirm(adminT(promptKey))) {
+  const promptKey = { confirmed: 'confirmAppointmentPrompt', completed: 'completeAppointmentPrompt', no_show: 'noShowAppointmentPrompt' }[status];
+  let reason = null;
+  if (status === 'cancelled') {
+    if (typeof prompt === 'function') {
+      const enteredReason = prompt(adminT('cancelAppointmentReasonPrompt'), '');
+      if (enteredReason === null) return false;
+      reason = String(enteredReason).trim() || null;
+    } else if (typeof confirm === 'function' && !confirm(adminT('cancelAppointmentPrompt'))) {
+      return false;
+    }
+  } else if (promptKey && typeof confirm === 'function' && !confirm(adminT(promptKey))) {
     return false;
   }
 
@@ -4628,7 +4665,8 @@ async function updateAppointmentStatus(id, status) {
       },
       body: JSON.stringify({
         appointmentId: safeId,
-        status: status
+        status: status,
+        ...(reason ? { reason } : {})
       })
     });
 
@@ -4657,6 +4695,38 @@ async function updateAppointmentStatus(id, status) {
   }
 }
 
+async function arriveAndStartAppointment(id) {
+  const safeId = String(id || '').trim();
+  if (!UUID_REGEX.test(safeId)) {
+    console.warn('Invalid appointment ID format rejected');
+    return false;
+  }
+
+  try {
+    const response = await fetch(`/api/owner/appointments/${encodeURIComponent(safeId)}/arrive-and-start`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}'
+    });
+    const result = await response.json().catch(() => ({}));
+    if (response.status === 401 || response.status === 403) {
+      showLogin(adminT('sessionExpired'));
+      return false;
+    }
+    if (!response.ok || !result.success || result.data?.status !== 'in_service') {
+      throw new Error(adminT('arriveAndStartFailed'));
+    }
+    applyAppointmentStatusChangeInPlace(safeId, 'in_service', result.data);
+    showAdminToast(adminT('arriveAndStartSuccess'), 'success');
+    return true;
+  } catch (error) {
+    const errorMsg = error.message || adminT('arriveAndStartFailed');
+    showAdminToast(errorMsg, 'error');
+    return false;
+  }
+}
+
 function setupAppointmentDrawer() {
   const closeBtn = safeGetElement('drawerCloseBtn');
   if (closeBtn && !closeBtn._drawerBound && typeof closeBtn.addEventListener === 'function') {
@@ -4672,6 +4742,23 @@ function setupAppointmentDrawer() {
     document.addEventListener('keydown', (event) => {
       if (event.key === 'Escape' && activeDrawerAppointmentId) {
         closeAppointmentDrawer();
+        return;
+      }
+      if (event.key === 'Tab' && activeDrawerAppointmentId) {
+        const drawer = safeGetElement('appointmentDrawer');
+        if (!drawer || typeof drawer.querySelectorAll !== 'function') return;
+        const focusable = [...drawer.querySelectorAll('button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])')]
+          .filter(element => element && element.hidden !== true);
+        if (!focusable.length) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
       }
     });
     globalScope._drawerKeydownBound = true;

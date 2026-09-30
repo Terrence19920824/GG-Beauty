@@ -612,24 +612,23 @@ test('57. tampering with DOM data attributes does not hijack appointment action 
   const { context, elements, load } = createTestContext({ gg_beauty_owner_view: 'calendar' });
   await load([sampleAppointment], sampleStaff);
 
-  const confirmBtn = elements.get('content').querySelectorAll('button').find(b => b.getAttribute('data-target-status') === 'confirmed');
-  assert.ok(confirmBtn, 'confirm button exists on calendar card');
+  const arriveBtn = elements.get('content').querySelectorAll('button').find(b => b.getAttribute('data-action') === 'arrive-and-start');
+  assert.ok(arriveBtn, 'arrive-and-start button exists on calendar card');
 
   // Attempt tampering: alter data-target-status and inject forged appointment ID
-  confirmBtn.setAttribute('data-target-status', 'completed');
-  confirmBtn.setAttribute('data-appointment-id', '00000000-0000-4000-8000-000000000999');
+  arriveBtn.setAttribute('data-target-status', 'completed');
+  arriveBtn.setAttribute('data-appointment-id', '00000000-0000-4000-8000-000000000999');
 
   // Click should invoke confirmed with legitimate closure ID, not tampered values
-  let executedTargetStatus = null;
   let executedId = null;
-  context.updateAppointmentStatus = (id, targetStatus) => {
+  context.arriveAndStartAppointment = id => {
     executedId = id;
-    executedTargetStatus = targetStatus;
+    return Promise.resolve(true);
   };
 
-  confirmBtn.click();
+  arriveBtn.click();
+  await new Promise(resolve => setImmediate(resolve));
   assert.equal(executedId, sampleAppointment.id);
-  assert.equal(executedTargetStatus, 'confirmed', 'Tampered DOM attribute must not alter target status');
 });
 
 test('58. FEATURE_CHECKOUT_ENABLED gating and checkout action security preserved in calendar cards', async () => {

@@ -697,8 +697,8 @@ a:focus-visible {
 }
 
 .owner-calendar-corner {
-  width: 64px;
-  min-width: 64px;
+  width: 76px;
+  min-width: 76px;
   position: sticky;
   left: 0;
   top: 0;
@@ -770,8 +770,8 @@ a:focus-visible {
 }
 
 .owner-calendar-time-axis {
-  width: 64px;
-  min-width: 64px;
+  width: 76px;
+  min-width: 76px;
   position: sticky;
   left: 0;
   z-index: 10;
@@ -785,13 +785,23 @@ a:focus-visible {
   left: 0;
   width: 100%;
   text-align: right;
-  padding-right: 8px;
+  padding-right: 10px;
   font-size: 0.72rem;
   font-weight: 700;
   color: var(--muted, #68737d);
   transform: translateY(-50%);
   user-select: none;
   box-sizing: border-box;
+}
+
+.owner-calendar-time-tick.is-minor {
+  font-size: 0.61rem;
+  font-weight: 550;
+  color: #94a3b8;
+}
+
+.owner-calendar-time-tick.is-major {
+  color: #475569;
 }
 
 .owner-calendar-staff-column {
@@ -801,12 +811,20 @@ a:focus-visible {
   position: relative;
   border-right: 1px solid var(--line, #e2e8f0);
   box-sizing: border-box;
-  background-image: repeating-linear-gradient(
-    to bottom,
-    transparent 0,
-    transparent 74px,
-    var(--line, #f1f5f9) 75px
-  );
+  background-image:
+    repeating-linear-gradient(
+      to bottom,
+      transparent 0,
+      transparent 18px,
+      rgba(148, 163, 184, 0.16) 18.75px,
+      transparent 19.5px
+    ),
+    repeating-linear-gradient(
+      to bottom,
+      transparent 0,
+      transparent 74px,
+      rgba(100, 116, 139, 0.34) 75px
+    );
 }
 
 .owner-calendar-staff-column:last-child {
@@ -823,7 +841,7 @@ a:focus-visible {
   border-left: 4px solid var(--status-color, #64748b);
   background: var(--surface, #ffffff);
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06);
-  padding: 6px 8px;
+  padding: 7px 9px;
   display: flex;
   flex-direction: column;
   gap: 3px;
@@ -908,6 +926,8 @@ a:focus-visible {
 
 .calendar-card-time {
   white-space: nowrap;
+  font-size: 0.76rem;
+  font-weight: 800;
 }
 
 .calendar-card-header .calendar-status-pill {
@@ -967,8 +987,8 @@ a:focus-visible {
 }
 
 .calendar-card-phone {
-  font-size: 0.72rem;
-  color: #64748b;
+  font-size: 0.68rem;
+  color: #94a3b8;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1312,23 +1332,29 @@ tbody tr[data-appointment-id] {
 
 .appointment-drawer {
   position: fixed;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  width: 440px;
-  max-width: 92vw;
+  top: 50%;
+  left: 50%;
+  width: min(960px, calc(100vw - 48px));
+  height: min(860px, calc(100vh - 40px));
+  max-width: none;
+  max-height: calc(100vh - 40px);
   background: #ffffff;
-  box-shadow: -4px 0 24px rgba(0, 0, 0, 0.18);
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  border-radius: 18px;
+  box-shadow: 0 24px 70px rgba(15, 23, 42, 0.28);
   z-index: 1001;
   display: flex;
   flex-direction: column;
-  transform: translateX(100%);
-  transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  opacity: 0;
+  transform: translate(-50%, -47%) scale(0.985);
+  transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.18s ease;
   box-sizing: border-box;
+  overflow: hidden;
 }
 
 .appointment-drawer.open {
-  transform: translateX(0);
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
 }
 
 .appointment-drawer[hidden] {
@@ -1378,10 +1404,25 @@ tbody tr[data-appointment-id] {
   flex: 1;
   overflow-y: auto;
   padding: 20px;
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.25fr);
+  align-content: start;
   gap: 16px;
 }
+
+.drawer-status-bar,
+.drawer-customer-section,
+.drawer-notes-section,
+.drawer-checkout-section {
+  grid-column: 1 / -1;
+}
+
+.drawer-status-bar { order: 0; }
+.drawer-customer-section { order: 1; }
+.drawer-appointment-section { order: 2; }
+.drawer-services-section { order: 3; }
+.drawer-notes-section { order: 4; }
+.drawer-checkout-section { order: 5; }
 
 .drawer-status-bar {
   display: flex;
@@ -1502,6 +1543,11 @@ tbody tr[data-appointment-id] {
   font-weight: 700;
   letter-spacing: 0.05em;
   color: #0369a1;
+}
+
+.drawer-returning-signal {
+  margin-left: 7px;
+  vertical-align: middle;
 }
 
 .drawer-booker-subsection {
@@ -1635,6 +1681,46 @@ tbody tr[data-appointment-id] {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
+  position: relative;
+  z-index: 2;
+  box-shadow: 0 -8px 24px rgba(15, 23, 42, 0.05);
+}
+
+.front-desk-booking-mode {
+  display: flex;
+  gap: 10px;
+  margin: 0 0 10px;
+  padding: 0;
+  border: 0;
+}
+
+.front-desk-booking-mode legend {
+  margin-bottom: 7px;
+  font-weight: 700;
+}
+
+.front-desk-booking-mode label {
+  min-height: 44px;
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 9px;
+  cursor: pointer;
+  box-sizing: border-box;
+}
+
+.front-desk-booking-mode input {
+  width: 20px;
+  height: 20px;
+}
+
+.front-desk-booking-help {
+  margin: 0 0 14px;
+  color: #64748b;
+  font-size: 0.88rem;
 }
 
 .drawer-status-btn {
@@ -2001,23 +2087,27 @@ tbody tr[data-appointment-id] {
 }
 
 
-/* Mobile Responsive Bottom Sheet */
-@media (max-width: 768px) {
+/* Tablet and narrow-screen centered workspace */
+@media (max-width: 900px) {
   .appointment-drawer {
-    top: auto;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    width: 100%;
-    max-width: 100vw;
-    max-height: 85vh;
-    border-radius: 16px 16px 0 0;
-    transform: translateY(100%);
-    box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.18);
+    width: calc(100vw - 24px);
+    height: calc(100vh - 24px);
+    max-height: calc(100vh - 24px);
+    border-radius: 14px;
   }
 
-  .appointment-drawer.open {
-    transform: translateY(0);
+  .drawer-body {
+    grid-template-columns: minmax(0, 1fr);
+    padding: 16px;
+  }
+
+  .drawer-status-bar,
+  .drawer-customer-section,
+  .drawer-appointment-section,
+  .drawer-services-section,
+  .drawer-notes-section,
+  .drawer-checkout-section {
+    grid-column: 1;
   }
 }
 

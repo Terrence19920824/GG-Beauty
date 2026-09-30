@@ -253,6 +253,7 @@ function createMockAdminContext(options = {}) {
       reset() {}
     },
     confirm: () => true,
+    prompt: options.prompt,
     alert: msg => alerts.push(msg),
     fetch: async (url, opts = {}) => {
       requests.push({ url, opts });
@@ -530,10 +531,9 @@ test('5. Drawer rendering: displays customer, unmasked phone, email (when presen
   // Status badge
   assert.ok(findDescendant(drawerBody, el => String(el.className).includes('status-confirmed')), 'Status confirmed badge must be displayed');
 
-  // Footer status action buttons for confirmed: arrived and cancelled. No-show
-  // remains a server-supported status but is not a primary merchant action.
+  // Footer status action buttons for confirmed: arrive/start, cancel, no-show.
   assert.match(drawerFooter.textContent, /已到店/, 'Arrived button must exist');
-  assert.doesNotMatch(drawerFooter.textContent, /未到店/, 'No-show button must not be a primary action');
+  assert.match(drawerFooter.textContent, /爽约/, 'No-show button must exist for confirmed appointments');
   assert.match(drawerFooter.textContent, /取消预约/, 'Cancel button must exist');
 });
 
@@ -698,6 +698,65 @@ test('9. In-place partial status update: updates in-memory snapshot and drawer w
   await context.updateAppointmentStatus(appt.id, 'cancelled');
   assert.strictEqual(loadAppointmentsCalled, false, 'loadAppointments must NOT be called for cancelled');
   assert.ok(findDescendant(elements.get('drawerBody'), el => String(el.className).includes('status-cancelled')));
+});
+
+test('9a. one-click arrival makes one workflow request and lands directly in_service', async () => {
+  const appt = {
+    id: '00000000-0000-4000-8000-000000000015',
+    customer_name: 'One Click Arrival',
+    customer_phone: '91234567',
+    status: 'confirmed'
+  };
+  const { context, elements, requests } = createMockAdminContext({
+    initialAppointments: [appt],
+    fetchHandler: async url => url.endsWith('/arrive-and-start') ? {
+      status: 200,
+      ok: true,
+      async json() {
+        return { success: true, data: { id: appt.id, status: 'in_service', applied_transitions: [
+          { from: 'confirmed', to: 'arrived' },
+          { from: 'arrived', to: 'in_service' }
+        ] } };
+      }
+    } : null
+  });
+  await context.loadAppointments();
+  context.openAppointmentDrawer(appt.id);
+  const saved = await context.arriveAndStartAppointment(appt.id);
+  assert.equal(saved, true);
+  const workflowRequests = requests.filter(request => request.url.endsWith('/arrive-and-start'));
+  assert.equal(workflowRequests.length, 1);
+  assert.equal(workflowRequests[0].opts.method, 'POST');
+  assert.equal(requests.filter(request => request.url === '/api/admin/update-status-db').length, 0);
+  assert.ok(findDescendant(elements.get('drawerBody'), el => String(el.className).includes('status-in_service')));
+});
+
+test('9b. cancellation accepts and sends a small optional localized reason', async () => {
+  const appt = {
+    id: '00000000-0000-4000-8000-000000000016',
+    customer_name: 'Cancellation Reason',
+    customer_phone: '91234567',
+    status: 'confirmed'
+  };
+  const { context, requests } = createMockAdminContext({
+    initialAppointments: [appt],
+    prompt: message => {
+      assert.match(message, /取消/);
+      return '顾客来电取消';
+    },
+    fetchHandler: async (url, opts) => url === '/api/admin/update-status-db' ? {
+      status: 200,
+      ok: true,
+      async json() {
+        const body = JSON.parse(opts.body);
+        return { success: true, data: { id: appt.id, status: body.status } };
+      }
+    } : null
+  });
+  await context.loadAppointments();
+  assert.equal(await context.updateAppointmentStatus(appt.id, 'cancelled'), true);
+  const mutation = requests.find(request => request.url === '/api/admin/update-status-db');
+  assert.equal(JSON.parse(mutation.opts.body).reason, '顾客来电取消');
 });
 
 // 10. Language purity across locales

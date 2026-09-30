@@ -324,8 +324,8 @@ test('9. Staff appointment view preserves phone masking (*** 4033)', () => {
   assert.match(serverJsSource, /REGEXP_REPLACE\(\s*c\.phone/);
 });
 
-// 10. Status button routes and payloads unchanged
-test('10. Owner appointment action buttons produce unchanged status payloads', async () => {
+// 10. Routine arrival is one explicit server workflow action
+test('10. Owner arrival action targets in_service through the dedicated workflow', async () => {
   const { context, elements, loadAppointments } = createAdminContext();
   await loadAppointments([{
     id: '00000000-0000-4000-8000-000000000003',
@@ -341,9 +341,10 @@ test('10. Owner appointment action buttons produce unchanged status payloads', a
   }]);
 
   const contentHtml = elements.get('content').innerHTML;
-  assert.match(contentHtml, /data-action="status"/);
-  assert.match(contentHtml, /data-target-status="confirmed"/);
+  assert.match(contentHtml, /data-action="arrive-and-start"/);
+  assert.match(contentHtml, /data-target-status="in_service"/);
   assert.match(contentHtml, /data-target-status="cancelled"/);
+  assert.doesNotMatch(contentHtml, /data-target-status="confirmed"/);
 });
 
 // 11. 44px touch targets on interactive buttons
