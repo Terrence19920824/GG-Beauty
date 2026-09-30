@@ -3362,6 +3362,7 @@ function serviceAddonErrorKey(code) {
   return {
     APPOINTMENT_STATUS_NOT_ELIGIBLE: 'serviceAddonStatusChanged',
     CHECKOUT_ALREADY_EXISTS: 'serviceAddonCheckoutExists',
+    SERVICE_INACTIVE: 'serviceAddonServiceInactive',
     SERVICE_UNAVAILABLE: 'serviceAddonUnavailable',
     STAFF_UNAVAILABLE: 'serviceAddonStaffUnavailable',
     STAFF_NOT_CAPABLE: 'serviceAddonNotCapable',
@@ -3371,6 +3372,31 @@ function serviceAddonErrorKey(code) {
     IDEMPOTENCY_CONFLICT: 'serviceAddonIdempotencyConflict',
     APPOINTMENT_CHANGED_CONCURRENTLY: 'serviceAddonConcurrent'
   }[code] || 'operationFailed';
+}
+
+function isActiveServiceAddonService(service) {
+  return service?.is_active === true && service?.bookable === true;
+}
+
+function isActiveServiceAddonCapability(capability, serviceId) {
+  return capability?.service_id === serviceId &&
+    capability?.assigned === true &&
+    capability?.is_active === true &&
+    capability?.bookable === true &&
+    capability?.category_active === true;
+}
+
+function isActiveServiceAddonStaffAtLocation(member, locationId) {
+  return member?.is_active === true && member?.bookable === true &&
+    (!locationId || (member.locations || []).some(location => location.id === locationId));
+}
+
+function serviceAddonStaffForService(staff, capabilitiesByStaff, serviceId) {
+  return staff.filter(member =>
+    (capabilitiesByStaff.get(member.id) || []).some(capability =>
+      isActiveServiceAddonCapability(capability, serviceId)
+    )
+  );
 }
 
 async function openServiceAddonDialog(appointment) {
@@ -3415,9 +3441,20 @@ async function openServiceAddonDialog(appointment) {
     const servicesPayload = await servicesResponse.json();
     const staffPayload = await staffResponse.json();
     if (!servicesResponse.ok || !staffResponse.ok || !servicesPayload.success || !staffPayload.success) throw new Error(adminT('operationFailed'));
-    const services = (servicesPayload.data || []).filter(service => service.is_active === true && service.bookable === true);
-    const staff = (staffPayload.data || []).filter(member => member.is_active === true && member.bookable === true &&
-      (!appointment.location_id || (member.locations || []).some(location => location.id === appointment.location_id)));
+    const catalogServices = (servicesPayload.data || []).filter(isActiveServiceAddonService);
+    const staff = (staffPayload.data || []).filter(member =>
+      isActiveServiceAddonStaffAtLocation(member, appointment.location_id)
+    );
+    const capabilityEntries = await Promise.all(staff.map(async member => {
+      const response = await fetch(`/api/owner/staff/${encodeURIComponent(member.id)}/services`, { credentials: 'same-origin', cache: 'no-store' });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || !payload.success || !Array.isArray(payload.data)) throw new Error(adminT('operationFailed'));
+      return [member.id, payload.data];
+    }));
+    const capabilitiesByStaff = new Map(capabilityEntries);
+    const services = catalogServices.filter(service =>
+      serviceAddonStaffForService(staff, capabilitiesByStaff, service.id).length > 0
+    );
     serviceSelect.appendChild(new Option(adminT('chooseService'), ''));
     for (const service of services) {
       const name = (locale === 'en' ? service.nameEn : service.nameZh) || service.name || service.canonicalName;
@@ -3431,13 +3468,9 @@ async function openServiceAddonDialog(appointment) {
       const displayName = (locale === 'en' ? service.nameEn : service.nameZh) || service.name || service.canonicalName;
       const numericPrice = Number(service.price);
       summary.textContent = `${displayName} · ${service.durationMinutes || service.duration_minutes} ${adminT('minutes')} · ${Number.isFinite(numericPrice) ? formatMinorCurrency(Math.round(numericPrice * 100)) : '-'}`;
-      const capabilityResponses = await Promise.all(staff.map(async member => {
-        const response = await fetch(`/api/owner/staff/${encodeURIComponent(member.id)}/services`, { credentials: 'same-origin', cache: 'no-store' });
-        const payload = await response.json().catch(() => ({}));
-        const capable = response.ok && payload.success && (payload.data || []).some(row => row.service_id === service.id && row.assigned === true && row.is_active === true && row.bookable === true);
-        return capable ? member : null;
-      }));
-      for (const member of capabilityResponses.filter(Boolean)) staffSelect.appendChild(new Option(member.name, member.id));
+      for (const member of serviceAddonStaffForService(staff, capabilitiesByStaff, service.id)) {
+        staffSelect.appendChild(new Option(member.name, member.id));
+      }
       staffSelect.disabled = false;
     });
     save.addEventListener('click', async () => {

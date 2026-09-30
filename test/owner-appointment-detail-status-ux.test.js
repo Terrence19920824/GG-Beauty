@@ -49,6 +49,7 @@ test('1. i18n: all appointment detail and status keys are defined in zh-CN and e
     'serviceAddonSaved',
     'serviceAddonStatusChanged',
     'serviceAddonCheckoutExists',
+    'serviceAddonServiceInactive',
     'serviceAddonUnavailable',
     'serviceAddonStaffUnavailable',
     'serviceAddonNotCapable',
@@ -402,6 +403,49 @@ test('3c. Add Service is visible only for arrived/in_service and stays fully loc
   assert.match(adminHtml, /const idempotencyKey = createServiceAddonKey\(\)/);
   assert.match(adminHtml, /body: JSON\.stringify\(\{ serviceId: serviceSelect\.value, staffId: staffSelect\.value, locale, idempotencyKey \}\)/);
   assert.match(adminHtml, /\.drawer-add-service-btn,[\s\S]*?min-height:\s*44px/);
+});
+
+test('3d. Add Service hides inactive services and exposes only capable staff at the appointment location', () => {
+  const { context } = createMockAdminContext();
+  const serviceActive = { id: 'service-active', is_active: true, bookable: true };
+  const serviceInactive = { id: 'service-inactive', is_active: false, bookable: true };
+  const serviceUnbookable = { id: 'service-unbookable', is_active: true, bookable: false };
+  const serviceInactiveCategory = { id: 'service-inactive-category', is_active: true, bookable: true };
+  const locationId = 'location-a';
+  const staff = [
+    { id: 'capable', is_active: true, bookable: true, locations: [{ id: locationId }] },
+    { id: 'incapable', is_active: true, bookable: true, locations: [{ id: locationId }] },
+    { id: 'other-location', is_active: true, bookable: true, locations: [{ id: 'location-b' }] },
+    { id: 'inactive-staff', is_active: false, bookable: true, locations: [{ id: locationId }] }
+  ].filter(member => context.isActiveServiceAddonStaffAtLocation(member, locationId));
+  const capabilities = new Map([
+    ['capable', [
+      { service_id: serviceActive.id, assigned: true, is_active: true, bookable: true, category_active: true },
+      { service_id: serviceInactiveCategory.id, assigned: true, is_active: true, bookable: true, category_active: false }
+    ]],
+    ['incapable', [{ service_id: serviceActive.id, assigned: false, is_active: true, bookable: true, category_active: true }]]
+  ]);
+  const visible = [serviceActive, serviceInactive, serviceUnbookable, serviceInactiveCategory]
+    .filter(context.isActiveServiceAddonService)
+    .filter(service => context.serviceAddonStaffForService(staff, capabilities, service.id).length > 0);
+
+  assert.deepEqual(visible.map(service => service.id), [serviceActive.id]);
+  assert.deepEqual(
+    context.serviceAddonStaffForService(staff, capabilities, serviceActive.id).map(member => member.id),
+    ['capable']
+  );
+  assert.equal(staff.some(member => member.id === 'other-location'), false);
+  assert.equal(staff.some(member => member.id === 'inactive-staff'), false);
+});
+
+test('3e. Add Service domain errors have exact Chinese and English messages', () => {
+  const { context } = createMockAdminContext();
+  assert.equal(context.serviceAddonErrorKey('SERVICE_INACTIVE'), 'serviceAddonServiceInactive');
+  assert.equal(context.serviceAddonErrorKey('STAFF_NOT_CAPABLE'), 'serviceAddonNotCapable');
+  assert.equal(i18n.t('serviceAddonServiceInactive', 'zh-CN'), '该项目已停用');
+  assert.equal(i18n.t('serviceAddonServiceInactive', 'en'), 'This service is unavailable.');
+  assert.equal(i18n.t('serviceAddonNotCapable', 'zh-CN'), '该员工不能做此项目');
+  assert.equal(i18n.t('serviceAddonNotCapable', 'en'), 'This staff member cannot perform this service.');
 });
 
 // 4. URI Formatter tests (tel: and wa.me)

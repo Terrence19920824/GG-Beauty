@@ -99,13 +99,15 @@ test('owner UI has a compact authoritative flow and complete Chinese/English err
   assert.match(adminSource, /fetch\('\/api\/owner\/services'/);
   assert.match(adminSource, /fetch\('\/api\/owner\/staff'/);
   assert.match(adminSource, /\/api\/owner\/staff\/\$\{encodeURIComponent\(member\.id\)\}\/services/);
+  assert.match(adminSource, /capability\?\.category_active === true/);
+  assert.match(adminSource, /serviceAddonStaffForService\(staff, capabilitiesByStaff, service\.id\)/);
   assert.match(adminSource, /service\.durationMinutes \|\| service\.duration_minutes/);
   assert.match(adminSource, /const idempotencyKey = createServiceAddonKey\(\)/);
   assert.match(adminSource, /await loadAppointments\(currentRequestedLocationId\)/);
   assert.match(adminSource, /min-height:\s*44px/);
   for (const key of [
     'activeAddService', 'chooseService', 'chooseStaff', 'confirmAddService',
-    'serviceAddonStatusChanged', 'serviceAddonCheckoutExists', 'serviceAddonUnavailable',
+    'serviceAddonStatusChanged', 'serviceAddonCheckoutExists', 'serviceAddonServiceInactive', 'serviceAddonUnavailable',
     'serviceAddonStaffUnavailable', 'serviceAddonNotCapable', 'serviceAddonConflict',
     'serviceAddonPermissionDenied', 'serviceAddonIdempotencyConflict', 'serviceAddonConcurrent'
   ]) {
@@ -116,4 +118,8 @@ test('owner UI has a compact authoritative flow and complete Chinese/English err
     assert.doesNotMatch(zh, /[A-Za-z]{3,}/);
     assert.doesNotMatch(en, /[\u3400-\u9fff]/);
   }
+  assert.equal(i18n.t('serviceAddonServiceInactive', 'zh-CN'), '该项目已停用');
+  assert.equal(i18n.t('serviceAddonServiceInactive', 'en'), 'This service is unavailable.');
+  assert.equal(i18n.t('serviceAddonNotCapable', 'zh-CN'), '该员工不能做此项目');
+  assert.equal(i18n.t('serviceAddonNotCapable', 'en'), 'This staff member cannot perform this service.');
 });

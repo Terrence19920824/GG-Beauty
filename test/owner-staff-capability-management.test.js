@@ -104,6 +104,7 @@ const makePool = ({
               service_id: service.id,
               name: service.name,
               category: service.category,
+              category_active: true,
               is_active: service.is_active,
               bookable: service.bookable,
               assigned: Boolean(state.mappings.find(mapping =>
@@ -209,6 +210,7 @@ for (const role of ['owner', 'manager', 'admin']) {
     assert.match(serviceQuery.sql, /service_translation_zh\.shop_id = service\.shop_id/);
     assert.match(serviceQuery.sql, /service_translation_en\.shop_id = service\.shop_id/);
     assert.match(serviceQuery.sql, /category\.shop_id = service\.shop_id/);
+    assert.match(serviceQuery.sql, /category\.is_active AS category_active/);
     assert.match(serviceQuery.sql, /category_translation_zh\.shop_id = category\.shop_id/);
     assert.match(serviceQuery.sql, /category_translation_en\.shop_id = category\.shop_id/);
     assert.match(serviceQuery.sql, /ORDER BY category\.sort_order ASC NULLS LAST/);

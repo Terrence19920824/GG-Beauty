@@ -331,12 +331,37 @@ test('Active Service Add-on V1 migrations, authority, audit and PostgreSQL concu
       assert.equal((await invoke({ appointmentId: normal, staffId: ids.staffOther })).body.code, 'STAFF_UNAVAILABLE');
       assert.equal((await invoke({ appointmentId: normal, serviceId: ids.serviceOther })).body.code, 'STAFF_NOT_CAPABLE');
       assert.equal((await invoke({ appointmentId: normal, staffId: ids.staffIncapable })).body.code, 'STAFF_NOT_CAPABLE');
-      assert.equal((await invoke({ appointmentId: normal, serviceId: ids.serviceInactive })).body.code, 'SERVICE_UNAVAILABLE');
+      assert.equal((await invoke({ appointmentId: normal, serviceId: ids.serviceInactive })).body.code, 'SERVICE_INACTIVE');
       const otherAppointment = await createAppointment('arrived', ids.shopB, ids.locationB, ids.staffOther);
       assert.equal((await invoke({ appointmentId: otherAppointment })).statusCode, 404);
       assert.equal((await invoke({ appointmentId: normal, bodyExtra: { price: 0 } })).body.code, 'INVALID_REQUEST');
       assert.equal((await invoke({ appointmentId: normal, bodyExtra: { durationMinutes: 1 } })).body.code, 'INVALID_REQUEST');
       assert.equal((await invoke({ appointmentId: normal, bodyExtra: { requestFingerprint: '0'.repeat(64) } })).body.code, 'INVALID_REQUEST');
+    });
+
+    await t.test('service and capability changes after modal load are revalidated at submit', async () => {
+      const serviceChanged = await createAppointment();
+      await db.query(`UPDATE services SET is_active=false WHERE id=$1 AND shop_id=$2`, [ids.serviceA, ids.shopA]);
+      const inactive = await invoke({ appointmentId: serviceChanged });
+      assert.equal(inactive.statusCode, 422);
+      assert.equal(inactive.body.code, 'SERVICE_INACTIVE');
+      assert.equal(Number((await db.query(`SELECT count(*) FROM appointment_items WHERE appointment_id=$1`, [serviceChanged])).rows[0].count), 1);
+      await db.query(`UPDATE services SET is_active=true WHERE id=$1 AND shop_id=$2`, [ids.serviceA, ids.shopA]);
+
+      const categoryChanged = await createAppointment();
+      await db.query(`UPDATE service_categories SET is_active=false WHERE id=$1 AND shop_id=$2`, [ids.categoryA, ids.shopA]);
+      const categoryInactive = await invoke({ appointmentId: categoryChanged });
+      assert.equal(categoryInactive.statusCode, 422);
+      assert.equal(categoryInactive.body.code, 'SERVICE_INACTIVE');
+      await db.query(`UPDATE service_categories SET is_active=true WHERE id=$1 AND shop_id=$2`, [ids.categoryA, ids.shopA]);
+
+      const capabilityChanged = await createAppointment();
+      await db.query(`UPDATE staff_services SET is_active=false WHERE shop_id=$1 AND staff_id=$2 AND service_id=$3`, [ids.shopA, ids.staffA, ids.serviceA]);
+      const incapable = await invoke({ appointmentId: capabilityChanged });
+      assert.equal(incapable.statusCode, 422);
+      assert.equal(incapable.body.code, 'STAFF_NOT_CAPABLE');
+      assert.equal(Number((await db.query(`SELECT count(*) FROM appointment_items WHERE appointment_id=$1`, [capabilityChanged])).rows[0].count), 1);
+      await db.query(`UPDATE staff_services SET is_active=true WHERE shop_id=$1 AND staff_id=$2 AND service_id=$3`, [ids.shopA, ids.staffA, ids.serviceA]);
     });
 
     await t.test('owner, manager, admin and front_desk allowed while ordinary staff denied', async () => {
@@ -356,6 +381,12 @@ test('Active Service Add-on V1 migrations, authority, audit and PostgreSQL concu
       assert.equal(res.statusCode, 409);
       assert.equal(res.body.code, 'STAFF_TIME_CONFLICT');
       assert.equal(Number((await db.query(`SELECT count(*) FROM appointment_items WHERE appointment_id=$1`, [appointmentId])).rows[0].count), 1);
+
+      const unavailableAppointment = await createAppointment();
+      const unavailableAddon = makeAddon(async () => { throw new BookabilityError('SERVICE_NOT_BOOKABLE'); });
+      const unavailable = await invoke({ appointmentId: unavailableAppointment, addon: unavailableAddon });
+      assert.equal(unavailable.statusCode, 422);
+      assert.equal(unavailable.body.code, 'SERVICE_INACTIVE');
     });
 
     await t.test('same key replays once, conflicting payload rejects, and same key is independent by shop', async () => {
