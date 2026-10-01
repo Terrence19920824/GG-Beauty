@@ -170,6 +170,16 @@ const createPageContext = (customElements = {}) => {
       if (sel === 'button') {
         return _contentButtons;
       }
+      if (sel.includes(',')) {
+        const parts = sel.split(',').map(s => s.trim());
+        const resultSet = new Set();
+        for (const part of parts) {
+          for (const btn of this.querySelectorAll(part)) {
+            resultSet.add(btn);
+          }
+        }
+        return [...resultSet];
+      }
       if (sel === '.checkout-btn') {
         return _contentButtons.filter(b => (b.getAttribute('class') || '').includes('checkout-btn'));
       }
@@ -876,15 +886,15 @@ test('78. clicking status button with malicious appointment ID is rejected befor
       status: 'pending'
     }]);
 
-    const buttons = elements.get('content').querySelectorAll('button[data-action="status"]');
+    const buttons = elements.get('content').querySelectorAll('button[data-action="status"], button[data-action="arrive-and-start"]');
     assert.ok(buttons.length >= 2, 'Pending status buttons should exist');
 
-    // Click the first button (confirm)
+    // Click the first button (arrive-and-start)
     buttons[0].click();
     await new Promise(r => setTimeout(r, 10));
 
     // Verify rejection: no network requests sent because UUID regex failed
-    assert.strictEqual(requests.filter(r => r.url === '/api/admin/update-status-db').length, 0, `Mutating network request must not be sent for malicious ID: ${maliciousId}`);
+    assert.strictEqual(requests.filter(r => r.url === '/api/admin/update-status-db' || r.url.includes('/arrive-and-start')).length, 0, `Mutating network request must not be sent for malicious ID: ${maliciousId}`);
     assert.strictEqual(alerts.length, 0, `No alert must be called for malicious ID: ${maliciousId}`);
   }
 });
@@ -895,17 +905,17 @@ test('79. clicking normal UUID status button invokes action exactly once with va
   await loadAppointments([{
     ...sampleAppointment,
     id: '00000000-0000-4000-8000-000000000001',
-    status: 'pending'
+    status: 'in_service'
   }]);
 
   const buttons = elements.get('content').querySelectorAll('button[data-action="status"]');
-  const confirmBtn = buttons.find(b => b.getAttribute('data-target-status') === 'confirmed');
-  assert.ok(confirmBtn, 'Confirm button must exist');
-  assert.strictEqual(confirmBtn.getAttribute('data-action'), 'status');
-  assert.strictEqual(confirmBtn.getAttribute('onclick'), null, 'Must have no inline onclick');
+  const completeBtn = buttons.find(b => b.getAttribute('data-target-status') === 'completed');
+  assert.ok(completeBtn, 'Complete button must exist');
+  assert.strictEqual(completeBtn.getAttribute('data-action'), 'status');
+  assert.strictEqual(completeBtn.getAttribute('onclick'), null, 'Must have no inline onclick');
 
   // Click once
-  confirmBtn.click();
+  completeBtn.click();
   await new Promise(r => setTimeout(r, 10));
 
   const statusMutations = requests.filter(r => r.url === '/api/admin/update-status-db');
@@ -913,15 +923,15 @@ test('79. clicking normal UUID status button invokes action exactly once with va
   assert.strictEqual(statusMutations[0].options.method, 'POST');
   const body = JSON.parse(statusMutations[0].options.body);
   assert.strictEqual(body.appointmentId, '00000000-0000-4000-8000-000000000001');
-  assert.strictEqual(body.status, 'confirmed');
+  assert.strictEqual(body.status, 'completed');
 
   // Stale button click must NOT trigger any new request (Requirement 24)
-  confirmBtn.click();
+  completeBtn.click();
   await new Promise(r => setTimeout(r, 10));
   const mutationsAfterStaleClick = requests.filter(r => r.url === '/api/admin/update-status-db');
   assert.strictEqual(mutationsAfterStaleClick.length, 1, 'Stale detached button must not trigger operations');
 
-  assert.strictEqual(confirmBtn.disabled, true, 'A successfully submitted action is disabled until its card is replaced in place');
+  assert.strictEqual(completeBtn.disabled, true, 'A successfully submitted action is disabled until its card is replaced in place');
 });
 
 test('80. re-rendering and locale switching cleans previous action registry without duplicate listeners (Req 36 & 57)', async () => {
@@ -931,16 +941,16 @@ test('80. re-rendering and locale switching cleans previous action registry with
   await loadAppointments([{
     ...sampleAppointment,
     id: '00000000-0000-4000-8000-000000000001',
-    status: 'pending'
+    status: 'in_service'
   }]);
   const initialButtons = elements.get('content').querySelectorAll('button[data-action="status"]');
-  const staleConfirmBtn = initialButtons.find(b => b.getAttribute('data-target-status') === 'confirmed');
+  const staleCompleteBtn = initialButtons.find(b => b.getAttribute('data-target-status') === 'completed');
 
   // Re-render multiple times
   await loadAppointments([{
     ...sampleAppointment,
     id: '00000000-0000-4000-8000-000000000001',
-    status: 'pending'
+    status: 'in_service'
   }]);
 
   // Switch locale (triggers re-render)
@@ -948,17 +958,17 @@ test('80. re-rendering and locale switching cleans previous action registry with
 
   // Get current button
   const currentButtons = elements.get('content').querySelectorAll('button[data-action="status"]');
-  const currentConfirmBtn = currentButtons.find(b => b.getAttribute('data-target-status') === 'confirmed');
-  assert.ok(currentConfirmBtn, 'Current confirm button must exist in English locale');
+  const currentCompleteBtn = currentButtons.find(b => b.getAttribute('data-target-status') === 'completed');
+  assert.ok(currentCompleteBtn, 'Current complete button must exist in English locale');
 
   // Click the current button: must trigger exactly 1 mutation request
-  currentConfirmBtn.click();
+  currentCompleteBtn.click();
   await new Promise(r => setTimeout(r, 10));
   const currentMutations = requests.filter(r => r.url === '/api/admin/update-status-db');
   assert.strictEqual(currentMutations.length, 1, 'Current button click must trigger exactly 1 status mutation request');
 
   // Click the stale button from before re-rendering: registry was cleared and generation expired, so nothing happens
-  staleConfirmBtn.click();
+  staleCompleteBtn.click();
   await new Promise(r => setTimeout(r, 10));
   const afterStaleMutations = requests.filter(r => r.url === '/api/admin/update-status-db');
   assert.strictEqual(afterStaleMutations.length, 1, 'Stale button click must NOT trigger any new request');
@@ -1123,28 +1133,28 @@ test('89. tampering with button data attributes cannot hijack action or dispatch
   await loadAppointments([{
     ...sampleAppointment,
     id: '00000000-0000-4000-8000-000000000001',
-    status: 'pending'
+    status: 'in_service'
   }]);
 
   const buttons = elements.get('content').querySelectorAll('button[data-action="status"]');
-  const confirmBtn = buttons.find(b => b.getAttribute('data-target-status') === 'confirmed');
-  assert.ok(confirmBtn);
+  const completeBtn = buttons.find(b => b.getAttribute('data-target-status') === 'completed');
+  assert.ok(completeBtn);
 
   // Attacker modifies DOM attributes to try to perform checkout or cancel another appointment
-  confirmBtn.setAttribute('data-action', 'checkout');
-  confirmBtn.setAttribute('data-target-status', 'cancelled');
-  confirmBtn.setAttribute('data-action-key', '999');
+  completeBtn.setAttribute('data-action', 'checkout');
+  completeBtn.setAttribute('data-target-status', 'cancelled');
+  completeBtn.setAttribute('data-action-key', '999');
 
   // Click button
-  confirmBtn.click();
+  completeBtn.click();
   await new Promise(r => setTimeout(r, 10));
 
-  // Must still execute the immutable captured status 'confirmed' on appointment 00000000-0000-4000-8000-000000000001
+  // Must still execute the immutable captured status 'completed' on appointment 00000000-0000-4000-8000-000000000001
   const statusMutations = requests.filter(r => r.url === '/api/admin/update-status-db');
   assert.strictEqual(statusMutations.length, 1);
   const body = JSON.parse(statusMutations[0].options.body);
   assert.strictEqual(body.appointmentId, '00000000-0000-4000-8000-000000000001');
-  assert.strictEqual(body.status, 'confirmed', 'Must use closure captured status, ignoring DOM tampering');
+  assert.strictEqual(body.status, 'completed', 'Must use closure captured status, ignoring DOM tampering');
 });
 
 test('90. after binding is complete, DOM does not retain data-action-key (Req 52)', async () => {
@@ -1169,8 +1179,8 @@ test('90. after binding is complete, DOM does not retain data-action-key (Req 52
 
 test('91. two different appointment buttons only operate on their own appointment (Req 53)', async () => {
   const { context, elements, requests, loadAppointments } = createPageContext();
-  const appt1 = { ...sampleAppointment, id: '00000000-0000-4000-8000-000000000001', status: 'pending' };
-  const appt2 = { ...sampleAppointment, id: '00000000-0000-4000-8000-000000000002', status: 'confirmed' };
+  const appt1 = { ...sampleAppointment, id: '00000000-0000-4000-8000-000000000001', status: 'in_service' };
+  const appt2 = { ...sampleAppointment, id: '00000000-0000-4000-8000-000000000002', status: 'in_service' };
 
   context.fetch = async (url, options = {}) => {
     requests.push({ url, options });
@@ -1189,15 +1199,15 @@ test('91. two different appointment buttons only operate on their own appointmen
   await loadAppointments([appt1, appt2]);
 
   const statusBtns = elements.get('content').querySelectorAll('button[data-action="status"]');
-  // First appointment confirm button
-  const confirmBtn = statusBtns.find(b => b.textContent === '确认' || b.getAttribute('data-target-status') === 'confirmed');
-  // Second appointment arrive button
-  const arriveBtn = statusBtns.find(b => b.textContent === '已到店' || b.getAttribute('data-target-status') === 'arrived');
+  // First appointment complete button
+  const completeBtn1 = statusBtns[0];
+  // Second appointment complete button
+  const completeBtn2 = statusBtns[1];
 
-  assert.ok(confirmBtn);
-  assert.ok(arriveBtn);
+  assert.ok(completeBtn1);
+  assert.ok(completeBtn2);
 
-  confirmBtn.click();
+  completeBtn1.click();
   await new Promise(r => setTimeout(r, 10));
 
   const m1 = requests.filter(r => r.url === '/api/admin/update-status-db');
@@ -1206,10 +1216,10 @@ test('91. two different appointment buttons only operate on their own appointmen
 
   // After first appointment status updates, loadAppointments refreshes active DOM
   const activeStatusBtns = elements.get('content').querySelectorAll('button[data-action="status"]');
-  const activeArriveBtn = activeStatusBtns.find(b => b.textContent === '已到店' || b.getAttribute('data-target-status') === 'arrived');
-  assert.ok(activeArriveBtn);
+  const activeCompleteBtn2 = activeStatusBtns[1];
+  assert.ok(activeCompleteBtn2);
 
-  activeArriveBtn.click();
+  activeCompleteBtn2.click();
   await new Promise(r => setTimeout(r, 10));
 
   const m2 = requests.filter(r => r.url === '/api/admin/update-status-db');
@@ -1221,18 +1231,18 @@ test('92. showLogin() invalidates action context so old status button click trig
   const { context, elements, requests, loadAppointments } = createPageContext();
   await loadAppointments([{
     ...sampleAppointment,
-    status: 'pending'
+    status: 'in_service'
   }]);
 
   const statusBtns = elements.get('content').querySelectorAll('button[data-action="status"]');
-  const confirmBtn = statusBtns.find(b => b.getAttribute('data-target-status') === 'confirmed');
-  assert.ok(confirmBtn);
+  const completeBtn = statusBtns.find(b => b.getAttribute('data-target-status') === 'completed');
+  assert.ok(completeBtn);
 
   // Invoke showLogin to clear protected UI and invalidate action context
   context.showLogin();
 
   // Click old status button
-  confirmBtn.click();
+  completeBtn.click();
   await new Promise(r => setTimeout(r, 10));
 
   const mutations = requests.filter(r => r.url === '/api/admin/update-status-db');
@@ -1266,13 +1276,13 @@ test('94. ownerLogout() invalidates action context immediately at invocation bef
   context.FEATURE_CHECKOUT_ENABLED = true;
   await loadAppointments([{
     ...sampleAppointment,
-    status: 'pending',
+    status: 'in_service',
     can_start_checkout: true
   }]);
 
-  const confirmBtn = elements.get('content').querySelectorAll('button[data-action="status"]').find(b => b.getAttribute('data-target-status') === 'confirmed');
+  const completeBtn = elements.get('content').querySelectorAll('button[data-action="status"]').find(b => b.getAttribute('data-target-status') === 'completed');
   const checkoutBtn = elements.get('content').querySelector('button[data-action="checkout"]');
-  assert.ok(confirmBtn);
+  assert.ok(completeBtn);
   assert.ok(checkoutBtn);
 
   let resolveLogout;
@@ -1290,7 +1300,7 @@ test('94. ownerLogout() invalidates action context immediately at invocation bef
   const logoutPromise = context.ownerLogout();
 
   // Immediately click old buttons while logout network request is in-flight
-  confirmBtn.click();
+  completeBtn.click();
   checkoutBtn.click();
   await new Promise(r => setTimeout(r, 10));
 
@@ -1307,11 +1317,11 @@ test('95. API 401/403 session expiration invalidates context so old buttons trig
   const { context, elements, requests, loadAppointments } = createPageContext();
   await loadAppointments([{
     ...sampleAppointment,
-    status: 'pending'
+    status: 'in_service'
   }]);
 
-  const confirmBtn = elements.get('content').querySelectorAll('button[data-action="status"]').find(b => b.getAttribute('data-target-status') === 'confirmed');
-  assert.ok(confirmBtn);
+  const completeBtn = elements.get('content').querySelectorAll('button[data-action="status"]').find(b => b.getAttribute('data-target-status') === 'completed');
+  assert.ok(completeBtn);
 
   // Configure fetch to return 401 on appointments read
   context.fetch = async (url, options = {}) => {
@@ -1325,7 +1335,7 @@ test('95. API 401/403 session expiration invalidates context so old buttons trig
   await context.loadAppointments();
 
   // Click old status button after 401 session expiry
-  confirmBtn.click();
+  completeBtn.click();
   await new Promise(r => setTimeout(r, 10));
 
   const statusMutations = requests.filter(r => r.url === '/api/admin/update-status-db');
@@ -1338,20 +1348,20 @@ test('96. current appointment missing from active appointment index strictly fai
   await loadAppointments([{
     ...sampleAppointment,
     id: '00000000-0000-4000-8000-000000000001',
-    status: 'pending',
+    status: 'in_service',
     can_start_checkout: true
   }]);
 
-  const confirmBtn = elements.get('content').querySelectorAll('button[data-action="status"]').find(b => b.getAttribute('data-target-status') === 'confirmed');
+  const completeBtn = elements.get('content').querySelectorAll('button[data-action="status"]').find(b => b.getAttribute('data-target-status') === 'completed');
   const checkoutBtn = elements.get('content').querySelector('button[data-action="checkout"]');
-  assert.ok(confirmBtn);
+  assert.ok(completeBtn);
   assert.ok(checkoutBtn);
 
   // Clear private appointments by re-rendering empty list
   await loadAppointments([]);
 
   // Click status button from previous render
-  confirmBtn.click();
+  completeBtn.click();
   await new Promise(r => setTimeout(r, 10));
   assert.strictEqual(requests.filter(r => r.url === '/api/admin/update-status-db').length, 0, 'Status button must send 0 requests when appointment missing');
 
@@ -1382,29 +1392,29 @@ test('97. can_start_checkout changed to false on current appointment before clic
 
 test('98. re-login and re-render activates new buttons while old buttons from previous session remain completely inert (Req 53)', async () => {
   const { context, elements, requests, loadAppointments } = createPageContext();
-  const appt1 = { ...sampleAppointment, id: '00000000-0000-4000-8000-000000000001', status: 'pending' };
-  const appt2 = { ...sampleAppointment, id: '00000000-0000-4000-8000-000000000002', status: 'pending' };
+  const appt1 = { ...sampleAppointment, id: '00000000-0000-4000-8000-000000000001', status: 'in_service' };
+  const appt2 = { ...sampleAppointment, id: '00000000-0000-4000-8000-000000000002', status: 'in_service' };
 
   // Session 1: initial render
   await loadAppointments([appt1]);
-  const oldConfirmBtn = elements.get('content').querySelectorAll('button[data-action="status"]').find(b => b.getAttribute('data-target-status') === 'confirmed');
-  assert.ok(oldConfirmBtn);
+  const oldCompleteBtn = elements.get('content').querySelectorAll('button[data-action="status"]').find(b => b.getAttribute('data-target-status') === 'completed');
+  assert.ok(oldCompleteBtn);
 
   // User logs out
   await context.ownerLogout();
 
   // Session 2: re-login and re-render
   await loadAppointments([appt2]);
-  const newConfirmBtn = elements.get('content').querySelectorAll('button[data-action="status"]').find(b => b.getAttribute('data-target-status') === 'confirmed');
-  assert.ok(newConfirmBtn);
+  const newCompleteBtn = elements.get('content').querySelectorAll('button[data-action="status"]').find(b => b.getAttribute('data-target-status') === 'completed');
+  assert.ok(newCompleteBtn);
 
   // Click old button from Session 1
-  oldConfirmBtn.click();
+  oldCompleteBtn.click();
   await new Promise(r => setTimeout(r, 10));
   assert.strictEqual(requests.filter(r => r.url === '/api/admin/update-status-db').length, 0, 'Old session button must be inert');
 
   // Click new button from Session 2
-  newConfirmBtn.click();
+  newCompleteBtn.click();
   await new Promise(r => setTimeout(r, 10));
   const newMutations = requests.filter(r => r.url === '/api/admin/update-status-db');
   assert.strictEqual(newMutations.length, 1, 'New session button must execute once');
@@ -1413,20 +1423,20 @@ test('98. re-login and re-render activates new buttons while old buttons from pr
 
 test('99. Shop A old button cannot operate Shop B appointment across different shop sessions (Req 54)', async () => {
   const { context, elements, requests, loadAppointments } = createPageContext();
-  const shopAAppt = { ...sampleAppointment, id: '00000000-0000-4000-8000-000000000001', status: 'pending' };
-  const shopBAppt = { ...sampleAppointment, id: '00000000-0000-4000-8000-000000000002', status: 'pending' };
+  const shopAAppt = { ...sampleAppointment, id: '00000000-0000-4000-8000-000000000001', status: 'in_service' };
+  const shopBAppt = { ...sampleAppointment, id: '00000000-0000-4000-8000-000000000002', status: 'in_service' };
 
   // Shop A
   await loadAppointments([shopAAppt]);
-  const shopAConfirmBtn = elements.get('content').querySelectorAll('button[data-action="status"]').find(b => b.getAttribute('data-target-status') === 'confirmed');
-  assert.ok(shopAConfirmBtn);
+  const shopACompleteBtn = elements.get('content').querySelectorAll('button[data-action="status"]').find(b => b.getAttribute('data-target-status') === 'completed');
+  assert.ok(shopACompleteBtn);
 
   // Switch to Shop B
   await context.ownerLogout();
   await loadAppointments([shopBAppt]);
 
   // Click Shop A button
-  shopAConfirmBtn.click();
+  shopACompleteBtn.click();
   await new Promise(r => setTimeout(r, 10));
 
   assert.strictEqual(requests.filter(r => r.url === '/api/admin/update-status-db').length, 0, 'Shop A button must not operate Shop B appointments');
@@ -1441,7 +1451,7 @@ test('100. tampering globalScope.currentAppointments cannot inject fake appointm
     ...sampleAppointment,
     id: '00000000-0000-4000-8000-000000000001',
     customer_name: 'Alice',
-    status: 'pending',
+    status: 'in_service',
     can_start_checkout: false,
     checkout: null
   };
@@ -1491,9 +1501,9 @@ test('100. tampering globalScope.currentAppointments cannot inject fake appointm
 
   // Legitimate buttons for appt 1 and appt 2 still work as authorized
   const statusButtons = elements.get('content').querySelectorAll('button[data-action="status"]');
-  const confirmBtn = statusButtons.find(b => b.textContent === 'Confirm' || b.getAttribute('data-target-status') === 'confirmed');
-  assert.ok(confirmBtn, 'Authoritative confirm button must be rendered in English');
-  confirmBtn.click();
+  const completeBtn = statusButtons.find(b => b.textContent === 'Complete' || b.getAttribute('data-target-status') === 'completed');
+  assert.ok(completeBtn, 'Authoritative complete button must be rendered in English');
+  completeBtn.click();
   await new Promise(r => setTimeout(r, 10));
 
   const statusMutations = requests.filter(r => r.url === '/api/admin/update-status-db');
@@ -1539,7 +1549,7 @@ test('102. authoritative appointments preserve correct behavior across locale sw
   const appt1 = {
     ...sampleAppointment,
     id: '00000000-0000-4000-8000-000000000001',
-    status: 'pending'
+    status: 'in_service'
   };
 
   await loadAppointments([appt1]);
@@ -1547,11 +1557,11 @@ test('102. authoritative appointments preserve correct behavior across locale sw
   // Switch to English
   context.setAdminLocale('en');
   const enButtons = elements.get('content').querySelectorAll('button[data-action="status"]');
-  const enConfirmBtn = enButtons.find(b => b.textContent === 'Confirm');
-  assert.ok(enConfirmBtn, 'Confirm button in English exists');
+  const enCompleteBtn = enButtons.find(b => b.textContent === 'Complete');
+  assert.ok(enCompleteBtn, 'Complete button in English exists');
 
-  // Click confirm in English
-  enConfirmBtn.click();
+  // Click complete in English
+  enCompleteBtn.click();
   await new Promise(r => setTimeout(r, 10));
   assert.strictEqual(requests.filter(r => r.url === '/api/admin/update-status-db').length, 1);
 
@@ -1582,7 +1592,7 @@ test('104. combination attack with fake appointment, global tampering, simulated
     ...sampleAppointment,
     id: '11111111-1111-4111-8111-111111111111',
     customer_name: 'AuthCustomer',
-    status: 'pending',
+    status: 'in_service',
     can_start_checkout: false,
     checkout: null
   };
@@ -1634,19 +1644,19 @@ test('104. combination attack with fake appointment, global tampering, simulated
 
   // 4. Try tampering DOM data attributes
   const statusButtons = elements.get('content').querySelectorAll('button[data-action="status"]');
-  const confirmBtn = statusButtons.find(b => b.getAttribute('data-target-status') === 'confirmed');
-  assert.ok(confirmBtn);
+  const completeBtn = statusButtons.find(b => b.getAttribute('data-target-status') === 'completed');
+  assert.ok(completeBtn);
 
-  // Attempt DOM attribute tampering on confirmBtn
-  confirmBtn.setAttribute('data-target-status', 'completed');
-  confirmBtn.click();
+  // Attempt DOM attribute tampering on completeBtn
+  completeBtn.setAttribute('data-target-status', 'cancelled');
+  completeBtn.click();
   await new Promise(r => setTimeout(r, 10));
 
   // Authoritative action executed strictly with closure's bound state
   const mutations = requests.filter(r => r.url === '/api/admin/update-status-db');
   assert.strictEqual(mutations.length, 1);
   assert.strictEqual(JSON.parse(mutations[0].options.body).appointmentId, '11111111-1111-4111-8111-111111111111');
-  assert.strictEqual(JSON.parse(mutations[0].options.body).status, 'confirmed');
+  assert.strictEqual(JSON.parse(mutations[0].options.body).status, 'completed');
   assert.strictEqual(requests.filter(r => r.url?.includes('/checkout')).length, 0);
 });
 
@@ -1670,14 +1680,14 @@ test('105. locale switch does not update snapshot and only redraws existing auth
   const htmlEn = elements.get('content').innerHTML;
   assert.match(htmlEn, /LocaleCustomer/);
   assert.doesNotMatch(htmlEn, /Tampered/);
-  assert.match(htmlEn, /Confirm/);
+  assert.match(htmlEn, /Arrived/);
 
   // Switch back to zh-CN
   context.setAdminLocale('zh-CN');
   const htmlZh = elements.get('content').innerHTML;
   assert.match(htmlZh, /LocaleCustomer/);
   assert.doesNotMatch(htmlZh, /Tampered/);
-  assert.match(htmlZh, /确认/);
+  assert.match(htmlZh, /已到店/);
 });
 
 test('106. second legitimate API response replaces the first snapshot and invalidates old buttons (Req 39)', async () => {
@@ -1686,30 +1696,30 @@ test('106. second legitimate API response replaces the first snapshot and invali
   const appt1 = {
     ...sampleAppointment,
     id: '11111111-1111-4111-8111-111111111111',
-    status: 'pending'
+    status: 'in_service'
   };
   await loadAppointments([appt1]);
 
-  const oldConfirmBtn = elements.get('content').querySelectorAll('button[data-action="status"]').find(b => b.getAttribute('data-target-status') === 'confirmed');
-  assert.ok(oldConfirmBtn);
+  const oldCompleteBtn = elements.get('content').querySelectorAll('button[data-action="status"]').find(b => b.getAttribute('data-target-status') === 'completed');
+  assert.ok(oldCompleteBtn);
 
   // Second legitimate API load with new appointment
   const appt2 = {
     ...sampleAppointment,
     id: '22222222-2222-4222-8222-222222222222',
-    status: 'pending'
+    status: 'in_service'
   };
   await loadAppointments([appt2]);
 
   // Old button from generation 1 is now stale
-  oldConfirmBtn.click();
+  oldCompleteBtn.click();
   await new Promise(r => setTimeout(r, 10));
   assert.strictEqual(requests.filter(r => r.url === '/api/admin/update-status-db').length, 0, 'Stale button from replaced snapshot must not execute');
 
   // New button executes
-  const newConfirmBtn = elements.get('content').querySelectorAll('button[data-action="status"]').find(b => b.getAttribute('data-target-status') === 'confirmed');
-  assert.ok(newConfirmBtn);
-  newConfirmBtn.click();
+  const newCompleteBtn = elements.get('content').querySelectorAll('button[data-action="status"]').find(b => b.getAttribute('data-target-status') === 'completed');
+  assert.ok(newCompleteBtn);
+  newCompleteBtn.click();
   await new Promise(r => setTimeout(r, 10));
   assert.strictEqual(requests.filter(r => r.url === '/api/admin/update-status-db').length, 1);
   assert.strictEqual(JSON.parse(requests[0].options.body).appointmentId, '22222222-2222-4222-8222-222222222222');
@@ -1724,11 +1734,11 @@ test('107. API error fails closed, clearing previous authorization and retaining
   const appt = {
     ...sampleAppointment,
     id: '11111111-1111-4111-8111-111111111111',
-    status: 'pending'
+    status: 'in_service'
   };
   await loadAppointments([appt]);
 
-  const oldBtn = elements.get('content').querySelectorAll('button[data-action="status"]').find(b => b.getAttribute('data-target-status') === 'confirmed');
+  const oldBtn = elements.get('content').querySelectorAll('button[data-action="status"]').find(b => b.getAttribute('data-target-status') === 'completed');
   assert.ok(oldBtn);
 
   // 2. Next API call fails (mock 500 error)
@@ -1755,11 +1765,11 @@ test('108. empty array API response clears old snapshot, map, and operation butt
   const appt = {
     ...sampleAppointment,
     id: '11111111-1111-4111-8111-111111111111',
-    status: 'pending'
+    status: 'in_service'
   };
   await loadAppointments([appt]);
 
-  const oldBtn = elements.get('content').querySelectorAll('button[data-action="status"]').find(b => b.getAttribute('data-target-status') === 'confirmed');
+  const oldBtn = elements.get('content').querySelectorAll('button[data-action="status"]').find(b => b.getAttribute('data-target-status') === 'completed');
   assert.ok(oldBtn);
 
   // API returns empty array []

@@ -65,9 +65,8 @@ test('owner appointment checkout projection executes once on PostgreSQL and isol
   if (!fs.existsSync(path.join(PG_BIN, 'initdb'))) return t.skip('PostgreSQL 17 unavailable');
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'gg-owner-checkout-projection-'));
   const data = path.join(temp, 'data');
-  const socket = path.join(temp, 'socket');
+  const socket = fs.mkdtempSync('/tmp/gg-sock-');
   const port = 58300 + Math.floor(Math.random() * 150);
-  fs.mkdirSync(socket);
   const init = spawnSync(path.join(PG_BIN, 'initdb'), ['-D', data, '-A', 'trust', '--no-locale'], { encoding: 'utf8' });
   assert.equal(init.status, 0, init.stderr);
   let stderr = '';
@@ -84,6 +83,9 @@ test('owner appointment checkout projection executes once on PostgreSQL and isol
       CREATE TABLE customers (id uuid PRIMARY KEY, shop_id uuid NOT NULL, name text, phone text, email text, member_code text, identity_status text, profile_notes text NULL, UNIQUE(shop_id,id), CONSTRAINT customers_profile_notes_length_check CHECK(profile_notes IS NULL OR char_length(profile_notes) <= 4000));
       CREATE TABLE services (id uuid PRIMARY KEY, shop_id uuid NOT NULL, name text, duration_minutes integer, price numeric, UNIQUE(shop_id,id));
       CREATE TABLE staff (id uuid PRIMARY KEY, shop_id uuid NOT NULL, name text, staff_code text, UNIQUE(shop_id,id));
+      CREATE TABLE shop_customer_settings (shop_id uuid PRIMARY KEY, membership_enabled boolean DEFAULT false);
+      CREATE TABLE membership_tiers (id uuid PRIMARY KEY, shop_id uuid NOT NULL, tier_code text, name text, is_active boolean DEFAULT true);
+      CREATE TABLE customer_memberships (id uuid PRIMARY KEY, shop_id uuid NOT NULL, customer_id uuid NOT NULL, tier_id uuid, status text, started_at timestamptz, expires_at timestamptz, created_at timestamptz DEFAULT now());
       CREATE TABLE appointments (
         id uuid PRIMARY KEY, shop_id uuid NOT NULL, location_id uuid NOT NULL,
         customer_id uuid NOT NULL, service_id uuid NOT NULL, staff_id uuid NOT NULL,
@@ -384,5 +386,6 @@ test('owner appointment checkout projection executes once on PostgreSQL and isol
     if (postgres.exitCode === null && postgres.signalCode === null) postgres.kill('SIGTERM');
     await postgresExit;
     fs.rmSync(temp, { recursive: true, force: true });
+    fs.rmSync(socket, { recursive: true, force: true });
   }
 });

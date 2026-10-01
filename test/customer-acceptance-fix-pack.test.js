@@ -11,6 +11,11 @@ const { normalizeSelectedPhone, normalizeDateOfBirth, CustomerMemberError } = re
 const { validateBookingPhone } = require('../server');
 const phoneSelector = require('../public/customer-phone-selector');
 const i18n = require('../public/shared-i18n');
+const vm = require('node:vm');
+const categoryFlow = require('../public/customer-category-flow');
+const cartApi = require('../public/customer-multi-service-cart');
+const shopContext = require('../public/customer-shop-context');
+const bookingCalendar = require('../public/customer-booking-calendar');
 
 const root = path.join(__dirname, '..');
 const read = file => fs.readFileSync(path.join(root, file), 'utf8');
@@ -150,4 +155,167 @@ test('calendar visual hierarchy distinguishes hours, half-hours, and quarter lab
   assert.doesNotMatch(css, /18\.75px/);
   assert.match(admin, /const FRONT_DESK_SLOT_MINUTES = 15/);
   assert.match(admin, /Math\.round\(rawMinutes \/ FRONT_DESK_SLOT_MINUTES\) \* FRONT_DESK_SLOT_MINUTES/);
+});
+
+const createCustomerPageSandbox = async phoneCountriesResponse => {
+  const html = read('public/index.html');
+  const makeElement = (tag = 'div') => {
+    let innerHTML = '';
+    let textContent = '';
+    const el = {
+      tagName: tag.toUpperCase(),
+      value: '',
+      get innerHTML() { return innerHTML; },
+      set innerHTML(val) { innerHTML = String(val); if (innerHTML === '') this.children = []; },
+      get textContent() { return this.children.length > 0 ? this.children.map(c => c.textContent).join('') : textContent; },
+      set textContent(val) { textContent = String(val); },
+      disabled: false, lang: '', href: '', options: [], dataset: {}, hidden: false, style: { display: '' },
+      children: [],
+      classList: {
+        _classes: new Set(),
+        add(c) { this._classes.add(c); },
+        remove(c) { this._classes.delete(c); },
+        toggle(c, f) { if (f ?? !this._classes.has(c)) this._classes.add(c); else this._classes.delete(c); },
+        contains(c) { return this._classes.has(c); }
+      },
+      _listeners: new Map(),
+      addEventListener(evt, fn) { if (!this._listeners.has(evt)) this._listeners.set(evt, []); this._listeners.get(evt).push(fn); },
+      click() { for (const fn of this._listeners.get('click') || []) fn({ target: this }); },
+      setAttribute(k, v) { this.dataset[k] = v; },
+      getAttribute(k) { return this.dataset[k]; },
+      appendChild(child) { this.children.push(child); if (child.tagName === 'OPTION') this.options.push(child); },
+      querySelectorAll() { return []; },
+      scrollIntoView() {}
+    };
+    return el;
+  };
+
+  const elements = new Map();
+  const contextObj = {
+    console,
+    encodeURIComponent,
+    setTimeout: (fn, ms) => setTimeout(fn, ms ?? 0),
+    clearTimeout: id => clearTimeout(id),
+    AbortController: globalThis.AbortController,
+    fetch: async (url, opts) => {
+      const urlStr = String(url);
+      if (urlStr.includes('/api/customer/phone-countries')) {
+        return typeof phoneCountriesResponse === 'function'
+          ? phoneCountriesResponse(urlStr, opts)
+          : phoneCountriesResponse;
+      }
+      if (urlStr.includes('/api/booking/context')) {
+        return { ok: true, status: 200, json: async () => ({ success: true, data: { shopSlug: 'test-shop', shopName: 'Test Shop' } }) };
+      }
+      if (urlStr.includes('/api/booking/service-categories')) {
+        return { ok: true, status: 200, json: async () => ({ success: true, data: [{ categoryId: 'cat-1', name: '美发' }] }) };
+      }
+      if (urlStr.includes('/api/services-db')) {
+        return { ok: true, status: 200, json: async () => ({ success: true, data: [{ id: 'srv-1', categoryId: 'cat-1', name: '洗剪吹', price: 68, durationMinutes: 45 }] }) };
+      }
+      return { ok: true, status: 200, json: async () => ({ success: true, data: [] }) };
+    },
+    globalThis: {
+      __CATALOGUE_TIMEOUT_MS__: 5000,
+      ggI18n: i18n,
+      ggCustomerShopContext: shopContext,
+      ggCustomerCategoryFlow: categoryFlow,
+      ggCustomerMultiServiceCart: cartApi,
+      ggCustomerBookingCalendar: bookingCalendar,
+      ggCustomerPhoneSelector: phoneSelector,
+      location: { hostname: 'localhost', pathname: '/', search: '?shop=test-shop' }
+    },
+    localStorage: { getItem: () => 'zh-CN', setItem() {} },
+    navigator: { languages: ['zh-CN'] },
+    document: {
+      title: '',
+      documentElement: { lang: 'zh-CN' },
+      getElementById: id => {
+        if (!elements.has(id)) {
+          const el = makeElement(id.includes('CountryCode') || id === 'service' ? 'select' : 'div');
+          elements.set(id, el);
+          contextObj[id] = el;
+        }
+        return elements.get(id);
+      },
+      querySelectorAll: () => [],
+      createElement: tag => makeElement(tag)
+    }
+  };
+
+  for (const id of [
+    'date', 'dateDisplay', 'service', 'times', 'message', 'languageZh', 'languageEn',
+    'shopBrandName', 'submitBtn', 'customerName', 'phone', 'email', 'categoryStep',
+    'categoryGrid', 'bookingStep', 'contactStep', 'cartPanel', 'cartItems', 'cartTotals',
+    'confirmationSummary', 'addServiceBtn', 'addAnotherBtn', 'bookForMyself', 'bookForSomeoneElse',
+    'recipientFields', 'recipientName', 'recipientPhone', 'recipientEmail', 'bookerCountryCode',
+    'recipientCountryCode', 'bookerCountrySearch', 'recipientCountrySearch',
+    'previousMonth', 'nextMonth', 'calendarTitle', 'calendarGrid',
+    'nextAvailableDates', 'serviceCards', 'servicesLoading', 'servicesEmpty', 'servicesError',
+    'servicesRetryContainer', 'servicesErrorText', 'servicesRetryBtn', 'staffSection', 'staffItemsList', 'memberEntry'
+  ]) {
+    const el = makeElement(id.includes('CountryCode') || id === 'service' ? 'select' : 'div');
+    if (id === 'servicesRetryBtn') el.dataset.i18n = 'reloadServices';
+    if (id === 'contactStep' || id === 'servicesLoading' || id === 'servicesEmpty' || id === 'servicesError' || id === 'servicesRetryContainer') {
+      el.hidden = true;
+    }
+    elements.set(id, el);
+    contextObj[id] = el;
+  }
+
+  const context = vm.createContext(contextObj);
+  const scripts = [...html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/g)];
+  const customerScript = scripts.at(-1)[1];
+  vm.runInContext(customerScript, context);
+  await new Promise(r => setTimeout(r, 80));
+  return { context, elements };
+};
+
+test('customer booking catalogue loads when phone-country API returns 500', async () => {
+  const { context, elements } = await createCustomerPageSandbox({
+    ok: false,
+    status: 500,
+    json: async () => ({ success: false, message: 'Internal Server Error' })
+  });
+  const services = vm.runInContext('availableServices', context);
+  assert.ok(Array.isArray(services));
+  assert.equal(services.length, 1);
+  assert.equal(services[0].name, '洗剪吹');
+  assert.equal(elements.get('servicesError').hidden, true);
+  assert.equal(elements.get('servicesErrorText').textContent, '');
+  assert.equal(elements.get('categoryGrid').children.length, 1);
+});
+
+test('customer booking catalogue loads when phone-country API returns invalid payload (<200 items)', async () => {
+  const { context, elements } = await createCustomerPageSandbox({
+    ok: true,
+    status: 200,
+    json: async () => ({
+      success: true,
+      data: [{ countryIso2: 'SG', callingCode: '+65', localizedName: 'Singapore' }]
+    })
+  });
+  const services = vm.runInContext('availableServices', context);
+  assert.ok(Array.isArray(services));
+  assert.equal(services.length, 1);
+  assert.equal(services[0].name, '洗剪吹');
+  assert.equal(elements.get('servicesError').hidden, true);
+  assert.equal(elements.get('servicesErrorText').textContent, '');
+  assert.equal(elements.get('categoryGrid').children.length, 1);
+});
+
+test('locale switching works when phone-country API fails', async () => {
+  const { context, elements } = await createCustomerPageSandbox({
+    ok: false,
+    status: 500,
+    json: async () => ({ success: false, message: 'Server down' })
+  });
+  assert.equal(vm.runInContext('currentLocale', context), 'zh-CN');
+  await vm.runInContext("switchLanguage('en')", context);
+  await new Promise(r => setTimeout(r, 80));
+  assert.equal(vm.runInContext('currentLocale', context), 'en');
+  assert.equal(elements.get('servicesError').hidden, true);
+  const services = vm.runInContext('availableServices', context);
+  assert.ok(Array.isArray(services));
+  assert.equal(services.length, 1);
 });

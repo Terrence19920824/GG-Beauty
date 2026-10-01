@@ -711,28 +711,56 @@ const phoneSelectorApi = globalThis.ggCustomerPhoneSelector;
 let bookerPhoneCountrySelector = null;
 let recipientPhoneCountrySelector = null;
 
+function ensurePhoneCountryFallback(select) {
+  if (!select) return;
+  if (!select.options || select.options.length === 0) {
+    const opt = select.ownerDocument?.createElement
+      ? select.ownerDocument.createElement('option')
+      : (typeof document !== 'undefined' ? document.createElement('option') : null);
+    if (opt) {
+      opt.value = 'SG';
+      opt.textContent = 'Singapore (+65)';
+      select.appendChild(opt);
+    }
+  }
+  if (!select.value) select.value = 'SG';
+}
+
 async function loadPhoneCountryOptions() {
-  if (!phoneSelectorApi || typeof phoneSelectorApi.bind !== 'function') throw new Error('PHONE_COUNTRY_SOURCE_UNAVAILABLE');
-  if (!bookerPhoneCountrySelector) {
-    bookerPhoneCountrySelector = phoneSelectorApi.bind({
-      select: bookerCountryCode,
-      searchInput: document.getElementById('bookerCountrySearch'),
-      locale: currentLocale,
-      defaultCountry: 'SG'
-    });
+  const bookerSelect = document.getElementById('bookerCountryCode');
+  const recipientSelect = document.getElementById('recipientCountryCode');
+  if (!bookerSelect || !recipientSelect) return;
+  ensurePhoneCountryFallback(bookerSelect);
+  ensurePhoneCountryFallback(recipientSelect);
+  if (!phoneSelectorApi || typeof phoneSelectorApi.bind !== 'function') return;
+  try {
+    if (!bookerPhoneCountrySelector) {
+      bookerPhoneCountrySelector = phoneSelectorApi.bind({
+        select: bookerSelect,
+        searchInput: document.getElementById('bookerCountrySearch'),
+        locale: currentLocale,
+        defaultCountry: 'SG',
+        fetchImpl: (typeof fetch === 'function' ? fetch : undefined)
+      });
+    }
+    if (!recipientPhoneCountrySelector) {
+      recipientPhoneCountrySelector = phoneSelectorApi.bind({
+        select: recipientSelect,
+        searchInput: document.getElementById('recipientCountrySearch'),
+        locale: currentLocale,
+        defaultCountry: 'SG',
+        fetchImpl: (typeof fetch === 'function' ? fetch : undefined)
+      });
+    }
+    await Promise.all([
+      bookerPhoneCountrySelector.load(currentLocale, bookerSelect.value || 'SG'),
+      recipientPhoneCountrySelector.load(currentLocale, recipientSelect.value || 'SG')
+    ]);
+  } catch (error) {
+    console.warn('Customer phone country options unavailable:', error?.message || error);
+    ensurePhoneCountryFallback(bookerSelect);
+    ensurePhoneCountryFallback(recipientSelect);
   }
-  if (!recipientPhoneCountrySelector) {
-    recipientPhoneCountrySelector = phoneSelectorApi.bind({
-      select: recipientCountryCode,
-      searchInput: document.getElementById('recipientCountrySearch'),
-      locale: currentLocale,
-      defaultCountry: 'SG'
-    });
-  }
-  await Promise.all([
-    bookerPhoneCountrySelector.load(currentLocale, bookerCountryCode.value || 'SG'),
-    recipientPhoneCountrySelector.load(currentLocale, recipientCountryCode.value || 'SG')
-  ]);
 }
 
 function explicitContactPhone(countryCode, value) {
@@ -749,7 +777,17 @@ function isValidCustomerPhone(countryCode, value) {
   if ((raw.match(/\+/g) || []).length > 1) return false;
   if (raw.includes('+') && !raw.startsWith('+')) return false;
 
-  const selectedCountry = String(countryCode || '').trim().toUpperCase();
+  let selectedCountry = String(countryCode || '').trim().toUpperCase();
+  if (selectedCountry.startsWith('+') || /^\d+$/.test(selectedCountry)) {
+    const code = selectedCountry.startsWith('+') ? selectedCountry : `+${selectedCountry}`;
+    const legacyMap = { '+65': 'SG', '+86': 'CN', '+60': 'MY', '+62': 'ID', '+1': 'US' };
+    if (legacyMap[code]) {
+      selectedCountry = legacyMap[code];
+    }
+  }
+  if (!selectedCountry) {
+    selectedCountry = 'SG';
+  }
   if (!/^[A-Z]{2}$/.test(selectedCountry)) return false;
   const compact = raw.replace(/[\s\-().]/g, '');
   return raw.startsWith('+')

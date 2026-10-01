@@ -25,7 +25,7 @@ test('authenticated booking query is scoped by server-supplied shop and customer
 test('my-bookings resolves identity from the authenticated cookie, not request customer data', () => {
   const server = read('server.js');
   const route = server.slice(server.indexOf("app.post('/api/customer/my-bookings'"), server.indexOf("app.get('/api/calendar/appointment.ics'"));
-  assert.match(route, /customerMemberIdentity\.authenticate\(sessionToken\)/);
+  assert.match(route, /(?:resolveCustomerMemberIdentity\(\)\.authenticate|customerMemberIdentity\.authenticate)\(sessionToken\)/);
   assert.match(route, /customerId: customerSession\.customer_id/);
   assert.match(route, /shopId: customerSession\.shop_id/);
   assert.match(route, /customerSession\.shop_slug !== normalizedSlug/);
