@@ -3322,6 +3322,19 @@ app.post('/api/new-db', async (req, res) => {
       } catch (calErr) {
         console.error('Calendar generation error:', safeStaffAuthErrorCode(calErr));
       }
+
+      try {
+        const poolToUse = req.app.locals.bookingPool || pool;
+        await createBookingNotification(poolToUse, {
+          shopId: created.appointment.shop_id,
+          appointmentId: created.appointment.id,
+          eventType: 'booking_created',
+          dedupeSource: `customer_booking_${created.appointment.id}`
+        });
+      } catch (notifErr) {
+        console.error('Customer booking notification error:', safeStaffAuthErrorCode(notifErr));
+      }
+
       return res.json({ success: true, message: '预约成功', data: {
         id: created.appointment.id, appointment_no: created.appointment.appointment_no,
         start_at: created.appointment.start_at, end_at: created.appointment.end_at,
