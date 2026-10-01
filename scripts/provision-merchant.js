@@ -103,11 +103,20 @@ const run = async () => {
       '  --tenant-mode <mode>              Tenant mode: live | demo | test (default: live)\n' +
       '  --location-name <name>            Primary location name (default: Main Branch)\n' +
       '  --timezone <iana-tz>              Location timezone (default: Asia/Singapore)\n' +
-      '  --categories-json <json-array>    JSON array of { name, description }\n' +
-      '  --owner-login <login>             Initial owner login identifier\n' +
+      '  --categories-json <json-array>    JSON array of categories, e.g. \'[{"canonicalName":"Hair","nameZh":"美发","nameEn":"Hair"}]\'\n' +
+      '  --owner-login <login>             Initial owner login identifier (password entered via secure prompt)\n' +
       '  --owner-name <display-name>       Initial owner display name\n' +
       '  --help, -h                        Show this help message\n'
     );
+    return;
+  }
+
+  if (cliArgs['owner-password'] || cliArgs.ownerPassword) {
+    process.stderr.write(
+      'Security error: Plaintext passwords cannot be supplied via --owner-password command-line argument.\n' +
+      'Pass --owner-login to enter the password securely via hidden interactive prompt.\n'
+    );
+    process.exitCode = 1;
     return;
   }
 
@@ -171,16 +180,12 @@ const run = async () => {
       }
     }
 
-    let password = cliArgs['owner-password'] || cliArgs.ownerPassword;
-    if (!password) {
-      password = await readHiddenInput('Owner password: ');
-      const confirm = await readHiddenInput('Confirm owner password: ');
-      if (password !== confirm) {
-        password = null;
-        process.stderr.write('Passwords do not match.\n');
-        process.exitCode = 1;
-        return;
-      }
+    const password = await readHiddenInput('Owner password: ');
+    const confirm = await readHiddenInput('Confirm owner password: ');
+    if (password !== confirm) {
+      process.stderr.write('Passwords do not match.\n');
+      process.exitCode = 1;
+      return;
     }
 
     if (password.length < MIN_PASSWORD_LENGTH) {
