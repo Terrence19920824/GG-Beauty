@@ -230,11 +230,15 @@ test('Migration numbering continuity verification', () => {
   const numbers = files.map(f => parseInt(f.slice(0, 3), 10));
   const maxNumber = Math.max(...numbers);
 
-  assert.equal(maxNumber, 100, 'Highest migration number must now be 100');
+  assert.equal(maxNumber, 103, 'Highest migration number must now be 103');
   assert.ok(files.includes('098_merchant_onboarding_invitation_preflight_readonly.sql'));
   assert.ok(files.includes('099_merchant_onboarding_invitation_schema.sql'));
   assert.ok(files.includes('100_merchant_onboarding_invitation_verification_readonly.sql'));
+  assert.ok(files.includes('101_merchant_business_defaults_preflight_readonly.sql'));
+  assert.ok(files.includes('102_merchant_business_defaults_schema.sql'));
+  assert.ok(files.includes('103_merchant_business_defaults_verification_readonly.sql'));
 
   const rollbackFiles = fs.readdirSync(path.join(migrationsDir, 'rollback'));
   assert.ok(rollbackFiles.includes('099_merchant_onboarding_invitation_rollback.sql'));
+  assert.ok(rollbackFiles.includes('102_merchant_business_defaults_rollback.sql'));
 });

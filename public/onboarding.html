@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="referrer" content="no-referrer">
+  <title data-i18n="onboardingPageTitle">Merchant Setup | GG-Beauty</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: Arial, "PingFang SC", sans-serif;
+      background: #f7f3f5;
+      color: #2d2429;
+    }
+
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; background: linear-gradient(180deg, #fbf8fa 0%, #f4eef1 100%); }
+    button, input, select { font: inherit; }
+    button, input, select { min-height: 44px; }
+    [hidden] { display: none !important; }
+
+    .page { width: min(100% - 32px, 760px); margin: 0 auto; padding: 24px 0 56px; }
+    .topbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 20px; }
+    .brand { font-weight: 800; letter-spacing: .02em; color: #7c3f5d; }
+    .language-switch { display: flex; gap: 6px; padding: 4px; border: 1px solid #dfd1d8; border-radius: 12px; background: #fff; }
+    .language-switch button { min-width: 64px; border: 0; border-radius: 8px; padding: 8px 12px; color: #604e57; background: transparent; cursor: pointer; }
+    .language-switch button[aria-pressed="true"] { background: #7c3f5d; color: #fff; }
+
+    .card { padding: clamp(22px, 5vw, 42px); border: 1px solid #eadfe4; border-radius: 20px; background: #fff; box-shadow: 0 18px 55px rgba(67, 42, 54, .10); }
+    .kicker { margin: 0 0 8px; color: #8c4968; font-size: 13px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+    h1 { margin: 0; font-size: clamp(27px, 5vw, 38px); line-height: 1.15; }
+    .intro { max-width: 620px; margin: 12px 0 0; color: #6f6067; line-height: 1.6; }
+
+    .status { margin-top: 28px; padding: 22px; border-radius: 14px; background: #f8f3f5; text-align: center; }
+    .status.error { background: #fff1f2; color: #842b3b; }
+    .status.success { background: #edf8f2; color: #205c43; }
+    .status h2 { margin: 0 0 8px; font-size: 21px; }
+    .status p { margin: 0; line-height: 1.55; }
+
+    form { margin-top: 30px; }
+    fieldset { margin: 0; padding: 0; border: 0; }
+    fieldset + fieldset { margin-top: 32px; padding-top: 28px; border-top: 1px solid #eee5e9; }
+    legend { padding: 0; font-size: 19px; font-weight: 800; }
+    .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; margin-top: 18px; }
+    .field.full { grid-column: 1 / -1; }
+    label { display: block; margin-bottom: 7px; font-weight: 700; }
+    input, select { width: 100%; border: 1px solid #d8cbd1; border-radius: 10px; padding: 10px 12px; background: #fff; color: #2d2429; }
+    input:focus, select:focus, button:focus-visible { outline: 3px solid rgba(140, 73, 104, .2); outline-offset: 2px; border-color: #8c4968; }
+    .help { display: block; margin-top: 7px; color: #74656c; font-size: 13px; line-height: 1.45; }
+    .password-row { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
+    .password-toggle { min-width: 116px; border: 1px solid #d8cbd1; border-radius: 10px; padding: 8px 12px; color: #684959; background: #fff; cursor: pointer; }
+    .form-error { min-height: 24px; margin: 20px 0 0; color: #a12d3c; line-height: 1.5; }
+    .primary { width: 100%; margin-top: 10px; border: 0; border-radius: 11px; padding: 12px 18px; background: #7c3f5d; color: #fff; font-weight: 800; cursor: pointer; }
+    .primary:disabled { opacity: .65; cursor: wait; }
+    .login-link { display: inline-flex; min-height: 44px; margin-top: 18px; align-items: center; justify-content: center; border-radius: 10px; padding: 10px 18px; background: #276749; color: #fff; font-weight: 800; text-decoration: none; }
+
+    @media (max-width: 620px) {
+      .page { width: min(100% - 20px, 760px); padding-top: 12px; }
+      .topbar { align-items: flex-start; }
+      .card { border-radius: 16px; }
+      .grid { grid-template-columns: 1fr; }
+      .field.full { grid-column: auto; }
+      .password-row { grid-template-columns: 1fr; }
+      .password-toggle { width: 100%; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <header class="topbar">
+      <div class="brand">GG-Beauty</div>
+      <div class="language-switch" role="group" data-i18n-aria="onboardingLanguageLabel">
+        <button id="language-zh" type="button" data-i18n="onboardingChinese">Chinese</button>
+        <button id="language-en" type="button" data-i18n="onboardingEnglish">English</button>
+      </div>
+    </header>
+
+    <section class="card">
+      <p class="kicker" data-i18n="onboardingKicker">GG-Beauty Merchant Setup</p>
+      <h1 data-i18n="onboardingTitle">Create your merchant account</h1>
+      <p class="intro" data-i18n="onboardingIntro">Enter your business details and set your own Owner password.</p>
+
+      <section id="invitation-status" class="status" role="status" aria-live="polite">
+        <h2 id="status-title" data-i18n="onboardingChecking">Validating invitation…</h2>
+        <p id="status-body"></p>
+      </section>
+
+      <form id="onboarding-form" hidden novalidate>
+        <fieldset>
+          <legend data-i18n="onboardingBusinessSection">Business details</legend>
+          <div class="grid">
+            <div class="field full">
+              <label for="business-name" data-i18n="onboardingBusinessName">Business / shop name</label>
+              <input id="business-name" name="businessName" autocomplete="organization" maxlength="200" required>
+            </div>
+            <div class="field full">
+              <label for="slug" data-i18n="onboardingSlug">Shop identifier</label>
+              <input id="slug" name="slug" inputmode="url" autocomplete="off" maxlength="100" pattern="[a-z0-9]+(?:-[a-z0-9]+)*" required>
+              <small class="help" data-i18n="onboardingSlugHelp">Use lowercase letters, numbers, and single hyphens only.</small>
+            </div>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend data-i18n="onboardingLocationSection">First location</legend>
+          <div class="grid">
+            <div class="field full">
+              <label for="location-name" data-i18n="onboardingLocationName">Location name</label>
+              <input id="location-name" name="locationName" autocomplete="organization-title" maxlength="200" required>
+            </div>
+            <div class="field">
+              <label for="country" data-i18n="onboardingCountry">Country</label>
+              <select id="country" name="country" required>
+                <option value="SG" data-i18n="onboardingCountrySG">Singapore</option>
+                <option value="MY" data-i18n="onboardingCountryMY">Malaysia</option>
+                <option value="ID" data-i18n="onboardingCountryID">Indonesia</option>
+                <option value="CN" data-i18n="onboardingCountryCN">China</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="timezone" data-i18n="onboardingTimezone">Timezone</label>
+              <input id="timezone" name="timezone" value="Asia/Singapore" autocomplete="off" maxlength="100" required>
+            </div>
+            <div class="field">
+              <label for="currency-code" data-i18n="onboardingCurrency">Currency code</label>
+              <input id="currency-code" name="currencyCode" value="SGD" autocomplete="off" maxlength="3" pattern="[A-Za-z]{3}" required>
+            </div>
+            <div class="field">
+              <label for="business-locale" data-i18n="onboardingLocale">Preferred language</label>
+              <select id="business-locale" name="locale" required>
+                <option value="zh-CN" data-i18n="onboardingChinese">Chinese</option>
+                <option value="en" data-i18n="onboardingEnglish">English</option>
+              </select>
+            </div>
+            <div class="field full">
+              <label for="address" data-i18n="onboardingAddress">Business address (optional)</label>
+              <input id="address" name="address" autocomplete="street-address" maxlength="255">
+            </div>
+            <div class="field">
+              <label for="postal-code" data-i18n="onboardingPostalCode">Postal code (optional)</label>
+              <input id="postal-code" name="postalCode" autocomplete="postal-code" maxlength="16">
+            </div>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend data-i18n="onboardingOwnerSection">Owner account</legend>
+          <div class="grid">
+            <div class="field">
+              <label for="owner-name" data-i18n="onboardingOwnerName">Owner display name</label>
+              <input id="owner-name" name="ownerDisplayName" autocomplete="name" maxlength="200" required>
+            </div>
+            <div class="field">
+              <label for="owner-login" data-i18n="onboardingOwnerLogin">Owner login identifier</label>
+              <input id="owner-login" name="ownerLoginIdentifier" autocomplete="username" maxlength="200" required>
+            </div>
+            <div class="field full">
+              <label for="password" data-i18n="onboardingPassword">Password</label>
+              <div class="password-row">
+                <input id="password" name="password" type="password" autocomplete="new-password" minlength="16" maxlength="72" required>
+                <button class="password-toggle" type="button" data-i18n="onboardingShowPassword">Show password</button>
+              </div>
+              <small class="help" data-i18n="onboardingPasswordHelp">Use between 16 and 72 characters and a unique password.</small>
+            </div>
+            <div class="field full">
+              <label for="password-confirmation" data-i18n="onboardingPasswordConfirm">Confirm password</label>
+              <input id="password-confirmation" name="passwordConfirmation" type="password" autocomplete="new-password" minlength="16" maxlength="72" required>
+            </div>
+          </div>
+        </fieldset>
+
+        <p id="form-error" class="form-error" role="alert" aria-live="assertive"></p>
+        <button id="submit-button" class="primary" type="submit" data-i18n="onboardingSubmit">Create merchant account</button>
+      </form>
+
+      <section id="success-state" class="status success" hidden aria-live="polite">
+        <h2 data-i18n="onboardingSuccessTitle">Merchant account created</h2>
+        <p data-i18n="onboardingSuccessBody">Your shop and Owner account were created securely.</p>
+        <a class="login-link" href="/admin.html" data-i18n="onboardingContinueLogin">Continue to Owner login</a>
+      </section>
+    </section>
+  </main>
+
+  <script src="/shared-i18n.js"></script>
+  <script src="/merchant-onboarding.js"></script>
+</body>
+</html>

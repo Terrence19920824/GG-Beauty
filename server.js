@@ -35,6 +35,9 @@ const {
   createOwnerAuth
 } = require('./lib/owner-auth');
 const {
+  createMerchantOnboarding
+} = require('./lib/merchant-onboarding');
+const {
   createOwnerStaffManagement
 } = require('./lib/owner-staff-management');
 const {
@@ -133,6 +136,7 @@ const pool = new Pool({
 app.locals.bookingPool = pool;
 app.locals.bookingValidator = validateStaffBookability;
 app.locals.ownerAuthPool = pool;
+app.locals.merchantOnboardingPool = pool;
 app.locals.customerOtpProvider = null;
 
 // ==================================================
@@ -152,6 +156,15 @@ app.get('/book/:shopSlug', (req, res) => {
   const shopSlug = typeof req.params.shopSlug === 'string' ? req.params.shopSlug.trim().toLowerCase() : '';
   if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(shopSlug) || shopSlug.length > 100) return res.status(404).end();
   return res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+app.get('/onboarding.html', (_req, res) => {
+  res.set({
+    'Cache-Control': 'no-store, no-cache, must-revalidate, private',
+    Pragma: 'no-cache',
+    Expires: '0',
+    'Referrer-Policy': 'no-referrer'
+  });
+  return res.sendFile(path.join(__dirname, 'public', 'onboarding.html'));
 });
 app.use(express.static('public'));
 
@@ -768,6 +781,26 @@ const {
 app.post('/api/owner/login', ownerLogin);
 app.get('/api/owner/me', requireOwnerAuth, ownerMe);
 app.post('/api/owner/logout', ownerLogout);
+
+const merchantOnboarding = createMerchantOnboarding({
+  pool: {
+    query: (...args) =>
+      app.locals.merchantOnboardingPool.query(...args),
+    connect: (...args) =>
+      app.locals.merchantOnboardingPool.connect(...args)
+  },
+  isSameOriginRequest,
+  safeErrorCode: safeStaffAuthErrorCode
+});
+
+app.post(
+  '/api/merchant-onboarding/invitation/validate',
+  merchantOnboarding.validateInvitation
+);
+app.post(
+  '/api/merchant-onboarding/invitation/consume',
+  merchantOnboarding.consumeInvitation
+);
 
 const requireOwnerRole = allowedRoles =>
   (req, res, next) => {
