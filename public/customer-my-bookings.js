@@ -94,6 +94,12 @@
     if (zhBtn) zhBtn.disabled = currentLocale === 'zh-CN';
     const enBtn = root.document.getElementById('languageEn');
     if (enBtn) enBtn.disabled = currentLocale === 'en';
+    const switchBtn = root.document.getElementById('languageSwitchBtn');
+    if (switchBtn) {
+      const label = currentLocale === 'zh-CN' ? '切换语言' : 'Change language';
+      switchBtn.setAttribute('aria-label', label);
+      switchBtn.setAttribute('title', label);
+    }
 
     const backLink = root.document.getElementById('backLink');
     if (backLink && currentShopSlug) {
@@ -325,6 +331,14 @@
 
     const enBtn = root.document.getElementById('languageEn');
     if (enBtn) enBtn.addEventListener('click', () => setLocale('en'));
+
+    const switchBtn = root.document.getElementById('languageSwitchBtn');
+    if (switchBtn) {
+      switchBtn.addEventListener('click', () => {
+        const nextLocale = currentLocale === 'zh-CN' ? 'en' : 'zh-CN';
+        setLocale(nextLocale);
+      });
+    }
 
     const queryBtn = root.document.getElementById('queryBtn');
     if (queryBtn) queryBtn.addEventListener('click', executeQuery);

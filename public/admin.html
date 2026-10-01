@@ -662,22 +662,67 @@
 
   <div class="header">
     <div>
-      <button id="adminLanguageZh" class="refresh-btn" type="button" onclick="setAdminLocale('zh-CN')">中文</button>
-      <button id="adminLanguageEn" class="refresh-btn" type="button" onclick="setAdminLocale('en')">EN</button>
+      <button id="adminLanguageZh" class="refresh-btn" type="button">中文</button>
+      <button id="adminLanguageEn" class="refresh-btn" type="button">EN</button>
       <h1 data-i18n="ownerTitle">GG-Beauty 老板端</h1>
       <p data-i18n="ownerSubtitle">预约管理后台</p>
     </div>
 
-    <div>
+    <div class="unified-header-actions">
+      <!-- 1. Refresh Button (Authoritative Data Refresh) -->
       <button
-        class="refresh-btn"
-        onclick="loadAppointments()"
+        id="adminRefreshBtn"
+        class="header-action-btn"
+        type="button"
+        aria-label="刷新"
+        title="刷新"
+        data-i18n-aria="refreshData"
+        data-i18n-title="refreshData"
       >
-        <span data-i18n="refreshAppointments">刷新预约</span>
+        <svg class="refresh-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
+        </svg>
       </button>
+
+      <!-- 2. Language Switch Icon Button (文+A) -->
       <button
+        id="adminLanguageToggleBtn"
+        class="header-action-btn"
+        type="button"
+        aria-label="切换语言"
+        title="切换语言"
+        data-i18n-aria="changeLanguage"
+        data-i18n-title="changeLanguage"
+      >
+        <svg class="lang-icon-svg" width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <text x="2" y="11" font-size="11" font-weight="700" font-family="-apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif">文</text>
+          <text x="12" y="21" font-size="12" font-weight="700" font-family="-apple-system, BlinkMacSystemFont, sans-serif">A</text>
+        </svg>
+      </button>
+
+      <!-- 3. Notification Bell with Badge -->
+      <button
+        id="adminNotificationBellBtn"
+        class="header-action-btn"
+        type="button"
+        aria-label="通知"
+        title="通知"
+        data-i18n-aria="notifications"
+        data-i18n-title="notifications"
+      >
+        <svg class="bell-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
+          <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
+        </svg>
+        <span id="adminNotificationBadge" class="notification-badge is-hidden" aria-hidden="true">0</span>
+      </button>
+
+      <!-- 4. Account/Logout -->
+      <button
+        id="adminLogoutBtn"
         class="refresh-btn"
-        onclick="ownerLogout()"
+        type="button"
+        style="min-height: 44px;"
       >
         <span data-i18n="logout">退出登录</span>
       </button>
@@ -887,6 +932,27 @@
   </div>
   <div class="drawer-body" id="drawerBody"></div>
   <div class="drawer-footer" id="drawerFooter"></div>
+</aside>
+<div id="adminNotificationBackdrop" class="notification-drawer-backdrop"></div>
+<aside id="adminNotificationDrawer" class="notification-drawer" role="dialog" aria-modal="true" aria-label="通知中心">
+  <div class="notification-drawer-header">
+    <div class="notification-drawer-header-left">
+      <h3 class="notification-drawer-title" data-i18n="notificationCenter">通知中心</h3>
+    </div>
+    <div class="notification-drawer-actions">
+      <button id="adminMarkAllReadBtn" class="notification-mark-all-btn" type="button" data-i18n="markAllRead">全部已读</button>
+      <button id="adminNotificationCloseBtn" class="notification-drawer-close-btn" type="button" aria-label="关闭">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="18" y1="6" x2="6" y2="18"></line>
+          <line x1="6" y1="6" x2="18" y2="18"></line>
+        </svg>
+      </button>
+    </div>
+  </div>
+  <div class="notification-drawer-body">
+    <div id="adminNotificationList" class="notification-list"></div>
+    <div id="adminNotificationEmpty" class="notification-empty-state" style="display:none;" data-i18n="noNotifications">暂无通知</div>
+  </div>
 </aside>
 <div id="adminToast" class="admin-toast" role="status" aria-live="polite" hidden></div>
 
@@ -2657,6 +2723,9 @@ function setAdminLocale(locale) {
       document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
         el.placeholder = adminT(el.dataset.i18nPlaceholder);
       });
+      document.querySelectorAll('[data-i18n-aria]').forEach(el => {
+        el.setAttribute('aria-label', adminT(el.dataset.i18nAria));
+      });
     }
   }
   let zhBtn = null;
@@ -2677,6 +2746,245 @@ function setAdminLocale(locale) {
   restoreAdminLocaleViewState(viewState);
 }
 globalScope.setAdminLocale = setAdminLocale;
+
+function toggleAdminLanguage() {
+  const current = (globalThis.ownerSelfService?._state?.locale || (globalThis.ggI18n?.getStoredLocale && globalThis.ggI18n.getStoredLocale(getViewStorage(), typeof navigator !== 'undefined' ? navigator : null)) || 'zh-CN');
+  const next = current === 'zh-CN' ? 'en' : 'zh-CN';
+  setAdminLocale(next);
+}
+globalScope.toggleAdminLanguage = toggleAdminLanguage;
+
+let isAdminRefreshing = false;
+async function handleAdminRefresh() {
+  if (isAdminRefreshing) return;
+  isAdminRefreshing = true;
+  const btn = safeGetElement('adminRefreshBtn');
+  const icon = btn ? btn.querySelector('.refresh-icon') : null;
+  if (icon) icon.classList.add('is-spinning');
+  if (btn) btn.disabled = true;
+
+  try {
+    if (typeof loadAppointments === 'function') {
+      await loadAppointments();
+    }
+    if (typeof updateAdminNotificationCount === 'function') {
+      await updateAdminNotificationCount();
+    }
+  } catch (err) {
+    console.error('Refresh appointments error:', err);
+  } finally {
+    if (icon) icon.classList.remove('is-spinning');
+    if (btn) btn.disabled = false;
+    isAdminRefreshing = false;
+  }
+}
+globalScope.handleAdminRefresh = handleAdminRefresh;
+
+let adminNotifications = [];
+
+async function updateAdminNotificationCount() {
+  const badge = safeGetElement('adminNotificationBadge');
+  if (!badge) return;
+  try {
+    const res = await fetch('/api/owner/notifications/unread-count');
+    if (!res.ok) return;
+    const body = await res.json();
+    if (body.success && body.data) {
+      const count = Number(body.data.unreadCount) || 0;
+      if (count <= 0) {
+        badge.classList.add('is-hidden');
+        badge.textContent = '0';
+      } else {
+        badge.classList.remove('is-hidden');
+        badge.textContent = count >= 10 ? '9+' : String(count);
+      }
+    }
+  } catch (_) {}
+}
+globalScope.updateAdminNotificationCount = updateAdminNotificationCount;
+
+async function toggleAdminNotifications() {
+  const drawer = safeGetElement('adminNotificationDrawer');
+  if (!drawer) return;
+  const isOpen = drawer.classList.contains('is-open');
+  if (isOpen) {
+    closeAdminNotifications();
+  } else {
+    await openAdminNotifications();
+  }
+}
+globalScope.toggleAdminNotifications = toggleAdminNotifications;
+
+function closeAdminNotifications() {
+  const drawer = safeGetElement('adminNotificationDrawer');
+  const backdrop = safeGetElement('adminNotificationBackdrop');
+  if (drawer) drawer.classList.remove('is-open');
+  if (backdrop) backdrop.classList.remove('is-open');
+}
+globalScope.closeAdminNotifications = closeAdminNotifications;
+
+async function openAdminNotifications() {
+  const drawer = safeGetElement('adminNotificationDrawer');
+  const backdrop = safeGetElement('adminNotificationBackdrop');
+  if (drawer) drawer.classList.add('is-open');
+  if (backdrop) backdrop.classList.add('is-open');
+  await loadAdminNotifications();
+}
+globalScope.openAdminNotifications = openAdminNotifications;
+
+async function loadAdminNotifications() {
+  const listEl = safeGetElement('adminNotificationList');
+  const emptyEl = safeGetElement('adminNotificationEmpty');
+  if (!listEl) return;
+  const currentLocale = globalThis.ownerSelfService?._state?.locale || 'zh-CN';
+  try {
+    const res = await fetch(`/api/owner/notifications?limit=30&locale=${encodeURIComponent(currentLocale)}`);
+    if (!res.ok) return;
+    const body = await res.json();
+    if (body.success && body.data) {
+      adminNotifications = body.data.notifications || [];
+      renderAdminNotificationList();
+      const count = Number(body.data.unreadCount) || 0;
+      const badge = safeGetElement('adminNotificationBadge');
+      if (badge) {
+        if (count <= 0) {
+          badge.classList.add('is-hidden');
+          badge.textContent = '0';
+        } else {
+          badge.classList.remove('is-hidden');
+          badge.textContent = count >= 10 ? '9+' : String(count);
+        }
+      }
+    }
+  } catch (err) {
+    console.error('Failed to load notifications:', err);
+  }
+}
+globalScope.loadAdminNotifications = loadAdminNotifications;
+
+function renderAdminNotificationList() {
+  const listEl = safeGetElement('adminNotificationList');
+  const emptyEl = safeGetElement('adminNotificationEmpty');
+  if (!listEl) return;
+  listEl.replaceChildren();
+
+  if (!adminNotifications || adminNotifications.length === 0) {
+    if (emptyEl) emptyEl.style.display = 'block';
+    return;
+  }
+  if (emptyEl) emptyEl.style.display = 'none';
+
+  adminNotifications.forEach(notif => {
+    const item = document.createElement('div');
+    item.className = `notification-item ${notif.isRead ? '' : 'is-unread'}`;
+    item.setAttribute('role', 'button');
+    item.setAttribute('tabindex', '0');
+
+    const summary = document.createElement('div');
+    summary.className = 'notification-item-summary';
+    summary.textContent = notif.summary;
+
+    const meta = document.createElement('div');
+    meta.className = 'notification-item-meta';
+    const timeSpan = document.createElement('span');
+    timeSpan.textContent = notif.createdAt ? new Date(notif.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+    meta.appendChild(timeSpan);
+
+    item.appendChild(summary);
+    item.appendChild(meta);
+
+    const selectNotification = () => handleAdminNotificationClick(notif);
+    item.addEventListener('click', selectNotification);
+    item.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        selectNotification();
+      }
+    });
+
+    listEl.appendChild(item);
+  });
+}
+globalScope.renderAdminNotificationList = renderAdminNotificationList;
+
+async function handleAdminNotificationClick(notif) {
+  if (!notif) return;
+  if (!notif.isRead) {
+    notif.isRead = true;
+    renderAdminNotificationList();
+    try {
+      await fetch(`/api/owner/notifications/${encodeURIComponent(notif.id)}/read`, { method: 'PATCH' });
+      await updateAdminNotificationCount();
+    } catch (_) {}
+  }
+
+  closeAdminNotifications();
+  if (!notif.appointmentId) return;
+
+  let targetAppt = Array.isArray(currentAppointmentsSnapshot)
+    ? currentAppointmentsSnapshot.find(a => a.id === notif.appointmentId)
+    : null;
+
+  if (!targetAppt && notif.appointment?.startAt) {
+    const apptDate = notif.appointment.startAt.slice(0, 10);
+    if (typeof selectedDate !== 'undefined' && apptDate && apptDate !== selectedDate) {
+      if (typeof setCalendarDate === 'function') {
+        setCalendarDate(apptDate);
+      } else if (typeof loadAppointments === 'function') {
+        selectedDate = apptDate;
+        await loadAppointments();
+      }
+      targetAppt = Array.isArray(currentAppointmentsSnapshot)
+        ? currentAppointmentsSnapshot.find(a => a.id === notif.appointmentId)
+        : null;
+    }
+  }
+
+  if (targetAppt) {
+    if (typeof openAppointmentDrawer === 'function') {
+      openAppointmentDrawer(targetAppt);
+    }
+  } else {
+    if (typeof renderAppointmentDrawerById === 'function') {
+      const opened = renderAppointmentDrawerById(notif.appointmentId);
+      if (opened) {
+        const drawer = safeGetElement('appointmentDrawer');
+        const backdrop = safeGetElement('appointmentDrawerBackdrop');
+        if (drawer && backdrop) {
+          drawer.hidden = false;
+          backdrop.hidden = false;
+          drawer.classList.add('open');
+          backdrop.classList.add('visible');
+        }
+        return;
+      }
+    }
+    if (typeof showAdminToast === 'function') {
+      showAdminToast(adminT('appointmentNotFound'), 'info');
+    } else {
+      alert(adminT('appointmentNotFound'));
+    }
+  }
+}
+globalScope.handleAdminNotificationClick = handleAdminNotificationClick;
+
+async function handleAdminMarkAllRead() {
+  try {
+    const res = await fetch('/api/owner/notifications/mark-all-read', { method: 'POST' });
+    if (res.ok) {
+      adminNotifications.forEach(n => { n.isRead = true; });
+      renderAdminNotificationList();
+      const badge = document.getElementById('adminNotificationBadge');
+      if (badge) {
+        badge.classList.add('is-hidden');
+        badge.textContent = '0';
+      }
+    }
+  } catch (err) {
+    console.error('Failed to mark all notifications read:', err);
+  }
+}
+globalScope.handleAdminMarkAllRead = handleAdminMarkAllRead;
 
 function showLogin(message = '') {
   if (typeof closeAppointmentDrawer === 'function') {
@@ -3170,6 +3478,7 @@ async function loadAppointments(targetLocationId = '') {
 
     acceptAuthoritativeAppointments(appointments);
     renderAppointmentsView();
+    updateAdminNotificationCount();
 
   } catch (error) {
 
@@ -4185,7 +4494,8 @@ function renderAppointmentDrawer(appointment) {
       appendDrawerField(customerSection, adminT('booker'), `${recipientName} (${adminT('bookerSameAsRecipient')})`, 'notranslate');
     }
 
-    if (phoneToContact) {
+    const isMaskedContactPhone = Boolean(phoneToContact && phoneToContact.includes('*'));
+    if (phoneToContact && !isMaskedContactPhone) {
       const actions = drawerElement('div', 'drawer-contact-actions');
       for (const [href, className, label] of [[telUri, 'drawer-call-btn', adminT('callCustomer')], [waUri, 'drawer-whatsapp-btn', adminT('openWhatsApp')]]) {
         const link = drawerElement('a', `drawer-action-link ${className}`, label);
@@ -4791,6 +5101,55 @@ globalScope.setAdminProfile = function(profile) { currentAdminProfile = profile;
 globalScope.getActiveDrawerMode = function() { return activeDrawerMode; };
 globalScope.setActiveDrawerMode = function(mode) { activeDrawerMode = mode; };
 
+function setupUnifiedHeaderActions() {
+  const refreshBtn = safeGetElement('adminRefreshBtn');
+  if (refreshBtn && !refreshBtn._bound) {
+    refreshBtn.addEventListener('click', handleAdminRefresh);
+    refreshBtn._bound = true;
+  }
+  const langToggleBtn = safeGetElement('adminLanguageToggleBtn');
+  if (langToggleBtn && !langToggleBtn._bound) {
+    langToggleBtn.addEventListener('click', toggleAdminLanguage);
+    langToggleBtn._bound = true;
+  }
+  const legacyZhBtn = safeGetElement('adminLanguageZh');
+  if (legacyZhBtn && !legacyZhBtn._bound) {
+    legacyZhBtn.addEventListener('click', () => setAdminLocale('zh-CN'));
+    legacyZhBtn._bound = true;
+  }
+  const legacyEnBtn = safeGetElement('adminLanguageEn');
+  if (legacyEnBtn && !legacyEnBtn._bound) {
+    legacyEnBtn.addEventListener('click', () => setAdminLocale('en'));
+    legacyEnBtn._bound = true;
+  }
+  const bellBtn = safeGetElement('adminNotificationBellBtn');
+  if (bellBtn && !bellBtn._bound) {
+    bellBtn.addEventListener('click', toggleAdminNotifications);
+    bellBtn._bound = true;
+  }
+  const logoutBtn = safeGetElement('adminLogoutBtn');
+  if (logoutBtn && !logoutBtn._bound) {
+    logoutBtn.addEventListener('click', ownerLogout);
+    logoutBtn._bound = true;
+  }
+  const backdrop = safeGetElement('adminNotificationBackdrop');
+  if (backdrop && !backdrop._bound) {
+    backdrop.addEventListener('click', closeAdminNotifications);
+    backdrop._bound = true;
+  }
+  const markAllBtn = safeGetElement('adminMarkAllReadBtn');
+  if (markAllBtn && !markAllBtn._bound) {
+    markAllBtn.addEventListener('click', handleAdminMarkAllRead);
+    markAllBtn._bound = true;
+  }
+  const closeBtn = safeGetElement('adminNotificationCloseBtn');
+  if (closeBtn && !closeBtn._bound) {
+    closeBtn.addEventListener('click', closeAdminNotifications);
+    closeBtn._bound = true;
+  }
+}
+globalScope.setupUnifiedHeaderActions = setupUnifiedHeaderActions;
+
 document.addEventListener(
   'DOMContentLoaded',
   () => {
@@ -4799,6 +5158,9 @@ document.addEventListener(
     }
     if (typeof setupAppointmentDrawer === 'function') {
       setupAppointmentDrawer();
+    }
+    if (typeof setupUnifiedHeaderActions === 'function') {
+      setupUnifiedHeaderActions();
     }
     return initializeAdmin();
   }

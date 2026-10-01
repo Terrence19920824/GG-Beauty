@@ -849,9 +849,48 @@
     <header>
       <div class="top-row">
         <h1 id="page-title">My Appointments</h1>
+        <div class="unified-header-actions">
+          <button
+            id="staff-refresh-btn"
+            class="header-action-btn"
+            type="button"
+            aria-label="Refresh"
+            title="Refresh"
+          >
+            <svg class="refresh-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
+            </svg>
+          </button>
+          <button
+            id="staff-language-toggle-btn"
+            class="header-action-btn"
+            type="button"
+            aria-label="Change language"
+            title="Change language"
+          >
+            <svg class="lang-icon-svg" width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <text x="2" y="11" font-size="11" font-weight="700" font-family="-apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif">文</text>
+              <text x="12" y="21" font-size="12" font-weight="700" font-family="-apple-system, BlinkMacSystemFont, sans-serif">A</text>
+            </svg>
+          </button>
+          <button
+            id="staff-notification-bell-btn"
+            class="header-action-btn"
+            type="button"
+            aria-label="Notifications"
+            title="Notifications"
+          >
+            <svg class="bell-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
+              <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
+            </svg>
+            <span id="staff-notification-badge" class="notification-badge is-hidden" aria-hidden="true">0</span>
+          </button>
+        </div>
         <nav
           class="language-switch"
           aria-label="Language"
+          style="display:none;"
         >
           <button id="language-en" type="button">EN</button>
           <span aria-hidden="true">|</span>
@@ -945,6 +984,28 @@
   </main>
 
   <div id="toast" class="toast" role="status" hidden></div>
+
+  <div id="staff-notification-backdrop" class="notification-drawer-backdrop"></div>
+  <aside id="staff-notification-drawer" class="notification-drawer" role="dialog" aria-modal="true" aria-label="Notifications">
+    <div class="notification-drawer-header">
+      <div class="notification-drawer-header-left">
+        <h3 id="staff-notif-title" class="notification-drawer-title">Notifications</h3>
+      </div>
+      <div class="notification-drawer-actions">
+        <button id="staff-mark-all-read-btn" class="notification-mark-all-btn" type="button">Mark all as read</button>
+        <button id="staff-notification-close-btn" class="notification-drawer-close-btn" type="button" aria-label="Close">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      </div>
+    </div>
+    <div class="notification-drawer-body">
+      <div id="staff-notification-list" class="notification-list"></div>
+      <div id="staff-notification-empty" class="notification-empty-state" style="display:none;">No notifications</div>
+    </div>
+  </aside>
 
   <div id="appointment-modal" class="modal-backdrop" hidden>
     <section
@@ -1069,6 +1130,13 @@
         late15Min: '15 min late',
         notArrived: 'Not arrived',
         lateIndicatorAria: '15 min late - Not arrived',
+        refresh: 'Refresh',
+        changeLanguage: 'Change language',
+        notifications: 'Notifications',
+        notificationCenter: 'Notifications',
+        markAllRead: 'Mark all as read',
+        noNotifications: 'No notifications',
+        appointmentNotFound: 'Appointment not found or deleted',
         statuses: {
           pending: 'Pending',
           confirmed: 'Confirmed',
@@ -1120,6 +1188,13 @@
         late15Min: '已迟到 15 分钟',
         notArrived: '尚未到店',
         lateIndicatorAria: '已迟到 15 分钟 - 尚未到店',
+        refresh: '刷新',
+        changeLanguage: '切换语言',
+        notifications: '通知',
+        notificationCenter: '通知中心',
+        markAllRead: '全部已读',
+        noNotifications: '暂无通知',
+        appointmentNotFound: '未找到预约或已被删除',
         statuses: {
           pending: '待确认',
           confirmed: '已确认',
@@ -1248,7 +1323,18 @@
       moveCancel: document.getElementById('move-cancel'),
       moveConfirm: document.getElementById('move-confirm'),
       sheetClose: document.getElementById('sheet-close'),
-      toast: document.getElementById('toast')
+      toast: document.getElementById('toast'),
+      staffRefreshBtn: document.getElementById('staff-refresh-btn'),
+      staffLanguageToggleBtn: document.getElementById('staff-language-toggle-btn'),
+      staffNotificationBellBtn: document.getElementById('staff-notification-bell-btn'),
+      staffNotificationBadge: document.getElementById('staff-notification-badge'),
+      staffNotifBackdrop: document.getElementById('staff-notification-backdrop'),
+      staffNotifDrawer: document.getElementById('staff-notification-drawer'),
+      staffNotifTitle: document.getElementById('staff-notif-title'),
+      staffMarkAllReadBtn: document.getElementById('staff-mark-all-read-btn'),
+      staffNotifCloseBtn: document.getElementById('staff-notification-close-btn'),
+      staffNotifList: document.getElementById('staff-notification-list'),
+      staffNotifEmpty: document.getElementById('staff-notification-empty')
     };
 
     const currentText = () => translations[state.language];
@@ -2411,6 +2497,27 @@
         'aria-pressed',
         String(state.language === 'zh')
       );
+      if (elements.staffRefreshBtn) {
+        elements.staffRefreshBtn.setAttribute('aria-label', text.refresh);
+        elements.staffRefreshBtn.setAttribute('title', text.refresh);
+      }
+      if (elements.staffLanguageToggleBtn) {
+        elements.staffLanguageToggleBtn.setAttribute('aria-label', text.changeLanguage);
+        elements.staffLanguageToggleBtn.setAttribute('title', text.changeLanguage);
+      }
+      if (elements.staffNotificationBellBtn) {
+        elements.staffNotificationBellBtn.setAttribute('aria-label', text.notifications);
+        elements.staffNotificationBellBtn.setAttribute('title', text.notifications);
+      }
+      if (elements.staffNotifTitle) {
+        elements.staffNotifTitle.textContent = text.notificationCenter;
+      }
+      if (elements.staffMarkAllReadBtn) {
+        elements.staffMarkAllReadBtn.textContent = text.markAllRead;
+      }
+      if (elements.staffNotifEmpty) {
+        elements.staffNotifEmpty.textContent = text.noNotifications;
+      }
       elements.viewList.classList.toggle(
         'active',
         state.displayMode === 'list'
@@ -2632,6 +2739,7 @@
         if (thisGen === staffRequestGeneration) {
           state.loading = false;
           render();
+          updateStaffNotificationCount();
         }
         if (staffAbortController === controller) {
           staffAbortController = null;
@@ -2694,6 +2802,7 @@
         if (thisGen === staffRequestGeneration) {
           state.loading = false;
           render();
+          updateStaffNotificationCount();
         }
         if (staffAbortController === controller) {
           staffAbortController = null;
@@ -2718,6 +2827,9 @@
       }
 
       render();
+      if (elements.staffNotifDrawer && elements.staffNotifDrawer.classList.contains('is-open')) {
+        loadStaffNotifications();
+      }
     };
 
     const setDisplayMode = displayMode => {
@@ -2734,6 +2846,208 @@
 
       render();
     };
+
+    let staffNotifications = [];
+    let isStaffRefreshing = false;
+
+    const handleStaffRefresh = async () => {
+      if (isStaffRefreshing) return;
+      isStaffRefreshing = true;
+      const icon = elements.staffRefreshBtn ? elements.staffRefreshBtn.querySelector('.refresh-icon') : null;
+      if (icon) icon.classList.add('is-spinning');
+      if (elements.staffRefreshBtn) elements.staffRefreshBtn.disabled = true;
+
+      try {
+        await loadAppointments(state.selectedDate);
+        await updateStaffNotificationCount();
+      } catch (err) {
+        console.error('Refresh staff appointments error:', err);
+      } finally {
+        if (icon) icon.classList.remove('is-spinning');
+        if (elements.staffRefreshBtn) elements.staffRefreshBtn.disabled = false;
+        isStaffRefreshing = false;
+      }
+    };
+
+    const updateStaffNotificationCount = async () => {
+      try {
+        const res = await fetch('/api/staff/notifications/unread-count');
+        if (!res.ok) return;
+        const body = await res.json();
+        if (body.success && body.data) {
+          const count = Number(body.data.unreadCount) || 0;
+          if (elements.staffNotificationBadge) {
+            if (count <= 0) {
+              elements.staffNotificationBadge.classList.add('is-hidden');
+              elements.staffNotificationBadge.textContent = '0';
+            } else {
+              elements.staffNotificationBadge.classList.remove('is-hidden');
+              elements.staffNotificationBadge.textContent = count >= 10 ? '9+' : String(count);
+            }
+          }
+        }
+      } catch (_) {}
+    };
+
+    const toggleStaffNotifications = async () => {
+      if (!elements.staffNotifDrawer) return;
+      const isOpen = elements.staffNotifDrawer.classList.contains('is-open');
+      if (isOpen) {
+        closeStaffNotifications();
+      } else {
+        await openStaffNotifications();
+      }
+    };
+
+    const closeStaffNotifications = () => {
+      if (elements.staffNotifDrawer) elements.staffNotifDrawer.classList.remove('is-open');
+      if (elements.staffNotifBackdrop) elements.staffNotifBackdrop.classList.remove('is-open');
+    };
+
+    const openStaffNotifications = async () => {
+      if (elements.staffNotifDrawer) elements.staffNotifDrawer.classList.add('is-open');
+      if (elements.staffNotifBackdrop) elements.staffNotifBackdrop.classList.add('is-open');
+      await loadStaffNotifications();
+    };
+
+    const loadStaffNotifications = async () => {
+      if (!elements.staffNotifList) return;
+      const locale = state.language === 'zh' ? 'zh-CN' : 'en';
+      try {
+        const res = await fetch(`/api/staff/notifications?limit=30&locale=${encodeURIComponent(locale)}`);
+        if (!res.ok) return;
+        const body = await res.json();
+        if (body.success && body.data) {
+          staffNotifications = body.data.notifications || [];
+          renderStaffNotifications();
+          const count = Number(body.data.unreadCount) || 0;
+          if (elements.staffNotificationBadge) {
+            if (count <= 0) {
+              elements.staffNotificationBadge.classList.add('is-hidden');
+              elements.staffNotificationBadge.textContent = '0';
+            } else {
+              elements.staffNotificationBadge.classList.remove('is-hidden');
+              elements.staffNotificationBadge.textContent = count >= 10 ? '9+' : String(count);
+            }
+          }
+        }
+      } catch (err) {
+        console.error('Failed to load staff notifications:', err);
+      }
+    };
+
+    const renderStaffNotifications = () => {
+      if (!elements.staffNotifList) return;
+      elements.staffNotifList.replaceChildren();
+
+      if (!staffNotifications || staffNotifications.length === 0) {
+        if (elements.staffNotifEmpty) elements.staffNotifEmpty.style.display = 'block';
+        return;
+      }
+      if (elements.staffNotifEmpty) elements.staffNotifEmpty.style.display = 'none';
+
+      staffNotifications.forEach(notif => {
+        const item = document.createElement('div');
+        item.className = `notification-item ${notif.isRead ? '' : 'is-unread'}`;
+        item.setAttribute('role', 'button');
+        item.setAttribute('tabindex', '0');
+
+        const summary = document.createElement('div');
+        summary.className = 'notification-item-summary';
+        summary.textContent = notif.summary;
+
+        const meta = document.createElement('div');
+        meta.className = 'notification-item-meta';
+        const timeSpan = document.createElement('span');
+        timeSpan.textContent = notif.createdAt ? new Date(notif.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+        meta.appendChild(timeSpan);
+
+        item.appendChild(summary);
+        item.appendChild(meta);
+
+        const selectStaffNotif = () => handleStaffNotificationClick(notif);
+        item.addEventListener('click', selectStaffNotif);
+        item.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            selectStaffNotif();
+          }
+        });
+
+        elements.staffNotifList.appendChild(item);
+      });
+    };
+
+    const handleStaffNotificationClick = async notif => {
+      if (!notif) return;
+      if (!notif.isRead) {
+        notif.isRead = true;
+        renderStaffNotifications();
+        try {
+          await fetch(`/api/staff/notifications/${encodeURIComponent(notif.id)}/read`, { method: 'PATCH' });
+          await updateStaffNotificationCount();
+        } catch (_) {}
+      }
+
+      closeStaffNotifications();
+      if (!notif.appointmentId) return;
+
+      if (notif.appointment && notif.appointment.startAt) {
+        const apptDate = notif.appointment.startAt.slice(0, 10);
+        if (apptDate && apptDate !== state.selectedDate) {
+          state.selectionMode = 'custom';
+          await loadAppointments(apptDate);
+        }
+      }
+
+      const targetAppt = Array.isArray(state.appointments)
+        ? state.appointments.find(a => a.id === notif.appointmentId)
+        : null;
+
+      if (targetAppt) {
+        openAppointmentSheet(targetAppt);
+      } else {
+        showToast(currentText().appointmentNotFound);
+      }
+    };
+
+    const handleStaffMarkAllRead = async () => {
+      try {
+        const res = await fetch('/api/staff/notifications/mark-all-read', { method: 'POST' });
+        if (res.ok) {
+          staffNotifications.forEach(n => { n.isRead = true; });
+          renderStaffNotifications();
+          if (elements.staffNotificationBadge) {
+            elements.staffNotificationBadge.classList.add('is-hidden');
+            elements.staffNotificationBadge.textContent = '0';
+          }
+        }
+      } catch (err) {
+        console.error('Failed to mark all staff notifications as read:', err);
+      }
+    };
+
+    if (elements.staffRefreshBtn) {
+      elements.staffRefreshBtn.addEventListener('click', handleStaffRefresh);
+    }
+    if (elements.staffLanguageToggleBtn) {
+      elements.staffLanguageToggleBtn.addEventListener('click', () => {
+        const next = state.language === 'zh' ? 'en' : 'zh';
+        setLanguage(next);
+      });
+    }
+    if (elements.staffNotificationBellBtn) {
+      elements.staffNotificationBellBtn.addEventListener('click', toggleStaffNotifications);
+    }
+    if (elements.staffNotifBackdrop) {
+      elements.staffNotifBackdrop.addEventListener('click', closeStaffNotifications);
+    }
+    if (elements.staffNotifCloseBtn) {
+      elements.staffNotifCloseBtn.addEventListener('click', closeStaffNotifications);
+    }
+    if (elements.staffMarkAllReadBtn) {
+      elements.staffMarkAllReadBtn.addEventListener('click', handleStaffMarkAllRead);
+    }
 
     elements.languageEn.addEventListener(
       'click',
@@ -2830,14 +3144,20 @@
       }
     });
     document.addEventListener('keydown', event => {
-      if (
-        event.key === 'Escape' &&
-        !elements.appointmentModal.hidden
-      ) {
-        if (!elements.moveTimePanel.hidden) {
-          closeMoveTimePanel();
-        } else {
-          closeAppointmentSheet();
+      if (event.key === 'Escape') {
+        if (
+          elements.staffNotifDrawer &&
+          elements.staffNotifDrawer.classList.contains('is-open')
+        ) {
+          closeStaffNotifications();
+          return;
+        }
+        if (!elements.appointmentModal.hidden) {
+          if (!elements.moveTimePanel.hidden) {
+            closeMoveTimePanel();
+          } else {
+            closeAppointmentSheet();
+          }
         }
       }
     });
@@ -2854,6 +3174,7 @@
         if (state.selectedDate && state.view !== 'session') {
           loadAppointments(state.selectedDate);
         }
+        updateStaffNotificationCount();
       }
     });
 

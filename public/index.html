@@ -265,10 +265,12 @@
     .special-request-title { display: block; font-weight: 700; }
     .special-request-hint { display: block; margin-top: 2px; color: var(--theme-text-muted, #777); font-size: 13px; font-weight: 500; }
     .special-request-body { padding: 0 13px 13px; }
-    .special-request-body textarea { min-height: 88px; resize: vertical; margin: 0; }
-    .language-switch { position:absolute;right:0;top:-16px;display:inline-flex;align-items:center;padding:3px 5px;border:1px solid rgba(80,80,80,.16);border-radius:999px;background:rgba(255,255,255,.66);backdrop-filter:blur(9px);-webkit-backdrop-filter:blur(9px);color:#888; }
+    .language-switch { position:absolute;right:0;top:-16px;display:inline-flex;align-items:center;padding:2px;border:1px solid rgba(80,80,80,.16);border-radius:999px;background:rgba(255,255,255,.66);backdrop-filter:blur(9px);-webkit-backdrop-filter:blur(9px);color:#888; }
     .language-switch button { width:auto;margin:0;padding:4px 7px;border:0;border-radius:999px;background:transparent;color:#999;font-size:12px;font-weight:600; }
     .language-switch button:disabled { opacity:1;color:#222;background:rgba(255,255,255,.72);box-shadow:0 1px 5px rgba(0,0,0,.07); }
+    .language-switch .lang-toggle-btn { min-width:44px;min-height:44px;padding:0;display:inline-flex;align-items:center;justify-content:center;border-radius:999px;cursor:pointer;color:#333; }
+    .language-switch .lang-toggle-btn:focus-visible { outline:2px solid #2563eb;outline-offset:2px; }
+    .language-switch #languageZh, .language-switch #languageEn, .language-switch .language-divider { display: none !important; }
     .language-divider{font-size:11px;color:#bbb}
     .member-entry { display: inline-block; margin-top: 12px; padding: 9px 14px; border-radius: 999px; background: var(--theme-primary, #111); color: var(--theme-primary-contrast, #fff); text-decoration: none; font-size: 13px; font-weight: 700; }
     .my-bookings-entry { display: inline-block; margin-top: 12px; margin-left: 8px; padding: 8px 13px; border-radius: 999px; background: var(--theme-surface-subtle, #eee); color: var(--theme-text, #222); text-decoration: none; font-size: 13px; font-weight: 700; border: 1px solid var(--theme-border, #ddd); }
@@ -357,7 +359,7 @@
     <div id="shopBrandBadge" class="brand-badge notranslate" translate="no" aria-hidden="true"><span id="shopBrandLogoPlaceholder">GG</span></div>
     <h1 id="shopBrandName" translate="no" class="notranslate">GG-Beauty</h1>
     <p data-i18n="onlineAppointment">在线预约</p>
-    <div class="language-switch" aria-label="Language"><button id="languageZh" type="button" aria-label="中文">中</button><span class="language-divider">｜</span><button id="languageEn" type="button" aria-label="English">E</button></div>
+    <div class="language-switch" aria-label="Language"><button id="languageSwitchBtn" type="button" class="lang-toggle-btn" aria-label="切换语言" title="切换语言"><svg class="lang-icon-svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><text x="2" y="11" font-size="11" font-weight="700" font-family="-apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif">文</text><text x="12" y="21" font-size="12" font-weight="700" font-family="-apple-system, BlinkMacSystemFont, sans-serif">A</text></svg></button><button id="languageZh" type="button" aria-label="中文">中</button><span class="language-divider">｜</span><button id="languageEn" type="button" aria-label="English">E</button></div>
     <div><a id="memberEntry" class="member-entry" href="/member.html" data-i18n="membershipEntry">我的账户</a><a id="myBookingsEntry" class="my-bookings-entry" href="/my-bookings.html" data-i18n="myBookings">我的预约</a></div>
   </div>
   <div id="customerAnnouncement" class="announcement-banner" hidden>
@@ -1581,6 +1583,12 @@ async function setLocale(locale) {
   if (zhBtn) zhBtn.disabled = currentLocale === 'zh-CN';
   const enBtn = document.getElementById('languageEn');
   if (enBtn) enBtn.disabled = currentLocale === 'en';
+  const switchBtn = document.getElementById('languageSwitchBtn');
+  if (switchBtn) {
+    const label = currentLocale === 'zh-CN' ? '切换语言' : 'Change language';
+    switchBtn.setAttribute('aria-label', label);
+    switchBtn.setAttribute('title', label);
+  }
   if (shopBrandName) document.title = `${shopBrandName.textContent} · ${customerT('onlineAppointment')}`;
   const submitBtn = document.getElementById('submitBtn');
   if (submitBtn) {
@@ -2414,6 +2422,13 @@ document
 
 document.getElementById('languageZh').addEventListener('click', () => switchLanguage('zh-CN'));
 document.getElementById('languageEn').addEventListener('click', () => switchLanguage('en'));
+const customerLangToggleBtn = document.getElementById('languageSwitchBtn');
+if (customerLangToggleBtn) {
+  customerLangToggleBtn.addEventListener('click', () => {
+    const nextLocale = currentLocale === 'zh-CN' ? 'en' : 'zh-CN';
+    switchLanguage(nextLocale);
+  });
+}
 (async () => {
   await initializeCustomerPage();
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});

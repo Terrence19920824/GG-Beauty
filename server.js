@@ -57,8 +57,16 @@ const {
   validateCustomerIdentityPhone,
   PhoneValidationError,
   getWalkInPhoneCountries,
-  resolvePhoneCountryIso
+  resolvePhoneCountryIso,
+  maskCustomerPhone
 } = require('./lib/phone-normalization');
+const {
+  createBookingNotification,
+  listNotifications,
+  getUnreadCount,
+  markNotificationRead,
+  markAllNotificationsRead
+} = require('./lib/booking-notifications');
 const {
   COOKIE: CUSTOMER_SESSION_COOKIE,
   CustomerMemberError,
@@ -863,7 +871,7 @@ app.patch('/api/owner/appointments/:appointmentId/internal-notes', requireOwnerA
 
 app.get('/api/owner/customers', requireOwnerAuth, requireOwnerRole(CUSTOMER_READ_ROLES), async (req, res) => {
   try {
-    const data = await listCustomers(app.locals.ownerAuthPool, { shopId: req.ownerAuth.shopId, query: req.query });
+    const data = await listCustomers(app.locals.ownerAuthPool, { shopId: req.ownerAuth.shopId, query: req.query, role: req.ownerAuth.role });
     return res.set('Cache-Control', 'no-store').json({ success: true, data });
   } catch (error) {
     console.error('Owner customer list error:', safeStaffAuthErrorCode(error));
@@ -874,7 +882,9 @@ app.get('/api/owner/customers', requireOwnerAuth, requireOwnerRole(CUSTOMER_READ
 app.get('/api/owner/customers/:customerId', requireOwnerAuth, requireOwnerRole(CUSTOMER_READ_ROLES), async (req, res) => {
   try {
     const data = await getCustomer(app.locals.ownerAuthPool, {
-      shopId: req.ownerAuth.shopId, customerId: typeof req.params.customerId === 'string' ? req.params.customerId.trim() : ''
+      shopId: req.ownerAuth.shopId,
+      customerId: typeof req.params.customerId === 'string' ? req.params.customerId.trim() : '',
+      role: req.ownerAuth.role
     });
     if (!data) return res.status(404).json({ success: false, code: 'CUSTOMER_NOT_FOUND' });
     return res.set('Cache-Control', 'no-store').json({ success: true, data });
@@ -945,6 +955,97 @@ app.patch('/api/owner/customers/:customerId/profile-notes', requireOwnerAuth, re
     return res.status(500).json({ success: false, code: 'PROFILE_NOTES_UPDATE_FAILED', message: '顾客档案备注保存失败' });
   }
 });
+
+// ==================================================
+// Owner & Front Desk Booking Notifications
+// ==================================================
+
+app.get(
+  '/api/owner/notifications',
+  requireOwnerAuth,
+  requireOwnerRole(['owner', 'manager', 'admin', 'front_desk']),
+  async (req, res) => {
+    try {
+      const activePool = app.locals.ownerAuthPool || pool;
+      const data = await listNotifications(activePool, {
+        shopId: req.ownerAuth.shopId,
+        recipientType: 'shop',
+        limit: req.query.limit,
+        unreadOnly: req.query.unreadOnly === 'true',
+        locale: req.query.locale || 'zh-CN'
+      });
+      return res.set('Cache-Control', 'no-store').json({ success: true, data });
+    } catch (error) {
+      console.error('Owner notifications read error:', safeStaffAuthErrorCode(error));
+      return res.status(500).json({ success: false, code: 'NOTIFICATIONS_READ_FAILED', message: '读取通知失败' });
+    }
+  }
+);
+
+app.get(
+  '/api/owner/notifications/unread-count',
+  requireOwnerAuth,
+  requireOwnerRole(['owner', 'manager', 'admin', 'front_desk']),
+  async (req, res) => {
+    try {
+      const activePool = app.locals.ownerAuthPool || pool;
+      const unreadCount = await getUnreadCount(activePool, {
+        shopId: req.ownerAuth.shopId,
+        recipientType: 'shop'
+      });
+      return res.set('Cache-Control', 'no-store').json({ success: true, data: { unreadCount } });
+    } catch (error) {
+      console.error('Owner notification unread-count error:', safeStaffAuthErrorCode(error));
+      return res.status(500).json({ success: false, code: 'NOTIFICATIONS_COUNT_FAILED', message: '读取通知数量失败' });
+    }
+  }
+);
+
+app.patch(
+  '/api/owner/notifications/:id/read',
+  requireOwnerAuth,
+  requireOwnerRole(['owner', 'manager', 'admin', 'front_desk']),
+  async (req, res) => {
+    const notificationId = typeof req.params.id === 'string' ? req.params.id.trim() : '';
+    if (!isUuid(notificationId)) {
+      return res.status(400).json({ success: false, code: 'INVALID_NOTIFICATION_ID', message: '通知ID无效' });
+    }
+    try {
+      const activePool = app.locals.ownerAuthPool || pool;
+      const success = await markNotificationRead(activePool, {
+        shopId: req.ownerAuth.shopId,
+        notificationId,
+        recipientType: 'shop'
+      });
+      if (!success) {
+        return res.status(404).json({ success: false, code: 'NOTIFICATION_NOT_FOUND', message: '通知不存在或已被处理' });
+      }
+      return res.json({ success: true, data: { id: notificationId, isRead: true } });
+    } catch (error) {
+      console.error('Owner mark notification read error:', safeStaffAuthErrorCode(error));
+      return res.status(500).json({ success: false, code: 'NOTIFICATION_READ_UPDATE_FAILED', message: '标记通知已读失败' });
+    }
+  }
+);
+
+app.post(
+  '/api/owner/notifications/mark-all-read',
+  requireOwnerAuth,
+  requireOwnerRole(['owner', 'manager', 'admin', 'front_desk']),
+  async (req, res) => {
+    try {
+      const activePool = app.locals.ownerAuthPool || pool;
+      const result = await markAllNotificationsRead(activePool, {
+        shopId: req.ownerAuth.shopId,
+        recipientType: 'shop'
+      });
+      return res.json({ success: true, data: result });
+    } catch (error) {
+      console.error('Owner mark all notifications read error:', safeStaffAuthErrorCode(error));
+      return res.status(500).json({ success: false, code: 'NOTIFICATIONS_MARK_ALL_FAILED', message: '标记所有通知已读失败' });
+    }
+  }
+);
 
 const QUALIFIED_SERVICE_STAFF_EXISTS_SQL = `
   EXISTS (
@@ -3664,6 +3765,18 @@ app.post('/api/new-db', async (req, res) => {
       console.error('Calendar generation error:', safeStaffAuthErrorCode(calErr));
     }
 
+    try {
+      const poolToUse = req.app.locals.bookingPool || pool;
+      await createBookingNotification(poolToUse, {
+        shopId: appointment.shop_id,
+        appointmentId: appointment.id,
+        eventType: 'booking_created',
+        dedupeSource: `customer_booking_${appointment.id}`
+      });
+    } catch (notifErr) {
+      console.error('Customer booking notification error:', safeStaffAuthErrorCode(notifErr));
+    }
+
     res.json({
       success: true,
       message: '预约成功',
@@ -4196,6 +4309,19 @@ const createOwnerFrontDeskAppointmentHandler = ({ walkIn }) =>
         }
         return { appointment, customerId: identity.customerId, reusedCustomer: Boolean(identity.customerId && !identity.verified) };
       });
+      if (app.locals.ownerAuthPool || pool) {
+        try {
+          const poolToUse = app.locals.ownerAuthPool || pool;
+          await createBookingNotification(poolToUse, {
+            shopId: scope.shop_id,
+            appointmentId: created.appointment.id,
+            eventType: 'booking_created',
+            dedupeSource: walkIn ? 'walk_in' : 'assisted'
+          });
+        } catch (notifErr) {
+          console.error('Front-desk booking notification error:', safeStaffAuthErrorCode(notifErr));
+        }
+      }
       return res.status(201).json({ success: true, data: { ...created.appointment, customer_id: created.customerId } });
     } catch (error) {
       const unavailable = error instanceof StaffBookabilityError || error instanceof MultiServicePlanningError || error.code === '23P01';
@@ -5389,13 +5515,19 @@ app.get(
       res.set('Cache-Control', 'no-store, private, max-age=0');
       res.set('Pragma', 'no-cache');
 
+      const rawAppointments = Array.isArray(appointments.appointments) ? appointments.appointments : [];
+      const sanitizedAppointments = rawAppointments.map(appt => ({
+        ...appt,
+        customerPhone: maskCustomerPhone(appt.customerPhone)
+      }));
+
       res.json({
         success: true,
         data: {
           server_now: new Date().toISOString(),
           date: appointments.appointment_date,
           timezone: appointments.timezone,
-          appointments: appointments.appointments
+          appointments: sanitizedAppointments
         }
       });
     } catch (error) {
@@ -5408,6 +5540,97 @@ app.get(
         success: false,
         message: '读取员工预约失败'
       });
+    }
+  }
+);
+
+// ==================================================
+// Staff Booking Notifications
+// ==================================================
+
+app.get(
+  '/api/staff/notifications',
+  requireStaffAuth,
+  async (req, res) => {
+    try {
+      const activePool = req.app?.locals?.bookingPool || pool;
+      const data = await listNotifications(activePool, {
+        shopId: req.staffAuth.shopId,
+        recipientType: 'staff',
+        recipientStaffId: req.staffAuth.staffId,
+        limit: req.query.limit,
+        unreadOnly: req.query.unreadOnly === 'true',
+        locale: req.query.locale || 'zh-CN'
+      });
+      return res.set('Cache-Control', 'no-store').json({ success: true, data });
+    } catch (error) {
+      console.error('Staff notifications read error:', safeStaffAuthErrorCode(error));
+      return res.status(500).json({ success: false, code: 'NOTIFICATIONS_READ_FAILED', message: '读取通知失败' });
+    }
+  }
+);
+
+app.get(
+  '/api/staff/notifications/unread-count',
+  requireStaffAuth,
+  async (req, res) => {
+    try {
+      const activePool = req.app?.locals?.bookingPool || pool;
+      const unreadCount = await getUnreadCount(activePool, {
+        shopId: req.staffAuth.shopId,
+        recipientType: 'staff',
+        recipientStaffId: req.staffAuth.staffId
+      });
+      return res.set('Cache-Control', 'no-store').json({ success: true, data: { unreadCount } });
+    } catch (error) {
+      console.error('Staff notification unread-count error:', safeStaffAuthErrorCode(error));
+      return res.status(500).json({ success: false, code: 'NOTIFICATIONS_COUNT_FAILED', message: '读取通知数量失败' });
+    }
+  }
+);
+
+app.patch(
+  '/api/staff/notifications/:id/read',
+  requireStaffAuth,
+  async (req, res) => {
+    const notificationId = typeof req.params.id === 'string' ? req.params.id.trim() : '';
+    if (!isUuid(notificationId)) {
+      return res.status(400).json({ success: false, code: 'INVALID_NOTIFICATION_ID', message: '通知ID无效' });
+    }
+    try {
+      const activePool = req.app?.locals?.bookingPool || pool;
+      const success = await markNotificationRead(activePool, {
+        shopId: req.staffAuth.shopId,
+        notificationId,
+        recipientType: 'staff',
+        recipientStaffId: req.staffAuth.staffId
+      });
+      if (!success) {
+        return res.status(404).json({ success: false, code: 'NOTIFICATION_NOT_FOUND', message: '通知不存在或已被处理' });
+      }
+      return res.json({ success: true, data: { id: notificationId, isRead: true } });
+    } catch (error) {
+      console.error('Staff mark notification read error:', safeStaffAuthErrorCode(error));
+      return res.status(500).json({ success: false, code: 'NOTIFICATION_READ_UPDATE_FAILED', message: '标记通知已读失败' });
+    }
+  }
+);
+
+app.post(
+  '/api/staff/notifications/mark-all-read',
+  requireStaffAuth,
+  async (req, res) => {
+    try {
+      const activePool = req.app?.locals?.bookingPool || pool;
+      const result = await markAllNotificationsRead(activePool, {
+        shopId: req.staffAuth.shopId,
+        recipientType: 'staff',
+        recipientStaffId: req.staffAuth.staffId
+      });
+      return res.json({ success: true, data: result });
+    } catch (error) {
+      console.error('Staff mark all notifications read error:', safeStaffAuthErrorCode(error));
+      return res.status(500).json({ success: false, code: 'NOTIFICATIONS_MARK_ALL_FAILED', message: '标记所有通知已读失败' });
     }
   }
 );
@@ -5436,6 +5659,19 @@ app.patch('/api/staff/appointments/:appointmentId/status', requireStaffAuth, asy
       await recordStatusHistory(client, { appointment, fromStatus: appointment.status, toStatus: body.status, operatorType: 'staff', operatorId: req.staffAuth.accountId, source: 'staff_portal', reason: typeof body.reason === 'string' ? body.reason.trim() || null : null });
       return updated.rows[0];
     });
+    if (body.status === 'cancelled') {
+      try {
+        const poolToUse = req.app.locals.bookingPool || pool;
+        await createBookingNotification(poolToUse, {
+          shopId: req.staffAuth.shopId,
+          appointmentId: data.id,
+          eventType: 'booking_cancelled',
+          dedupeSource: `staff_cancel_${data.id}_${data.updated_at || Date.now()}`
+        });
+      } catch (notifErr) {
+        console.error('Staff cancel notification error:', safeStaffAuthErrorCode(notifErr));
+      }
+    }
     res.json({ success: true, data });
   } catch (error) {
     const code = safeStaffAuthErrorCode(error);
@@ -5732,6 +5968,18 @@ app.patch(
       await client.query('COMMIT');
       transactionActive = false;
       transactionCommitted = true;
+
+      try {
+        const poolToUse = req.app.locals.bookingPool || pool;
+        await createBookingNotification(poolToUse, {
+          shopId: appointment.shop_id,
+          appointmentId: appointment.id,
+          eventType: 'booking_rescheduled',
+          dedupeSource: `staff_reschedule_${appointment.id}_${updatedAppointment.start_at}`
+        });
+      } catch (notifErr) {
+        console.error('Staff reschedule notification error:', safeStaffAuthErrorCode(notifErr));
+      }
 
       res.json({
         success: true,
@@ -6086,6 +6334,20 @@ app.post(
             return result.rows[0];
           }
         );
+
+      if (status === 'cancelled' && (app.locals.ownerAuthPool || pool)) {
+        try {
+          const poolToUse = app.locals.ownerAuthPool || pool;
+          await createBookingNotification(poolToUse, {
+            shopId: trustedShopId,
+            appointmentId: updatedAppointment.id,
+            eventType: 'booking_cancelled',
+            dedupeSource: `cancel_${updatedAppointment.id}_${updatedAppointment.updated_at || Date.now()}`
+          });
+        } catch (notifErr) {
+          console.error('Cancellation notification error:', safeStaffAuthErrorCode(notifErr));
+        }
+      }
 
       res.json({
         success: true,

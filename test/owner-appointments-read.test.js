@@ -159,7 +159,7 @@ test('unauthenticated appointment read returns 401', async () => {
   assert.equal(fixture.state.clientQueries.length, 0);
 });
 
-for (const role of ['owner', 'manager', 'admin', 'front_desk']) {
+for (const role of ['owner', 'manager', 'admin']) {
   test(`${role} may read tenant appointments with the full phone only in the trusted owner route`, async () => {
     const fixture = makePool({ role });
     installPool(fixture);
@@ -173,6 +173,22 @@ for (const role of ['owner', 'manager', 'admin', 'front_desk']) {
     });
   });
 }
+
+test('front_desk may read tenant appointments with masked phone only in the trusted owner route', async () => {
+  const fixture = makePool({ role: 'front_desk' });
+  installPool(fixture);
+  await withServer(async baseUrl => {
+    const response = await getAppointments(baseUrl);
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    assert.deepEqual(payload.data, [{
+      ...projectedAppointmentRow,
+      customer_phone: '00****00'
+    }]);
+    assert.equal(payload.data[0].customer_phone, '00****00');
+    assert.equal(payload.data[0].internal_notes, 'Owner-only note');
+  });
+});
 
 test('client query/body/header shop injection cannot change trusted tenant', async () => {
   const fixture = makePool();
