@@ -102,8 +102,17 @@
     }
 
     const backLink = root.document.getElementById('backLink');
-    if (backLink && currentShopSlug) {
-      backLink.href = `/?shop=${encodeURIComponent(currentShopSlug)}`;
+    if (backLink) {
+      backLink.href = currentShopSlug ? `/?shop=${encodeURIComponent(currentShopSlug)}` : '/';
+    }
+
+    if (!currentShopSlug) {
+      const help = root.document.getElementById('bookingLookupHelp');
+      if (help) help.textContent = customerT('shopContextMissing');
+      const msgBox = root.document.getElementById('queryMessage');
+      if (msgBox && msgBox.className.includes('error')) {
+        msgBox.textContent = customerT('shopContextMissing');
+      }
     }
 
     renderCountryOptions();
@@ -198,6 +207,15 @@
     const queryBtn = root.document ? root.document.getElementById('queryBtn') : null;
     const section = root.document ? root.document.getElementById('bookingsSection') : null;
 
+    if (!currentShopSlug) {
+      if (msgBox) {
+        msgBox.className = 'message error';
+        msgBox.textContent = customerT('shopContextMissing');
+      }
+      if (section) section.hidden = true;
+      return;
+    }
+
     if (!phoneInput) return;
     const phoneVal = phoneInput.value ? phoneInput.value.trim() : '';
 
@@ -266,6 +284,7 @@
   }
 
   async function loadSessionBookings() {
+    if (!currentShopSlug) return false;
     const form = root.document ? root.document.getElementById('phoneLookupForm') : null;
     const help = root.document ? root.document.getElementById('bookingLookupHelp') : null;
     const message = root.document ? root.document.getElementById('queryMessage') : null;
@@ -306,25 +325,6 @@
       }
     } catch (_) {}
 
-    const locCandidate = shopContextApi.resolveCandidate(root.location);
-    const params = new URLSearchParams(root.location ? root.location.search : '');
-    currentShopSlug = locCandidate || params.get('shop') || 'gg-beauty';
-
-    // Update shop brand heading
-    const brandHeading = root.document.getElementById('shopBrandHeading');
-    if (brandHeading) {
-      brandHeading.textContent = currentShopSlug;
-    }
-
-    // Apply the current shop theme. Merchant contact information belongs on the
-    // main booking page, not this account-adjacent page.
-    if (root.ggCustomerTheme && typeof root.ggCustomerTheme.resolveTheme === 'function') {
-      const theme = root.ggCustomerTheme.resolveTheme(currentShopSlug, {});
-      if (root.document.documentElement) {
-        root.ggCustomerTheme.applyTheme(root.document.documentElement, theme);
-      }
-    }
-
     // Event listeners
     const zhBtn = root.document.getElementById('languageZh');
     if (zhBtn) zhBtn.addEventListener('click', () => setLocale('zh-CN'));
@@ -338,6 +338,57 @@
         const nextLocale = currentLocale === 'zh-CN' ? 'en' : 'zh-CN';
         setLocale(nextLocale);
       });
+    }
+
+    const locCandidate = shopContextApi.resolveCandidate(root.location);
+    const params = new URLSearchParams(root.location ? root.location.search : '');
+    const querySlug = shopContextApi.normalizeShopSlug(params.get('shop') || params.get('shopSlug') || '');
+    currentShopSlug = locCandidate || querySlug || '';
+
+    if (!currentShopSlug) {
+      const brandHeading = root.document.getElementById('shopBrandHeading');
+      if (brandHeading) {
+        brandHeading.textContent = '';
+      }
+      const backLink = root.document.getElementById('backLink');
+      if (backLink) {
+        backLink.href = '/';
+      }
+      const phoneForm = root.document.getElementById('phoneLookupForm');
+      if (phoneForm) {
+        phoneForm.hidden = true;
+      }
+      const help = root.document.getElementById('bookingLookupHelp');
+      if (help) {
+        help.textContent = customerT('shopContextMissing');
+      }
+      const msgBox = root.document.getElementById('queryMessage');
+      if (msgBox) {
+        msgBox.className = 'message error';
+        msgBox.textContent = customerT('shopContextMissing');
+      }
+      renderTexts();
+      return;
+    }
+
+    // Update shop brand heading
+    const brandHeading = root.document.getElementById('shopBrandHeading');
+    if (brandHeading) {
+      brandHeading.textContent = currentShopSlug;
+    }
+
+    const backLink = root.document.getElementById('backLink');
+    if (backLink) {
+      backLink.href = `/?shop=${encodeURIComponent(currentShopSlug)}`;
+    }
+
+    // Apply the current shop theme. Merchant contact information belongs on the
+    // main booking page, not this account-adjacent page.
+    if (root.ggCustomerTheme && typeof root.ggCustomerTheme.resolveTheme === 'function') {
+      const theme = root.ggCustomerTheme.resolveTheme(currentShopSlug, {});
+      if (root.document.documentElement) {
+        root.ggCustomerTheme.applyTheme(root.document.documentElement, theme);
+      }
     }
 
     const queryBtn = root.document.getElementById('queryBtn');
