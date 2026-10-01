@@ -12,7 +12,19 @@ BEGIN;
 SET LOCAL lock_timeout = '5s';
 SET LOCAL statement_timeout = '30s';
 
--- Safe non-destructive guard: refuse to drop table if invitations already exist
+-- SHARE is the least restrictive table lock that conflicts with the ROW EXCLUSIVE
+-- lock used by INSERT, UPDATE, and DELETE. Keep it until transaction end so no
+-- invitation write can race the following existence check and DROP TABLE.
+-- Keep lock acquisition in a separate statement from the check so READ COMMITTED
+-- takes a fresh snapshot after any writer that the lock waited for has committed.
+DO $lock$
+BEGIN
+  IF to_regclass('public.merchant_onboarding_invitations') IS NOT NULL THEN
+    LOCK TABLE public.merchant_onboarding_invitations IN SHARE MODE;
+  END IF;
+END $lock$;
+
+-- Safe non-destructive guard: refuse to drop table if invitations already exist.
 DO $rollback$
 DECLARE
   has_invitations boolean := false;
