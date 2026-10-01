@@ -69,9 +69,16 @@ test('12. migration files structure and syntax validation', () => {
   assert.match(verifySql, /COMMIT/i);
 
   // Rollback 099 checks
+  assert.match(rollbackSql, /SAFETY WARNING/i);
+  assert.match(rollbackSql, /099 merchant onboarding invitation rollback is permitted ONLY before/i);
+  assert.match(rollbackSql, /DO NOT DROP merchant_onboarding_invitations/i);
+  assert.match(rollbackSql, /Use forward repair instead/i);
   assert.match(rollbackSql, /BEGIN;/i);
   assert.match(rollbackSql, /SET LOCAL lock_timeout = '5s'/);
   assert.match(rollbackSql, /SET LOCAL statement_timeout = '30s'/);
+  assert.match(rollbackSql, /DO \$rollback\$/);
+  assert.match(rollbackSql, /SELECT EXISTS \(SELECT 1 FROM public\.merchant_onboarding_invitations\)/);
+  assert.match(rollbackSql, /RAISE EXCEPTION.*refuse to drop table.*forward repair/i);
   assert.match(rollbackSql, /DROP TABLE IF EXISTS public\.merchant_onboarding_invitations CASCADE/i);
   assert.doesNotMatch(rollbackSql, /DROP TABLE.*shops/i, 'Rollback must never drop shops table');
   assert.match(rollbackSql, /COMMIT;/i);

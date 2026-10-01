@@ -3,18 +3,83 @@ const test=require('node:test');
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const path=require('node:path');
+const vm=require('node:vm');
 const i18n=require('../public/shared-i18n');
+const shopContext=require('../public/customer-shop-context');
 const root=path.join(__dirname,'..');
 const html=fs.readFileSync(path.join(root,'public/member.html'),'utf8');
 const ui=fs.readFileSync(path.join(root,'public/customer-member-ui.js'),'utf8');
 const booking=fs.readFileSync(path.join(root,'public/index.html'),'utf8');
 const server=fs.readFileSync(path.join(root,'server.js'),'utf8');
 
+async function initializeMemberBackLink(search){
+  const backLink={href:''};
+  const elements={
+    backLink,
+    languageZh:{disabled:false},
+    languageEn:{disabled:false},
+    languageSwitchBtn:{setAttribute:()=>{}},
+    pwaManifest:{href:''},
+    memberShopHeading:{textContent:''}
+  };
+  const fetchCalls=[];
+  const sandbox={
+    ggI18n:i18n,
+    ggCustomerShopContext:shopContext,
+    localStorage:{getItem:()=> 'en',setItem:()=>{}},
+    navigator:{languages:['en']},
+    location:{pathname:'/member.html',search,hostname:'localhost'},
+    fetch:async url=>{
+      fetchCalls.push(url);
+      if(String(url).startsWith('/api/customer/member/config?')){
+        return {ok:true,status:200,json:async()=>({success:true,data:{shopName:'Test Shop'}})};
+      }
+      return {ok:false,status:401,json:async()=>({success:false,code:'CUSTOMER_SESSION_REQUIRED'})};
+    }
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(ui,sandbox);
+  sandbox.document={
+    documentElement:{lang:''},
+    title:'',
+    getElementById:id=>elements[id]||null,
+    querySelector:()=>null,
+    querySelectorAll:()=>[]
+  };
+  await sandbox.ggCustomerMemberUI.init();
+  return {backLink,fetchCalls,shopSlug:sandbox.ggCustomerMemberUI.state.shopSlug};
+}
+
 test('customer booking exposes a bilingual account/membership entry',()=>{
   assert.match(booking,/id="memberEntry"[^>]+href="\/member\.html"[^>]+data-i18n="membershipEntry"/);
   assert.equal(i18n.t('membershipEntry','zh-CN'),'我的账户');
   assert.equal(i18n.t('membershipEntry','en'),'My Account');
   assert.match(booking,/memberEntry\.href = `\/member\.html\?shop=/);
+});
+
+test('member back link preserves Shop A merchant context',async()=>{
+  assert.match(html,/id="backLink"[^>]+href="\/"[^>]+data-i18n="backToBooking"/);
+  const result=await initializeMemberBackLink('?shop=gg-beauty');
+  assert.equal(result.shopSlug,'gg-beauty');
+  assert.equal(result.backLink.href,'/?shop=gg-beauty');
+});
+
+test('member back link preserves another merchant context',async()=>{
+  const result=await initializeMemberBackLink('?shop=shop-b');
+  assert.equal(result.shopSlug,'shop-b');
+  assert.equal(result.backLink.href,'/?shop=shop-b');
+});
+
+test('member back link without merchant context returns to root and never defaults to Shop A',async()=>{
+  const result=await initializeMemberBackLink('');
+  assert.equal(result.shopSlug,'');
+  assert.equal(result.backLink.href,'/');
+  assert.notEqual(result.backLink.href,'/?shop=gg-beauty');
+  assert.equal(result.fetchCalls.length,0,'Missing merchant context must not query member APIs');
+});
+
+test('member UI logic has no hardcoded gg-beauty fallback',()=>{
+  assert.doesNotMatch(ui,/gg-beauty/i,'public/customer-member-ui.js must not contain a hardcoded gg-beauty fallback');
 });
 
 test('trusted shop branding replaces the fallback title and critical business values opt out of browser translation',()=>{
