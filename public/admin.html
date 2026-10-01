@@ -2942,7 +2942,7 @@ async function handleAdminNotificationClick(notif) {
 
   if (targetAppt) {
     if (typeof openAppointmentDrawer === 'function') {
-      openAppointmentDrawer(targetAppt);
+      openAppointmentDrawer(notif.appointmentId);
     }
   } else {
     if (typeof renderAppointmentDrawerById === 'function') {

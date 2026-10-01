@@ -632,6 +632,46 @@ test('8. Drawer lifecycle: openAppointmentDrawer opens drawer, closeAppointmentD
   assert.strictEqual(context.getActiveDrawerAppointmentId(), null, 'Active drawer ID should be cleared');
 });
 
+test('8a. Owner and front desk notification selection opens the authorized appointment by UUID', async () => {
+  const appointment = {
+    id: '00000000-0000-4000-8000-000000000014',
+    customer_name: 'Authorized Customer',
+    customer_phone: '+65 91****67',
+    status: 'confirmed'
+  };
+
+  for (const role of ['owner', 'front_desk']) {
+    const { context, elements, requests } = createMockAdminContext({
+      initialAppointments: [appointment]
+    });
+    context.setAdminProfile({ membership: { role } });
+
+    await context.loadAppointments();
+    assert.ok(
+      requests.some(request => request.url === '/api/appointments-db'),
+      `${role} must load the appointment through the authenticated appointment route`
+    );
+
+    await context.handleAdminNotificationClick({
+      id: '10000000-0000-4000-8000-000000000014',
+      appointmentId: appointment.id,
+      isRead: true,
+      appointment: { id: '20000000-0000-4000-8000-000000000014' }
+    });
+
+    assert.strictEqual(
+      context.getActiveDrawerAppointmentId(),
+      appointment.id,
+      `${role} notification must select the authoritative appointment UUID`
+    );
+    assert.strictEqual(
+      elements.get('appointmentDrawer').classList.contains('open'),
+      true,
+      `${role} notification must open the authorized appointment detail`
+    );
+  }
+});
+
 // 9. In-place status update for arrived, in_service, no_show, cancelled
 test('9. In-place partial status update: updates in-memory snapshot and drawer without calling loadAppointments', async () => {
   const appt = {

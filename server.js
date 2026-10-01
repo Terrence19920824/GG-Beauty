@@ -4313,7 +4313,7 @@ const createOwnerFrontDeskAppointmentHandler = ({ walkIn }) =>
         try {
           const poolToUse = app.locals.ownerAuthPool || pool;
           await createBookingNotification(poolToUse, {
-            shopId: scope.shop_id,
+            shopId: req.ownerAuth.shopId,
             appointmentId: created.appointment.id,
             eventType: 'booking_created',
             dedupeSource: walkIn ? 'walk_in' : 'assisted'
