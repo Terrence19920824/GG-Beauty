@@ -36,7 +36,7 @@ const appointmentRow = {
   status: 'pending',
   booking_source: 'online',
   customer_name: 'Shop A Customer',
-  customer_phone: '00000000',
+  customer_phone: '+6591234567',
   customer_email: 'a@example.invalid',
   service_name: 'Shop A Service',
   duration_minutes: 60,
@@ -65,7 +65,13 @@ const crossTenantAppointmentRow = {
   staff_code: 'B1'
 };
 
-const makePool = ({ role = 'owner', validSession = true, locationOwned = true, readError = false } = {}) => {
+const makePool = ({
+  role = 'owner',
+  validSession = true,
+  locationOwned = true,
+  readError = false,
+  appointmentPhone = appointmentRow.customer_phone
+} = {}) => {
   const state = { poolQueries: [], clientQueries: [], releases: 0 };
   const client = {
     async query(sql, params = []) {
@@ -81,8 +87,8 @@ const makePool = ({ role = 'owner', validSession = true, locationOwned = true, r
           params[0] === ID.shopA;
         return {
           rows: tenantScoped
-            ? [appointmentRow]
-            : [appointmentRow, crossTenantAppointmentRow]
+            ? [{ ...appointmentRow, customer_phone: appointmentPhone }]
+            : [{ ...appointmentRow, customer_phone: appointmentPhone }, crossTenantAppointmentRow]
         };
       }
       throw new Error(`Unexpected client SQL: ${normalized}`);
@@ -183,10 +189,23 @@ test('front_desk may read tenant appointments with masked phone only in the trus
     const payload = await response.json();
     assert.deepEqual(payload.data, [{
       ...projectedAppointmentRow,
-      customer_phone: '00****00'
+      customer_phone: '+65 91****67'
     }]);
-    assert.equal(payload.data[0].customer_phone, '00****00');
+    assert.equal(payload.data[0].customer_phone, '+65 91****67');
+    assert.equal(JSON.stringify(payload).includes('+6591234567'), false);
     assert.equal(payload.data[0].internal_notes, 'Owner-only note');
+  });
+});
+
+test('front_desk appointment response fails closed for malformed pre-masked legacy phone', async () => {
+  const fixture = makePool({ role: 'front_desk', appointmentPhone: '*+6591234567' });
+  installPool(fixture);
+  await withServer(async baseUrl => {
+    const response = await getAppointments(baseUrl);
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    assert.equal(payload.data[0].customer_phone, '****');
+    assert.equal(JSON.stringify(payload).includes('6591234567'), false);
   });
 });
 

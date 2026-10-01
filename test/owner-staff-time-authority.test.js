@@ -426,7 +426,7 @@ test('11. Staff appointments: server_now is additive and does not break original
   );
 });
 
-test('11a. Staff appointments always request a masked phone projection, even with legacy full-phone permission', async () => {
+test('11a. Staff appointments mask the authoritative phone exactly once, even with legacy full-phone permission', async () => {
   let staffAppointmentsQuery;
   let staffAppointmentsParams;
   await withTestServer(
@@ -440,7 +440,20 @@ test('11a. Staff appointments always request a masked phone projection, even wit
           if (/WITH staff_scope AS/.test(sql)) {
             staffAppointmentsQuery = sql;
             staffAppointmentsParams = params;
-            return { rows: [{ appointment_date: '2030-01-01', timezone: 'Asia/Singapore', appointments: [] }] };
+            return { rows: [{
+              appointment_date: '2030-01-01',
+              timezone: 'Asia/Singapore',
+              appointments: [{
+                id: ID.appointmentA,
+                startAt: '2030-01-01T02:00:00.000Z',
+                endAt: '2030-01-01T03:00:00.000Z',
+                customerName: 'Private Customer',
+                customerPhone: '+6591234567',
+                serviceName: 'Service',
+                durationMinutes: 60,
+                status: 'confirmed'
+              }]
+            }] };
           }
           return { rows: [] };
         }
@@ -452,10 +465,13 @@ test('11a. Staff appointments always request a masked phone projection, even wit
         headers: { cookie: 'gg_beauty_staff_session=test-token' }
       });
       assert.strictEqual(res.status, 200);
+      const payload = await res.json();
+      assert.strictEqual(payload.data.appointments[0].customerPhone, '+65 91****67');
+      assert.strictEqual(JSON.stringify(payload).includes('+6591234567'), false);
     }
   );
-  assert.match(staffAppointmentsQuery, /'•••••'\s*\|\|\s*RIGHT\(/);
-  assert.doesNotMatch(staffAppointmentsQuery, /THEN\s+c\.phone/);
+  assert.match(staffAppointmentsQuery, /COALESCE\(c\.phone_normalized,\s*c\.phone\)/);
+  assert.doesNotMatch(staffAppointmentsQuery, /'•••••'\s*\|\|\s*RIGHT\(/);
   assert.strictEqual(staffAppointmentsParams.length, 4, 'staff SQL must not receive a full-phone permission flag');
 });
 

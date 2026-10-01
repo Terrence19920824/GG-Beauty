@@ -7,10 +7,10 @@ SET LOCAL statement_timeout = '30s';
 CREATE TABLE IF NOT EXISTS public.booking_notifications (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   shop_id UUID NOT NULL REFERENCES public.shops(id) ON DELETE CASCADE,
-  appointment_id UUID NOT NULL REFERENCES public.appointments(id) ON DELETE CASCADE,
+  appointment_id UUID NOT NULL,
   event_type TEXT NOT NULL,
   recipient_type TEXT NOT NULL,
-  recipient_staff_id UUID NULL REFERENCES public.staff(id) ON DELETE CASCADE,
+  recipient_staff_id UUID NULL,
   is_read BOOLEAN NOT NULL DEFAULT FALSE,
   read_at TIMESTAMPTZ NULL,
   dedupe_key TEXT NOT NULL,
@@ -26,6 +26,14 @@ CREATE TABLE IF NOT EXISTS public.booking_notifications (
       (recipient_type = 'staff' AND recipient_staff_id IS NOT NULL)
       OR (recipient_type = 'shop' AND recipient_staff_id IS NULL)
     ),
+  CONSTRAINT booking_notifications_appointment_scope_fkey
+    FOREIGN KEY (shop_id, appointment_id)
+    REFERENCES public.appointments (shop_id, id)
+    ON DELETE CASCADE,
+  CONSTRAINT booking_notifications_recipient_staff_scope_fkey
+    FOREIGN KEY (shop_id, recipient_staff_id)
+    REFERENCES public.staff (shop_id, id)
+    ON DELETE CASCADE,
   CONSTRAINT booking_notifications_shop_dedupe_uidx
     UNIQUE (shop_id, dedupe_key)
 );

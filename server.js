@@ -2586,7 +2586,7 @@ app.get(
         ) AS is_returning_customer,
 
         c.name AS customer_name,
-        c.phone AS customer_phone,
+        COALESCE(c.phone_normalized, c.phone) AS customer_phone,
         c.email AS customer_email,
         c.member_code,
         c.identity_status,
@@ -5439,21 +5439,7 @@ app.get(
                   'startAt', a.start_at,
                   'endAt', a.end_at,
                   'customerName', c.name,
-                  'customerPhone',
-                    CASE
-                      WHEN c.phone IS NULL
-                      THEN NULL
-                      ELSE
-                        '•••••' || RIGHT(
-                          REGEXP_REPLACE(
-                            c.phone,
-                            '[^0-9]',
-                            '',
-                            'g'
-                          ),
-                          3
-                        )
-                    END,
+                  'customerPhone', COALESCE(c.phone_normalized, c.phone),
                   'serviceName', s.name,
                   'durationMinutes',
                     s.duration_minutes,
@@ -5666,7 +5652,7 @@ app.patch('/api/staff/appointments/:appointmentId/status', requireStaffAuth, asy
           shopId: req.staffAuth.shopId,
           appointmentId: data.id,
           eventType: 'booking_cancelled',
-          dedupeSource: `staff_cancel_${data.id}_${data.updated_at || Date.now()}`
+          dedupeSource: 'status_cancelled'
         });
       } catch (notifErr) {
         console.error('Staff cancel notification error:', safeStaffAuthErrorCode(notifErr));
@@ -6342,7 +6328,7 @@ app.post(
             shopId: trustedShopId,
             appointmentId: updatedAppointment.id,
             eventType: 'booking_cancelled',
-            dedupeSource: `cancel_${updatedAppointment.id}_${updatedAppointment.updated_at || Date.now()}`
+            dedupeSource: 'status_cancelled'
           });
         } catch (notifErr) {
           console.error('Cancellation notification error:', safeStaffAuthErrorCode(notifErr));

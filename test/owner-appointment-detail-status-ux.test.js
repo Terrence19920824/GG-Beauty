@@ -804,9 +804,10 @@ test('11. Security & Authority: trusted owner roles receive full phone while sta
   const staffRoute = serverJs.slice(serverJs.indexOf('/api/staff/appointments'), serverJs.indexOf("app.patch('/api/staff/appointments/:appointmentId/status'"));
 
   assert.match(ownerRoute, /requireOwnerRole\(\['owner', 'manager', 'admin', 'front_desk'\]\)/);
-  assert.match(ownerRoute, /c\.phone AS customer_phone/);
-  assert.match(staffRoute, /'•••••'\s*\|\|\s*RIGHT\(/);
-  assert.doesNotMatch(staffRoute, /THEN\s+c\.phone/);
+  assert.match(ownerRoute, /COALESCE\(c\.phone_normalized,\s*c\.phone\) AS customer_phone/);
+  assert.match(staffRoute, /'customerPhone',\s*COALESCE\(c\.phone_normalized,\s*c\.phone\)/);
+  assert.match(staffRoute, /customerPhone:\s*maskCustomerPhone\(appt\.customerPhone\)/);
+  assert.doesNotMatch(staffRoute, /'•••••'\s*\|\|\s*RIGHT\(/);
   assert.doesNotMatch(staffRoute, /can_view_full_customer_phone/);
   assert.doesNotMatch(staffRoute, /\$5::BOOLEAN/);
 });

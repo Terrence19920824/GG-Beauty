@@ -54,13 +54,15 @@ test('PostgreSQL 17 booking notifications migration lifecycle is idempotent and 
       CREATE TABLE public.staff (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         shop_id UUID NOT NULL REFERENCES public.shops(id) ON DELETE CASCADE,
-        name TEXT NOT NULL
+        name TEXT NOT NULL,
+        UNIQUE (shop_id, id)
       );
       CREATE TABLE public.appointments (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         shop_id UUID NOT NULL REFERENCES public.shops(id) ON DELETE CASCADE,
         staff_id UUID NULL REFERENCES public.staff(id) ON DELETE SET NULL,
-        status TEXT NOT NULL DEFAULT 'confirmed'
+        status TEXT NOT NULL DEFAULT 'confirmed',
+        UNIQUE (shop_id, id)
       );
     `);
 
@@ -85,6 +87,13 @@ test('PostgreSQL 17 booking notifications migration lifecycle is idempotent and 
 
     const apptRes = await db.query("INSERT INTO public.appointments (shop_id, staff_id, status) VALUES ($1, $2, 'confirmed') RETURNING id", [shopId, staffId]);
     const apptId = apptRes.rows[0].id;
+
+    const otherShopRes = await db.query("INSERT INTO public.shops (name) VALUES ('Other Shop') RETURNING id");
+    const otherShopId = otherShopRes.rows[0].id;
+    const otherStaffRes = await db.query("INSERT INTO public.staff (shop_id, name) VALUES ($1, 'Other Staff') RETURNING id", [otherShopId]);
+    const otherStaffId = otherStaffRes.rows[0].id;
+    const otherApptRes = await db.query("INSERT INTO public.appointments (shop_id, staff_id, status) VALUES ($1, $2, 'confirmed') RETURNING id", [otherShopId, otherStaffId]);
+    const otherApptId = otherApptRes.rows[0].id;
 
     // Insert shop-level notification
     await db.query(`
@@ -134,7 +143,34 @@ test('PostgreSQL 17 booking notifications migration lifecycle is idempotent and 
       error => error.code === '23514'
     );
 
-    // 6. Rollback
+    // Tenant-safe appointment FK: Shop A cannot reference Shop B appointment.
+    await assert.rejects(
+      db.query(`
+        INSERT INTO public.booking_notifications (shop_id, appointment_id, event_type, recipient_type, recipient_staff_id, dedupe_key)
+        VALUES ($1, $2, 'booking_created', 'shop', NULL, 'cross-shop-appointment')
+      `, [shopId, otherApptId]),
+      error => error.code === '23503'
+    );
+
+    // Tenant-safe staff FK: Shop A cannot target a Shop B staff recipient.
+    await assert.rejects(
+      db.query(`
+        INSERT INTO public.booking_notifications (shop_id, appointment_id, event_type, recipient_type, recipient_staff_id, dedupe_key)
+        VALUES ($1, $2, 'booking_created', 'staff', $3, 'cross-shop-staff')
+      `, [shopId, apptId, otherStaffId]),
+      error => error.code === '23503'
+    );
+
+    // 6. Populated rollback fails closed and preserves the table and rows.
+    await assert.rejects(db.query(rollbackSql), /rollback refused: notification rows exist/);
+    await db.query('ROLLBACK');
+    const populatedTableCheck = await db.query("SELECT to_regclass('public.booking_notifications') AS tbl");
+    assert.equal(populatedTableCheck.rows[0].tbl, 'booking_notifications');
+    const preservedRows = await db.query('SELECT COUNT(*)::INTEGER AS count FROM public.booking_notifications');
+    assert.equal(preservedRows.rows[0].count, 2);
+
+    // 7. Empty rollback succeeds safely.
+    await db.query('DELETE FROM public.booking_notifications');
     await db.query(rollbackSql);
 
     // Table should now be absent

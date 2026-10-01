@@ -4,8 +4,10 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { execFileSync } = require('node:child_process');
 
 const ROOT = path.resolve(__dirname, '..');
+const AUTHORITATIVE_BASELINE = 'dcfa1e78f5c6543c91e9910ba0c446975e918537';
 
 const { maskCustomerPhone } = require('../lib/phone-normalization');
 const {
@@ -83,6 +85,8 @@ test('3. Customer booking, Member, and My Bookings contain "文+A" language togg
 test('4. 44px minimum touch targets and focus-visible rings defined in CSS', () => {
   assert.match(calendarCss, /\.header-action-btn\s*\{[^}]*min-width:\s*44px;/);
   assert.match(calendarCss, /\.header-action-btn\s*\{[^}]*min-height:\s*44px;/);
+  assert.match(calendarCss, /\.notification-mark-all-btn\s*\{[^}]*min-width:\s*44px;[^}]*min-height:\s*44px;/);
+  assert.match(calendarCss, /\.notification-drawer-close-btn\s*\{[^}]*min-width:\s*44px;[^}]*min-height:\s*44px;/);
   assert.match(calendarCss, /\.header-action-btn:focus-visible/);
   assert.match(calendarCss, /\.notification-drawer/);
   assert.match(calendarCss, /\.notification-badge/);
@@ -90,16 +94,18 @@ test('4. 44px minimum touch targets and focus-visible rings defined in CSS', () 
 });
 
 test('5. Zero dynamic inline on* event handler attributes across git diff additions', () => {
-  const { execSync } = require('node:child_process');
   let diff = '';
   try {
-    diff = execSync('git diff HEAD', { encoding: 'utf8', cwd: ROOT });
+    diff = execFileSync(
+      'git',
+      ['diff', '--no-ext-diff', '--unified=0', AUTHORITATIVE_BASELINE, '--'],
+      { encoding: 'utf8', cwd: ROOT }
+    );
   } catch (_) {}
-  if (diff) {
-    const addedLines = diff.split('\n').filter(l => l.startsWith('+') && !l.startsWith('+++'));
-    for (const line of addedLines) {
-      assert.doesNotMatch(line, /\son[a-z]+\s*=/i, `Inline event handler detected in diff: ${line}`);
-    }
+  assert.ok(diff, 'security diff must include changes from the authoritative baseline');
+  const addedLines = diff.split('\n').filter(l => l.startsWith('+') && !l.startsWith('+++'));
+  for (const line of addedLines) {
+    assert.doesNotMatch(line, /\son[a-z]+\s*=/i, `Inline event handler detected in diff: ${line}`);
   }
 });
 
@@ -381,12 +387,37 @@ test('10. Mock DB: notification creation, recipient routing, deduplication, and 
   });
   assert.equal(resultDup.created, 0);
 
+  // Concurrent/replayed delivery of the same authoritative cancellation event
+  // still creates only one row per intended recipient.
+  const cancellationAttempts = await Promise.all([
+    createBookingNotification(mockDb, {
+      shopId,
+      appointmentId: appt1Id,
+      eventType: 'booking_cancelled',
+      dedupeSource: 'status_cancelled'
+    }),
+    createBookingNotification(mockDb, {
+      shopId,
+      appointmentId: appt1Id,
+      eventType: 'booking_cancelled',
+      dedupeSource: 'status_cancelled'
+    }),
+    createBookingNotification(mockDb, {
+      shopId,
+      appointmentId: appt1Id,
+      eventType: 'booking_cancelled',
+      dedupeSource: 'status_cancelled'
+    })
+  ]);
+  assert.equal(cancellationAttempts.reduce((sum, result) => sum + result.created, 0), 2);
+  assert.equal(notificationsStore.filter(item => item.event_type === 'booking_cancelled').length, 2);
+
   // 4. Verify recipient isolation & unread counts
   const ownerUnread = await getUnreadCount(mockDb, { shopId, recipientType: 'shop' });
-  assert.equal(ownerUnread, 2); // sees appt1 and appt2
+  assert.equal(ownerUnread, 3); // two booking events plus one cancellation event
 
   const staff1Unread = await getUnreadCount(mockDb, { shopId, recipientType: 'staff', recipientStaffId: staff1Id });
-  assert.equal(staff1Unread, 1); // sees appt1 only
+  assert.equal(staff1Unread, 2); // booking + cancellation for assigned appt1
 
   const staff2Unread = await getUnreadCount(mockDb, { shopId, recipientType: 'staff', recipientStaffId: staff2Id });
   assert.equal(staff2Unread, 0); // sees nothing
@@ -401,18 +432,18 @@ test('10. Mock DB: notification creation, recipient routing, deduplication, and 
   assert.equal(readSuccess, true);
 
   const ownerUnreadAfterRead = await getUnreadCount(mockDb, { shopId, recipientType: 'shop' });
-  assert.equal(ownerUnreadAfterRead, 1);
+  assert.equal(ownerUnreadAfterRead, 2);
 
   // 6. Mark all read
   const allReadRes = await markAllNotificationsRead(mockDb, { shopId, recipientType: 'shop' });
-  assert.equal(allReadRes.updated, 1);
+  assert.equal(allReadRes.updated, 2);
 
   const ownerUnreadFinal = await getUnreadCount(mockDb, { shopId, recipientType: 'shop' });
   assert.equal(ownerUnreadFinal, 0);
 
   // Staff1 still has unread notification (independent recipient state)
   const staff1UnreadFinal = await getUnreadCount(mockDb, { shopId, recipientType: 'staff', recipientStaffId: staff1Id });
-  assert.equal(staff1UnreadFinal, 1);
+  assert.equal(staff1UnreadFinal, 2);
 });
 
 test('11. Graceful degradation: non-migrated DB (table does not exist) returns safe fallbacks without 500 error', async () => {
@@ -484,9 +515,22 @@ test('12. maskCustomerPhone accurately masks middle 4 digits across standard int
   assert.equal(maskCustomerPhone(undefined), '');
   assert.equal(maskCustomerPhone('123'), '***');
   assert.equal(maskCustomerPhone('1234'), '****');
+
+  // Arbitrary masking characters are not proof that the value is safe.
+  for (const malformed of [
+    '*+6591234567',
+    '+659123*4567',
+    '+65 91** **67',
+    '•••••567',
+    'phone:+6591234567'
+  ]) {
+    const masked = maskCustomerPhone(malformed);
+    assert.equal(masked, '****');
+    assert.equal(masked.includes('6591234567'), false);
+  }
 });
 
-test('13. Role-based phone privacy: Owner receives FULL phone; Front Desk & Staff receive MASKED phone', () => {
+test('13. Role-based phone privacy: Owner receives FULL phone; Front Desk receives MASKED phone', () => {
   const { projectOwnerAppointmentCheckout } = require('../lib/owner-appointment-checkout-projection');
 
   const sampleAppointment = {
@@ -517,6 +561,17 @@ test('13. Role-based phone privacy: Owner receives FULL phone; Front Desk & Staf
   const frontDeskJson = JSON.stringify(frontDeskView);
   assert.ok(!frontDeskJson.includes('+6591234567'));
   assert.ok(!frontDeskJson.includes('+6598765432'));
+
+  const malformedFrontDeskView = projectOwnerAppointmentCheckout({
+    ...sampleAppointment,
+    customer_phone: '*+6591234567',
+    booker_phone_snapshot: '+659123*4567',
+    recipient_phone_snapshot: '•••••567'
+  }, { role: 'front_desk' });
+  assert.equal(malformedFrontDeskView.customer_phone, '****');
+  assert.equal(malformedFrontDeskView.booker_phone_snapshot, '****');
+  assert.equal(malformedFrontDeskView.recipient_phone_snapshot, '****');
+  assert.equal(JSON.stringify(malformedFrontDeskView).includes('6591234567'), false);
 });
 
 test('14. UI contact action links (tel: and WhatsApp) omitted when customer phone is masked', () => {

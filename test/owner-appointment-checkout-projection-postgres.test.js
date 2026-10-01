@@ -80,7 +80,7 @@ test('owner appointment checkout projection executes once on PostgreSQL and isol
     db = await connectWhenReady(config, postgres, () => stderr);
     await db.query(`
       CREATE TABLE locations (id uuid PRIMARY KEY, shop_id uuid NOT NULL, name text, is_active boolean NOT NULL, UNIQUE(shop_id,id));
-      CREATE TABLE customers (id uuid PRIMARY KEY, shop_id uuid NOT NULL, name text, phone text, email text, member_code text, identity_status text, profile_notes text NULL, UNIQUE(shop_id,id), CONSTRAINT customers_profile_notes_length_check CHECK(profile_notes IS NULL OR char_length(profile_notes) <= 4000));
+      CREATE TABLE customers (id uuid PRIMARY KEY, shop_id uuid NOT NULL, name text, phone text, phone_normalized text, email text, member_code text, identity_status text, profile_notes text NULL, UNIQUE(shop_id,id), CONSTRAINT customers_profile_notes_length_check CHECK(profile_notes IS NULL OR char_length(profile_notes) <= 4000));
       CREATE TABLE services (id uuid PRIMARY KEY, shop_id uuid NOT NULL, name text, duration_minutes integer, price numeric, UNIQUE(shop_id,id));
       CREATE TABLE staff (id uuid PRIMARY KEY, shop_id uuid NOT NULL, name text, staff_code text, UNIQUE(shop_id,id));
       CREATE TABLE shop_customer_settings (shop_id uuid PRIMARY KEY, membership_enabled boolean DEFAULT false);
@@ -146,7 +146,7 @@ test('owner appointment checkout projection executes once on PostgreSQL and isol
       );
     `);
     await db.query(`INSERT INTO locations VALUES ($1,$2,'A',true),($3,$4,'B',true)`, [ID.locationA, ID.shopA, ID.locationB, ID.shopB]);
-    await db.query(`INSERT INTO customers (id, shop_id, name, phone, email, member_code, identity_status) VALUES ($1,$2,'A Customer','0000','a@example.invalid','MEM001','verified_member'),($3,$4,'B Customer','9999','b@example.invalid',NULL,NULL)`, [ID.customerA, ID.shopA, ID.customerB, ID.shopB]);
+    await db.query(`INSERT INTO customers (id, shop_id, name, phone, phone_normalized, email, member_code, identity_status) VALUES ($1,$2,'A Customer','0000','+6591230000','a@example.invalid','MEM001','verified_member'),($3,$4,'B Customer','9999','+6599990000','b@example.invalid',NULL,NULL)`, [ID.customerA, ID.shopA, ID.customerB, ID.shopB]);
     await db.query(`INSERT INTO services VALUES ($1,$2,'A Service',60,60),($3,$4,'B Service',60,80)`, [ID.serviceA, ID.shopA, ID.serviceB, ID.shopB]);
     await db.query(`INSERT INTO staff VALUES ($1,$2,'A Staff','A1'),($3,$4,'B Staff','B1')`, [ID.staffA, ID.shopA, ID.staffB, ID.shopB]);
     await db.query(`INSERT INTO appointments (

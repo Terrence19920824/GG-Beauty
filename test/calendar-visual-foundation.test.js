@@ -316,12 +316,13 @@ test('8. Owner checkout financial badges render separately from appointment stat
 });
 
 // 9. Staff phone masking intact
-test('9. Staff appointment view preserves phone masking (*** 4033)', () => {
+test('9. Staff appointment view masks the authoritative phone exactly once', () => {
   // Front-end staff UI strictly renders customerPhone from API without client unmasking
   assert.match(staffHtml, /appointment\.customerPhone/);
-  // Backend API query masks customerPhone by default for staff
-  assert.match(serverJsSource, /'•••••'\s*\|\|\s*RIGHT\(/);
-  assert.match(serverJsSource, /REGEXP_REPLACE\(\s*c\.phone/);
+  // Backend reads the canonical source internally, then masks immediately before JSON.
+  assert.match(serverJsSource, /'customerPhone',\s*COALESCE\(c\.phone_normalized, c\.phone\)/);
+  assert.match(serverJsSource, /customerPhone:\s*maskCustomerPhone\(appt\.customerPhone\)/);
+  assert.doesNotMatch(serverJsSource, /'•••••'\s*\|\|\s*RIGHT\(/);
 });
 
 // 10. Routine arrival is one explicit server workflow action

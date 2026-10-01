@@ -295,9 +295,13 @@ test('B. Tenant isolation: customer and party joins in appointments query enforc
 // C. Phone Privacy: Owner receives unmasked phone, Staff remains masked, Public/Customer does not leak
 // =========================================================================
 test('C. Phone privacy: Staff route projection remains strictly masked', () => {
-  // Staff route /api/staff/appointments must NOT project unmasked phone or raw snapshots
+  // Staff route reads the canonical value only inside the server and masks exactly
+  // once before serializing the response.
   assert.match(serverJs, /app\.get\(\s*['"]\/api\/staff\/appointments['"]/);
-  assert.match(serverJs, /'•••••'\s*\|\|\s*RIGHT/, 'Staff route must use masked customer phone projection');
+  assert.match(serverJs, /'customerPhone',\s*COALESCE\(c\.phone_normalized, c\.phone\)/);
+  assert.match(serverJs, /customerPhone:\s*maskCustomerPhone\(appt\.customerPhone\)/);
+  assert.doesNotMatch(serverJs, /'•••••'\s*\|\|\s*RIGHT/,
+    'Staff route must not pre-mask in SQL and then mask a second time');
   assert.match(serverJs, /FROM locations l\s+WHERE l\.id = \$3::UUID\s+AND l\.shop_id = \$1::UUID/);
 });
 
