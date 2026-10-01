@@ -144,9 +144,18 @@ test('PostgreSQL 17 member identity, OTP, tenant, and phone-change foundation', 
     clock=new Date(clock.getTime()+61000);
     const dobChallenge=await service.requestOtp({shopSlug:'a',countryCode:'+65',phone:'8888 8888',ip:'127.0.0.6',userAgent:'dob'});
     const dobCode=sent.at(-1).code;
-    await assert.rejects(service.verifySignIn({challengeId:dobChallenge.challengeId,code:dobCode,name:'DOB Member'}),e=>e.code==='DOB_REQUIRED');
-    const dobMember=await service.verifySignIn({challengeId:dobChallenge.challengeId,code:dobCode,name:'DOB Member',dateOfBirth:'2000-01-02',gender:'prefer_not_to_say'});
+    const dobMember=await service.verifySignIn({challengeId:dobChallenge.challengeId,code:dobCode,name:'DOB Optional Member'});
     const profile=(await db.query(`SELECT to_char(date_of_birth,'YYYY-MM-DD') AS date_of_birth,gender FROM customers WHERE id=$1`,[dobMember.customerId])).rows[0];
-    assert.equal(profile.date_of_birth,'2000-01-02');assert.equal(profile.gender,'prefer_not_to_say');
+    assert.equal(profile.date_of_birth,null);assert.equal(profile.gender,null);
+
+    clock=new Date(clock.getTime()+61000);
+    const invalidDobChallenge=await service.requestOtp({shopSlug:'a',countryCode:'+65',phone:'8888 8889',ip:'127.0.0.6',userAgent:'invalid-dob'});
+    await assert.rejects(service.verifySignIn({challengeId:invalidDobChallenge.challengeId,code:sent.at(-1).code,name:'Invalid DOB',dateOfBirth:'2001-02-29'}),e=>e.code==='DOB_INVALID');
+
+    clock=new Date(clock.getTime()+61000);
+    const validDobChallenge=await service.requestOtp({shopSlug:'a',countryCode:'+65',phone:'8888 8890',ip:'127.0.0.6',userAgent:'valid-dob'});
+    const validDobMember=await service.verifySignIn({challengeId:validDobChallenge.challengeId,code:sent.at(-1).code,name:'DOB Member',dateOfBirth:'2000-01-02',gender:'prefer_not_to_say'});
+    const validProfile=(await db.query(`SELECT to_char(date_of_birth,'YYYY-MM-DD') AS date_of_birth,gender FROM customers WHERE id=$1`,[validDobMember.customerId])).rows[0];
+    assert.equal(validProfile.date_of_birth,'2000-01-02');assert.equal(validProfile.gender,'prefer_not_to_say');
   }finally{if(pool)await pool.end().catch(()=>{});if(db)await db.end().catch(()=>{});pg.kill('SIGTERM');await new Promise(r=>pg.once('exit',r));fs.rmSync(temp,{recursive:true,force:true});}
 });

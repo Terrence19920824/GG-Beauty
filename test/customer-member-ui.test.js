@@ -79,8 +79,8 @@ test('member API trusts session and shop slug, rejects client authority, and use
   assert.match(server,/app\.patch\('\/api\/customer\/me'/);
   assert.match(server,/rejectCustomerAuthority\(req\.query\)/);
   assert.match(server,/rejectCustomerAuthority\(req\.body\)/);
-  assert.match(server,/customerMemberIdentity\.authenticate\(customerCookie\(req\)\)/);
-  assert.match(server,/customerMemberIdentity\.updateProfile/);
+  assert.match(server,/resolveCustomerMemberIdentity\(\)\.authenticate\(customerCookie\(req\)\)/);
+  assert.match(server,/resolveCustomerMemberIdentity\(\)\.updateProfile/);
   assert.doesNotMatch(ui,/customerId\s*:/);
   assert.doesNotMatch(ui,/shopId\s*:/);
 });

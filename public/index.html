@@ -254,6 +254,11 @@
     .recipient-option { margin: 0; padding: 13px 10px; background: var(--theme-surface, #fff); color: var(--theme-text, #222); border: 1px solid var(--theme-border, #ddd); font-size: 14px; }
     .recipient-option.selected { background: var(--theme-primary, #111); color: var(--theme-primary-contrast, #fff); border-color: var(--theme-primary, #111); }
     .phone-row { display: grid; grid-template-columns: 145px 1fr; gap: 8px; }
+    .authenticated-booker-summary { margin-top: 10px; padding: 14px; border: 1px solid var(--theme-border, #ddd); border-radius: 12px; background: var(--theme-surface-subtle, #f5f5f5); }
+    .authenticated-booker-label { color: var(--theme-text-muted, #777); font-size: 13px; font-weight: 600; }
+    .authenticated-booker-name { display: block; margin-top: 5px; font-size: 16px; }
+    .authenticated-booker-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 5px; color: var(--theme-text-muted, #666); font-size: 13px; }
+    .identity-verification-badge { display: inline-flex; padding: 2px 7px; border-radius: 999px; background: var(--theme-surface, #fff); border: 1px solid var(--theme-border, #ddd); font-size: 11px; font-weight: 700; }
     .special-request { margin-top: 14px; border: 1px solid var(--theme-border, #ddd); border-radius: 12px; overflow: hidden; background: var(--theme-surface, #fff); }
     .special-request-toggle { width: 100%; min-height: 48px; margin: 0; padding: 11px 13px; border: 0; border-radius: 0; background: transparent; color: var(--theme-text, #222); text-align: left; font-size: 14px; line-height: 1.35; }
     .special-request-title { display: block; font-weight: 700; }
@@ -457,27 +462,38 @@
 
   <div id="contactStep" class="card" hidden>
 
-    <label data-i18n="yourDetails">您的联系方式</label>
-    <label data-i18n="name">姓名</label>
-    <input
-      type="text"
-      id="customerName"
-      placeholder="请输入姓名"
-      data-i18n-placeholder="enterName"
-    >
-
-    <label data-i18n="countryRegion">国家 / 地区</label>
-    <div class="phone-row">
-      <select id="bookerCountryCode" aria-label="Country or region"></select>
-      <input type="tel" id="phone" placeholder="请输入手机号码" data-i18n-placeholder="enterPhone">
+    <div id="authenticatedBookerSummary" class="authenticated-booker-summary" hidden>
+      <div class="authenticated-booker-label" data-i18n="bookingAsAccount">使用以下账号预约</div>
+      <strong id="authenticatedBookerName" class="authenticated-booker-name notranslate" translate="no"></strong>
+      <div class="authenticated-booker-meta">
+        <span id="authenticatedBookerPhone" class="notranslate" translate="no"></span>
+        <span id="authenticatedBookerVerification" class="identity-verification-badge"></span>
+      </div>
     </div>
 
-    <label data-i18n="optionalEmail">Email（选填）</label>
-    <input
-      type="email"
-      id="email"
-      placeholder="example@email.com"
-    >
+    <div id="anonymousBookerFields">
+      <label data-i18n="yourDetails">您的联系方式</label>
+      <label data-i18n="name">姓名</label>
+      <input
+        type="text"
+        id="customerName"
+        placeholder="请输入姓名"
+        data-i18n-placeholder="enterName"
+      >
+
+      <label data-i18n="countryRegion">国家 / 地区</label>
+      <div class="phone-row">
+        <select id="bookerCountryCode" aria-label="Country or region"></select>
+        <input type="tel" id="phone" placeholder="请输入手机号码" data-i18n-placeholder="enterPhone">
+      </div>
+
+      <label data-i18n="optionalEmail">Email（选填）</label>
+      <input
+        type="email"
+        id="email"
+        placeholder="example@email.com"
+      >
+    </div>
 
     <div class="special-request">
       <button id="specialRequestToggle" class="special-request-toggle" type="button" aria-expanded="false" aria-controls="specialRequestBody">
@@ -612,6 +628,7 @@ let customerShopName = '';
 let selectedCategoryId = '';
 let cart = cartApi.create();
 let bookingFor = 'myself';
+let bookingIdentity = { authenticated: false };
 let bookingSucceeded = false;
 let cachedMerchantContact = null;
 let calendarMonth = '';
@@ -770,10 +787,42 @@ function mapBookingErrorCode(code) {
       return customerT('bookingMaintenance');
     case 'CUSTOMER_IDENTITY_CONFLICT':
     case 'VERIFIED_BOOKER_REQUIRED':
+    case 'AUTHENTICATED_BOOKER_CONTACT_FORBIDDEN':
+    case 'CUSTOMER_SESSION_SHOP_MISMATCH':
+    case 'CUSTOMER_SESSION_INVALID':
       return customerT('identityConflict');
     default:
       return null;
   }
+}
+
+function renderBookingIdentity() {
+  const authenticated = bookingIdentity?.authenticated === true;
+  const anonymousFields = document.getElementById('anonymousBookerFields');
+  const summary = document.getElementById('authenticatedBookerSummary');
+  if (anonymousFields) anonymousFields.hidden = authenticated;
+  if (summary) summary.hidden = !authenticated;
+  if (!authenticated) return;
+  const name = document.getElementById('authenticatedBookerName');
+  const phone = document.getElementById('authenticatedBookerPhone');
+  const verification = document.getElementById('authenticatedBookerVerification');
+  if (name) name.textContent = bookingIdentity.name || '';
+  if (phone) phone.textContent = bookingIdentity.maskedPhone || '';
+  if (verification) verification.textContent = customerT(bookingIdentity.isPhoneVerified ? 'phoneVerified' : 'phoneUnverified');
+}
+
+async function loadBookingIdentity(signal) {
+  bookingIdentity = { authenticated: false };
+  try {
+    const result = await fetchJsonWithTimeout(
+      `/api/customer/booking-identity?shopSlug=${encodeURIComponent(customerShopSlug)}`,
+      { signal, credentials: 'same-origin' }
+    );
+    if (result?.success === true && result.data?.authenticated === true) {
+      bookingIdentity = result.data;
+    }
+  } catch (_) {}
+  renderBookingIdentity();
 }
 
 function renderRecipientChoice() {
@@ -1510,6 +1559,7 @@ async function setLocale(locale) {
   }
   renderCountryOptions(bookerCountryCode);
   renderCountryOptions(recipientCountryCode);
+  renderBookingIdentity();
   renderRecipientChoice();
   renderSelectedDate();
   renderBookingCalendar();
@@ -1711,6 +1761,9 @@ async function initializeCustomerPage() {
       .catch(() => {});
     globalThis.ggMerchantContactBar?.mount({ shopSlug: customerShopSlug, host: document.getElementById('merchantContactBar') }).catch(() => {});
     document.getElementById('pwaManifest').href = `/manifest.webmanifest?shop=${encodeURIComponent(customerShopSlug)}`;
+
+    await loadBookingIdentity(signal);
+    if (gen !== customerLoadGeneration) return;
 
     await setLocale(currentLocale);
     if (gen !== customerLoadGeneration) return;
@@ -2051,24 +2104,13 @@ document
     'click',
     async () => {
 
-      const customerName =
-        document
-          .getElementById('customerName')
-          .value
-          .trim();
-
-      const phone = explicitContactPhone(
+      const authenticatedBooking = bookingIdentity?.authenticated === true;
+      const customerName = authenticatedBooking ? '' : document.getElementById('customerName').value.trim();
+      const phone = authenticatedBooking ? '' : explicitContactPhone(
         bookerCountryCode.value,
-        document
-          .getElementById('phone')
-          .value
+        document.getElementById('phone').value
       );
-
-      const email =
-        document
-          .getElementById('email')
-          .value
-          .trim();
+      const email = authenticatedBooking ? '' : document.getElementById('email').value.trim();
 
       const customerSpecialRequest = document.getElementById('customerSpecialRequest').value;
 
@@ -2090,8 +2132,7 @@ document
 
       if (
         !cart.length ||
-        !customerName ||
-        !phone ||
+        (!authenticatedBooking && (!customerName || !phone)) ||
         (bookingFor === 'someone_else' && (!recipient.name || !recipient.phone)) ||
         !date ||
         !selectedSlot
@@ -2106,8 +2147,8 @@ document
         return;
       }
 
-      const rawBookerPhone = document.getElementById('phone').value.trim();
-      if (!isValidCustomerPhone(bookerCountryCode.value, rawBookerPhone)) {
+      const rawBookerPhone = authenticatedBooking ? '' : document.getElementById('phone').value.trim();
+      if (!authenticatedBooking && !isValidCustomerPhone(bookerCountryCode.value, rawBookerPhone)) {
         messageBox.className = 'message error';
         messageBox.textContent = customerT('invalidPhone');
         return;
@@ -2149,10 +2190,12 @@ document
                 shopSlug: customerShopSlug,
                 items: cartApi.requestItems(cart),
                 locale: currentLocale,
-                customerName,
-                phone,
-                countryCode: bookerCountryCode.value,
-                email,
+                ...(!authenticatedBooking ? {
+                  customerName,
+                  phone,
+                  countryCode: bookerCountryCode.value,
+                  email
+                } : {}),
                 bookingFor,
                 ...(recipient ? { recipient } : {}),
                 customerSpecialRequest,

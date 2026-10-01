@@ -48,6 +48,7 @@ const {
   normalizeLocale
 } = require('./public/service-locale');
 const {
+  bookingIdentityPresentation,
   CustomerIdentityError,
   resolveBookingParties,
   resolveOrCreateCustomer
@@ -152,6 +153,7 @@ const customerMemberIdentity = createCustomerMemberIdentity({
   pool,
   getProvider: () => app.locals.customerOtpProvider
 });
+const resolveCustomerMemberIdentity = () => app.locals.customerMemberIdentity || customerMemberIdentity;
 
 const defaultCustomerAccountService = createCustomerAccountService({ pool });
 const resolveCustomerAccountService = () => app.locals.customerAccountService || (app.locals.ownerAuthPool && app.locals.ownerAuthPool !== pool ? createCustomerAccountService({ pool: app.locals.ownerAuthPool }) : defaultCustomerAccountService);
@@ -179,7 +181,7 @@ const rejectCustomerAuthority = body => ['shopId','shop_id','customerId','custom
 
 app.get('/api/customer/member/config',async(req,res)=>{
   if(rejectCustomerAuthority(req.query)) return res.status(400).json({success:false,code:'INVALID_IDENTITY_CONTEXT'});
-  try { const data=await customerMemberIdentity.getPublicConfig(req.query.shopSlug); return res.json({success:true,data}); }
+  try { const data=await resolveCustomerMemberIdentity().getPublicConfig(req.query.shopSlug); return res.json({success:true,data}); }
   catch(error){ return customerIdentityError(res,error); }
 });
 
@@ -213,13 +215,13 @@ app.post('/api/customer/auth/sign-in', async (req, res) => {
 
 app.post('/api/customer/auth/otp/request',async(req,res)=>{
   if(rejectCustomerAuthority(req.body)) return res.status(400).json({success:false,code:'INVALID_IDENTITY_CONTEXT'});
-  try { const data=await customerMemberIdentity.requestOtp({shopSlug:req.body.shopSlug,countryCode:req.body.countryCode,
+  try { const data=await resolveCustomerMemberIdentity().requestOtp({shopSlug:req.body.shopSlug,countryCode:req.body.countryCode,
     phone:req.body.phone,purpose:'sign_in',ip:req.ip,userAgent:req.headers['user-agent']}); return res.json({success:true,data}); }
   catch(error){ return customerIdentityError(res,error); }
 });
 app.post('/api/customer/auth/otp/verify',async(req,res)=>{
   if(rejectCustomerAuthority(req.body)) return res.status(400).json({success:false,code:'INVALID_IDENTITY_CONTEXT'});
-  try { const data=await customerMemberIdentity.verifySignIn({challengeId:req.body.challengeId,code:req.body.code,name:req.body.name,email:req.body.email,
+  try { const data=await resolveCustomerMemberIdentity().verifySignIn({challengeId:req.body.challengeId,code:req.body.code,name:req.body.name,email:req.body.email,
     dateOfBirth:req.body.dateOfBirth,gender:req.body.gender});
     res.setHeader('Set-Cookie',`${CUSTOMER_SESSION_COOKIE}=${encodeURIComponent(data.token)}; ${customerCookieOptions(30*24*60*60)}`);
     return res.json({success:true,data:{customerId:data.customerId}}); }
@@ -227,30 +229,46 @@ app.post('/api/customer/auth/otp/verify',async(req,res)=>{
 });
 app.get('/api/customer/me',async(req,res)=>{
   try {
-    const session = await customerMemberIdentity.authenticate(customerCookie(req));
+    const session = await resolveCustomerMemberIdentity().authenticate(customerCookie(req));
     const summary = await resolveCustomerAccountService().getCustomerSummary({ shopId: session.shop_id, customerId: session.customer_id });
     return res.json({ success: true, data: summary || session });
   }
   catch(error){ return customerIdentityError(res,error); }
 });
+app.get('/api/customer/booking-identity',async(req,res)=>{
+  if(rejectCustomerAuthority(req.query)) return res.status(400).json({success:false,code:'INVALID_IDENTITY_CONTEXT'});
+  res.setHeader('Cache-Control','no-store');
+  const token=customerCookie(req);
+  if(!token) return res.json({success:true,data:{authenticated:false}});
+  try {
+    const session=await resolveCustomerMemberIdentity().authenticate(token);
+    if(typeof req.query.shopSlug!=='string' || req.query.shopSlug!==session.shop_slug) {
+      return res.status(403).json({success:false,code:'CUSTOMER_SESSION_SHOP_MISMATCH'});
+    }
+    return res.json({success:true,data:bookingIdentityPresentation(session)});
+  }
+  catch(error){ return customerIdentityError(res,error); }
+});
 app.patch('/api/customer/me',async(req,res)=>{
   if(rejectCustomerAuthority(req.body)) return res.status(400).json({success:false,code:'INVALID_IDENTITY_CONTEXT'});
-  try { const session=await customerMemberIdentity.authenticate(customerCookie(req));
-    await customerMemberIdentity.updateProfile({session,name:req.body.name,email:req.body.email,dateOfBirth:req.body.dateOfBirth,gender:req.body.gender});
-    const data=await customerMemberIdentity.authenticate(customerCookie(req)); return res.json({success:true,data}); }
+  try { const session=await resolveCustomerMemberIdentity().authenticate(customerCookie(req));
+    if(!session.phone_verified_at) throw new CustomerMemberError('CUSTOMER_PROFILE_VERIFICATION_REQUIRED',403);
+    await resolveCustomerMemberIdentity().updateProfile({session,name:req.body.name,email:req.body.email,dateOfBirth:req.body.dateOfBirth,gender:req.body.gender});
+    const data=await resolveCustomerAccountService().getCustomerSummary({shopId:session.shop_id,customerId:session.customer_id});
+    return res.json({success:true,data}); }
   catch(error){ return customerIdentityError(res,error); }
 });
 app.post('/api/customer/phone-change/request',async(req,res)=>{
   if(rejectCustomerAuthority(req.body)) return res.status(400).json({success:false,code:'INVALID_IDENTITY_CONTEXT'});
-  try { const session=await customerMemberIdentity.authenticate(customerCookie(req));
-    const data=await customerMemberIdentity.requestOtp({shopSlug:session.shop_slug,countryCode:req.body.countryCode,phone:req.body.phone,
+  try { const session=await resolveCustomerMemberIdentity().authenticate(customerCookie(req));
+    const data=await resolveCustomerMemberIdentity().requestOtp({shopSlug:session.shop_slug,countryCode:req.body.countryCode,phone:req.body.phone,
       purpose:'phone_change',customerId:session.customer_id,ip:req.ip,userAgent:req.headers['user-agent']}); return res.json({success:true,data}); }
   catch(error){ return customerIdentityError(res,error); }
 });
 app.post('/api/customer/phone-change/confirm',async(req,res)=>{
   if(rejectCustomerAuthority(req.body)) return res.status(400).json({success:false,code:'INVALID_IDENTITY_CONTEXT'});
-  try { const session=await customerMemberIdentity.authenticate(customerCookie(req));
-    await customerMemberIdentity.confirmPhoneChange({session,challengeId:req.body.challengeId,code:req.body.code}); return res.json({success:true}); }
+  try { const session=await resolveCustomerMemberIdentity().authenticate(customerCookie(req));
+    await resolveCustomerMemberIdentity().confirmPhoneChange({session,challengeId:req.body.challengeId,code:req.body.code}); return res.json({success:true}); }
   catch(error){ return customerIdentityError(res,error); }
 });
 app.post('/api/customer/logout',async(req,res)=>{
@@ -1055,7 +1073,7 @@ app.post('/api/customer/my-bookings', async (req, res) => {
   const sessionToken = customerCookie(req);
   if (sessionToken) {
     try {
-      customerSession = await customerMemberIdentity.authenticate(sessionToken);
+      customerSession = await resolveCustomerMemberIdentity().authenticate(sessionToken);
     } catch (error) {
       if (error?.code !== 'CUSTOMER_SESSION_INVALID') return customerIdentityError(res, error);
     }
@@ -3091,6 +3109,12 @@ const mapCustomerIdentityBookingError = error => {
   if (error.code === 'CUSTOMER_SESSION_INVALID') {
     return new AppointmentMutationError('CUSTOMER_SESSION_INVALID', 401, '登录状态无效');
   }
+  if (error.code === 'CUSTOMER_SESSION_SHOP_MISMATCH') {
+    return new AppointmentMutationError('CUSTOMER_SESSION_SHOP_MISMATCH', 403, '登录账号不属于此店铺');
+  }
+  if (error.code === 'AUTHENTICATED_BOOKER_CONTACT_FORBIDDEN') {
+    return new AppointmentMutationError('AUTHENTICATED_BOOKER_CONTACT_FORBIDDEN', 400, '已登录预约必须使用账号联系方式');
+  }
   if (['CLIENT_CUSTOMER_ID_FORBIDDEN', 'BOOKING_RECIPIENT_MODE_INVALID', 'BOOKER_CONTACT_REQUIRED', 'RECIPIENT_CONTACT_REQUIRED', 'CUSTOMER_PHONE_INVALID'].includes(error.code)) {
     return new AppointmentMutationError(error.code, 400, '预约信息无效');
   }
@@ -3103,12 +3127,18 @@ const createMultiServiceBooking = async (req,verifiedSession=null) => {
   const locale = normalizeLocale(body.locale);
   const parsedStart = parseStrictIsoInstant(body.startAt);
   const customerSpecialRequest = normalizeCustomerSpecialRequest(body);
-  if (!parsedStart || !body.shopSlug || !body.customerName || !body.phone) {
+  if (!parsedStart || !body.shopSlug || (!verifiedSession && (!body.customerName || !body.phone))) {
     throw new AppointmentMutationError('booking_input_invalid', 400, '请完整填写所有必填信息');
   }
-  validateBookingPhone(body.phone, body.countryCode);
+  let identityBody = body;
+  if (!verifiedSession) {
+    identityBody = { ...identityBody, phone: validateBookingPhone(body.phone, body.countryCode) };
+  }
   if (body.bookingFor === 'someone_else' && body.recipient?.phone) {
-    validateBookingPhone(body.recipient.phone, body.recipient.countryCode || body.countryCode);
+    identityBody = { ...identityBody, recipient: {
+      ...body.recipient,
+      phone: validateBookingPhone(body.recipient.phone, body.recipient.countryCode || body.countryCode)
+    } };
   }
   return runInTransaction(req.app.locals.bookingPool, async client => {
     const serverNow = req.app.locals.bookingNow || new Date();
@@ -3124,7 +3154,7 @@ const createMultiServiceBooking = async (req,verifiedSession=null) => {
 
     let parties;
     try {
-      parties = await resolveBookingParties(client, { shopId: scope.shop_id, body,verifiedSession });
+      parties = await resolveBookingParties(client, { shopId: scope.shop_id, body: identityBody,verifiedSession });
     } catch (error) {
       if (error instanceof CustomerIdentityError) {
         throw mapCustomerIdentityBookingError(error);
@@ -3172,7 +3202,7 @@ app.post('/api/new-db', async (req, res) => {
   let verifiedSession=null;
   const sessionToken=customerCookie(req);
   if(sessionToken){
-    try{verifiedSession=await customerMemberIdentity.authenticate(sessionToken);}
+    try{verifiedSession=await resolveCustomerMemberIdentity().authenticate(sessionToken);}
     catch(error){return customerIdentityError(res,error);}
   }
 
@@ -3259,8 +3289,7 @@ app.post('/api/new-db', async (req, res) => {
     (!serviceId && !service) ||
     (!noPreference && !requestedStaffId && !staff) ||
     !['specific', 'no_preference', undefined].includes(staffSelectionType) ||
-    !customerName ||
-    !phone ||
+    (!verifiedSession && (!customerName || !phone)) ||
     !date ||
     !time
   ) {
@@ -3270,10 +3299,16 @@ app.post('/api/new-db', async (req, res) => {
     });
   }
 
+  let identityBody = req.body;
   try {
-    validateBookingPhone(phone, req.body.countryCode);
+    if (!verifiedSession) {
+      identityBody = { ...identityBody, phone: validateBookingPhone(phone, req.body.countryCode) };
+    }
     if (req.body.bookingFor === 'someone_else' && req.body.recipient?.phone) {
-      validateBookingPhone(req.body.recipient.phone, req.body.recipient.countryCode || req.body.countryCode);
+      identityBody = { ...identityBody, recipient: {
+        ...req.body.recipient,
+        phone: validateBookingPhone(req.body.recipient.phone, req.body.recipient.countryCode || req.body.countryCode)
+      } };
     }
   } catch (err) {
     if (err instanceof AppointmentMutationError) {
@@ -3533,7 +3568,7 @@ app.post('/api/new-db', async (req, res) => {
         // 6. Validator passed before any customer or appointment write.
         let parties;
         try {
-          parties = await resolveBookingParties(client, { shopId, body: req.body,verifiedSession });
+          parties = await resolveBookingParties(client, { shopId, body: identityBody,verifiedSession });
         } catch (error) {
           if (error instanceof CustomerIdentityError) {
             throw mapCustomerIdentityBookingError(error);

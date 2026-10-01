@@ -18,6 +18,7 @@ const createCustomerContext = async ({
   locale = 'zh-CN',
   categories = [],
   services = [],
+  bookingIdentity = { authenticated: false },
   submitResponse = { success: true }
 } = {}) => {
   const elements = new Map();
@@ -127,6 +128,9 @@ const createCustomerContext = async ({
       if (urlStr.includes('/api/services-db')) {
         return { ok: true, status: 200, json: async () => ({ success: true, data: services }) };
       }
+      if (urlStr.includes('/api/customer/booking-identity')) {
+        return { ok: true, status: 200, json: async () => ({ success: true, data: bookingIdentity }) };
+      }
       if (urlStr.includes('/api/new-db')) {
         return { ok: true, status: 200, json: async () => submitResponse };
       }
@@ -171,7 +175,9 @@ const createCustomerContext = async ({
     'bookerCountryCode', 'recipientCountryCode', 'previousMonth', 'nextMonth',
     'calendarTitle', 'calendarGrid', 'nextAvailableDates', 'serviceCards', 'servicesLoading',
     'servicesEmpty', 'servicesError', 'servicesRetryContainer', 'servicesRetryBtn',
-    'staffSection', 'staffItemsList', 'memberEntry', 'servicesErrorText'
+    'staffSection', 'staffItemsList', 'memberEntry', 'servicesErrorText',
+    'customerSpecialRequest', 'anonymousBookerFields', 'authenticatedBookerSummary',
+    'authenticatedBookerName', 'authenticatedBookerPhone', 'authenticatedBookerVerification'
   ];
 
   for (const id of elementIds) {
@@ -432,4 +438,37 @@ test('5. 中英文文案完整无缺失、无混杂', () => {
   assert.doesNotMatch(i18n.t('bookAppointment', 'en'), /[\u3400-\u9fff]/);
   assert.doesNotMatch(i18n.t('bookingConfirmed', 'en'), /[\u3400-\u9fff]/);
   assert.doesNotMatch(i18n.t('chooseServiceCategory', 'en'), /[\u3400-\u9fff]/);
+});
+
+test('6. 已登录预约隐藏联系方式并只提交服务、时段、接收人与特殊要求', async () => {
+  const service = { id: 'srv-1', name: 'Haircut', price: 80, durationMinutes: 60, categoryId: 'cat-1' };
+  const harness = await createCustomerContext({
+    locale: 'en',
+    categories: [{ categoryId: 'cat-1', name: 'Hair' }],
+    services: [service],
+    bookingIdentity: {
+      authenticated: true,
+      name: 'Saved Customer',
+      maskedPhone: '•••• 4567',
+      isPhoneVerified: false
+    }
+  });
+  vm.runInContext(`cart = ${JSON.stringify(cartApi.add(cartApi.create(), service))}; selectedSlot = { startAt: '2026-10-02T10:00:00.000Z', time: '10:00' };`, harness.context);
+  harness.elements.get('date').value = '2026-10-02';
+  harness.elements.get('customerSpecialRequest').value = 'Quiet room, please';
+
+  assert.equal(harness.elements.get('anonymousBookerFields').hidden, true);
+  assert.equal(harness.elements.get('authenticatedBookerSummary').hidden, false);
+  assert.equal(harness.elements.get('authenticatedBookerName').textContent, 'Saved Customer');
+  assert.equal(harness.elements.get('authenticatedBookerPhone').textContent, '•••• 4567');
+
+  await harness.elements.get('submitBtn').click();
+  const payload = harness.postBodies.find(body => body && body.startAt === '2026-10-02T10:00:00.000Z');
+  assert.ok(payload);
+  for (const key of ['customerName', 'phone', 'countryCode', 'email', 'customerId', 'customer_id']) {
+    assert.equal(Object.hasOwn(payload, key), false);
+  }
+  assert.equal(payload.customerSpecialRequest, 'Quiet room, please');
+  assert.equal(payload.items.length, 1);
+  assert.equal(payload.startAt, '2026-10-02T10:00:00.000Z');
 });

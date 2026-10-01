@@ -52,6 +52,14 @@ const makeFixture = (failOnSql, candidateRows, customerRows) => {
       if (/SELECT id FROM customers/.test(sql)) return { rows: customerRows
         ? customerRows(params[1])
         : [{ id: params[1] === '+6599999999' ? ID.recipient : ID.customer }] };
+      if (/SELECT id, name, phone, phone_normalized, email, phone_verified_at/.test(sql)) return { rows: [{
+        id: ID.customer,
+        name: 'Saved Customer',
+        phone: '+6581234567',
+        phone_normalized: '+6581234567',
+        email: 'saved@example.invalid',
+        phone_verified_at: null
+      }] };
       if (/INSERT INTO customers/.test(sql)) return { rows: [{ id: ID.recipient }] };
       if (/INSERT INTO appointments/.test(sql)) return { rows: [{ id: ID.appointment, shop_id: ID.shop, location_id: ID.location, customer_id: params[2], service_id: params[10], staff_id: params[11], appointment_no: 'GG-MULTI', start_at: params[12], end_at: params[13], status: 'pending', created_at: '2030-01-01T00:00:00.000Z' }] };
       if (/INSERT INTO appointment_items/.test(sql)) return { rows: [{ id: `77777777-7777-4777-8777-${String(++itemIndex).padStart(12, '0')}` }] };
@@ -86,6 +94,54 @@ test('multi-service request writes parent, sequential items and primary assignme
   assert.equal(fixture.state.queries.at(-1).sql, 'COMMIT');
 });
 
+test('authenticated multi-service booking needs no contact re-entry and rejects identity spoofing', async () => {
+  delete process.env.BOOKING_WRITE_MAINTENANCE;
+  const previousIdentity = app.locals.customerMemberIdentity;
+  app.locals.customerMemberIdentity = {
+    authenticate: async token => {
+      assert.equal(token, 'authenticated-booker');
+      return { shop_id: ID.shop, customer_id: ID.customer, shop_slug: 'tenant-a' };
+    }
+  };
+  try {
+    const fixture = makeFixture();
+    app.locals.bookingPool = fixture.pool;
+    app.locals.bookingValidator = async () => {};
+    const authenticatedBody = { ...requestBody };
+    delete authenticatedBody.customerName;
+    delete authenticatedBody.phone;
+    delete authenticatedBody.email;
+    await withServer(async base => {
+      const response = await fetch(`${base}/api/new-db`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', cookie: 'gg_beauty_customer_session=authenticated-booker' },
+        body: JSON.stringify(authenticatedBody)
+      });
+      assert.equal(response.status, 200);
+    });
+    const parent = fixture.state.queries.find(query => /^INSERT INTO appointments/.test(query.sql));
+    assert.deepEqual(parent.params.slice(2, 7), [
+      ID.customer, ID.customer, 'Saved Customer', '+6581234567', 'saved@example.invalid'
+    ]);
+
+    const spoofFixture = makeFixture();
+    app.locals.bookingPool = spoofFixture.pool;
+    await withServer(async base => {
+      const response = await fetch(`${base}/api/new-db`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', cookie: 'gg_beauty_customer_session=authenticated-booker' },
+        body: JSON.stringify({ ...authenticatedBody, phone: '+6599999999' })
+      });
+      assert.equal(response.status, 400);
+      assert.equal((await response.json()).code, 'AUTHENTICATED_BOOKER_CONTACT_FORBIDDEN');
+    });
+    assert.equal(spoofFixture.state.queries.some(query => /^INSERT INTO appointments/.test(query.sql)), false);
+    assert.equal(spoofFixture.state.queries.at(-1).sql, 'ROLLBACK');
+  } finally {
+    app.locals.customerMemberIdentity = previousIdentity;
+  }
+});
+
 test('someone-else endpoint writes recipient as customer authority and keeps booker snapshots separate', async () => {
   delete process.env.BOOKING_WRITE_MAINTENANCE;
   const fixture = makeFixture(); app.locals.bookingPool = fixture.pool; app.locals.bookingValidator = async () => {};
@@ -96,9 +152,24 @@ test('someone-else endpoint writes recipient as customer authority and keeps boo
   assert.deepEqual(parent.params.slice(2, 10), [
     ID.recipient, ID.customer,
     'Customer', '+6581234567', 'customer@example.invalid',
-    'Recipient B', '+65 9999 9999', 'b@example.invalid'
+    'Recipient B', '+6599999999', 'b@example.invalid'
   ]);
   assert.equal(fixture.state.queries.filter(query => /^INSERT INTO appointment_items/.test(query.sql)).length, 2);
+});
+
+test('anonymous national-format phone is canonicalized before customer lookup and snapshot', async () => {
+  delete process.env.BOOKING_WRITE_MAINTENANCE;
+  const fixture = makeFixture();
+  app.locals.bookingPool = fixture.pool;
+  app.locals.bookingValidator = async () => {};
+  await withServer(async base => {
+    const response = await post(base, { ...requestBody, phone: '81234567', countryCode: '+65' });
+    assert.equal(response.status, 200);
+  });
+  const customerLookup = fixture.state.queries.find(query => /^SELECT id FROM customers/.test(query.sql));
+  assert.deepEqual(customerLookup.params, [ID.shop, '+6581234567']);
+  const parent = fixture.state.queries.find(query => /^INSERT INTO appointments/.test(query.sql));
+  assert.equal(parent.params[5], '+6581234567');
 });
 
 test('endpoint rejects every client-forged party id before database access', async () => {

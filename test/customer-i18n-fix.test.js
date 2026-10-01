@@ -72,7 +72,7 @@ test('customer empty-time message comes from the bilingual shared dictionary', (
 });
 
 test('customer date presentation preserves canonical ISO booking value', () => {
-  assert.match(customerHtml, /email,\s*bookingFor,[\s\S]*date,\s*startAt: selectedSlot\.startAt/);
+  assert.match(customerHtml, /\.\.\.\(!authenticatedBooking \? \{[\s\S]*email[\s\S]*\} : \{\}\),\s*bookingFor,[\s\S]*date,\s*startAt: selectedSlot\.startAt/);
   assert.doesNotMatch(customerHtml, /date:\s*localeApi\.formatDate/);
 });
 

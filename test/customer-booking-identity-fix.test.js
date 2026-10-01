@@ -49,31 +49,20 @@ test('A. Anonymous booking resolves unverified customer with verified: false', a
   assert.equal(result.recipient.verified, false);
 });
 
-test('B. Logged in unverified session booking for myself with same phone binds to session customer', async () => {
+test('B. Logged in unverified session booking needs no contact re-entry and binds to authoritative customer', async () => {
   const queries = [];
   const client = {
     query: async (sql, params) => {
       queries.push({ sql, params });
-      // 1. check verified_member
-      if (/identity_status='verified_member'/.test(sql)) {
-        return { rows: [] }; // NOT a verified member
-      }
-      // 2. check session customer exists
-      if (/SELECT id, phone, phone_normalized, identity_status FROM customers/.test(sql)) {
+      if (/SELECT id, name, phone, phone_normalized, email, phone_verified_at/.test(sql)) {
         return {
           rows: [{
             id: 'unverified-cust-1',
+            name: 'Authoritative User',
             phone: '+6581234567',
             phone_normalized: '+6581234567',
-            identity_status: 'unverified_contact'
-          }]
-        };
-      }
-      // 3. check phone lookup
-      if (/phone_normalized=\$2/.test(sql)) {
-        return {
-          rows: [{
-            id: 'unverified-cust-1'
+            email: 'saved@example.invalid',
+            phone_verified_at: null
           }]
         };
       }
@@ -85,82 +74,43 @@ test('B. Logged in unverified session booking for myself with same phone binds t
   const result = await resolveBookingParties(client, {
     shopId: 'shop-1',
     verifiedSession: session,
-    body: {
-      customerName: 'Unverified User',
-      phone: '+6581234567'
-    }
+    body: {}
   });
 
   assert.equal(result.booker.customerId, 'unverified-cust-1');
   assert.equal(result.booker.verified, false);
   assert.equal(result.recipient.customerId, 'unverified-cust-1');
   assert.equal(result.recipient.verified, false);
+  assert.deepEqual(result.bookerDraft, {
+    name: 'Authoritative User',
+    phone: '+6581234567',
+    email: 'saved@example.invalid'
+  });
   // Zero customer INSERTs or UPDATEs performed
   assert.equal(queries.some(q => /INSERT INTO customers|UPDATE customers/.test(q.sql)), false);
 });
 
-test('C. Logged in unverified session booking with unclaimed phone binds without mutating customer record', async () => {
+test('C. Logged in session rejects client-supplied contact fields before any customer query', async () => {
   const queries = [];
   const client = {
     query: async (sql, params) => {
       queries.push({ sql, params });
-      if (/identity_status='verified_member'/.test(sql)) {
-        return { rows: [] }; // unverified
-      }
-      if (/SELECT id, phone, phone_normalized, identity_status FROM customers/.test(sql)) {
-        return {
-          rows: [{
-            id: 'unverified-cust-1',
-            phone: '+6581111111',
-            phone_normalized: '+6581111111',
-            identity_status: 'unverified_contact'
-          }]
-        };
-      }
-      if (/phone_normalized=\$2/.test(sql)) {
-        return { rows: [] }; // unclaimed phone
-      }
       throw new Error(`Unexpected query: ${sql}`);
     }
   };
 
   const session = { shop_id: 'shop-1', customer_id: 'unverified-cust-1' };
-  const result = await resolveBookingParties(client, {
-    shopId: 'shop-1',
-    verifiedSession: session,
-    body: {
-      customerName: 'Unverified User',
-      phone: '+6589990001'
-    }
-  });
-
-  assert.equal(result.booker.customerId, 'unverified-cust-1');
-  assert.equal(result.booker.verified, false);
-  // Zero customer mutations
-  assert.equal(queries.some(q => /INSERT INTO customers|UPDATE customers/.test(q.sql)), false);
+  await assert.rejects(resolveBookingParties(client, {
+    shopId: 'shop-1', verifiedSession: session,
+    body: { customerName: 'Spoofed User', phone: '+6589990001' }
+  }), err => err instanceof CustomerIdentityError && err.code === 'AUTHENTICATED_BOOKER_CONTACT_FORBIDDEN');
+  assert.equal(queries.length, 0);
 });
 
-test('D. Logged in unverified session booking with phone belonging to another customer fails closed with CUSTOMER_IDENTITY_CONFLICT', async () => {
+test('D. Logged in session rejects even a matching client phone so identity stays server-only', async () => {
   const client = {
     query: async (sql, params) => {
-      if (/identity_status='verified_member'/.test(sql)) {
-        return { rows: [] };
-      }
-      if (/SELECT id, phone, phone_normalized, identity_status FROM customers/.test(sql)) {
-        return {
-          rows: [{
-            id: 'unverified-cust-1',
-            phone: '+6581111111',
-            phone_normalized: '+6581111111',
-            identity_status: 'unverified_contact'
-          }]
-        };
-      }
-      if (/phone_normalized=\$2/.test(sql)) {
-        // Belongs to a DIFFERENT customer!
-        return { rows: [{ id: 'other-cust-2' }] };
-      }
-      return { rows: [] };
+      throw new Error(`Unexpected query: ${sql}`);
     }
   };
 
@@ -170,23 +120,26 @@ test('D. Logged in unverified session booking with phone belonging to another cu
       shopId: 'shop-1',
       verifiedSession: session,
       body: {
-        customerName: 'Impersonator',
-        phone: '+6582222222'
+        customerName: 'Unverified User',
+        phone: '+6581111111'
       }
     }),
-    err => err instanceof CustomerIdentityError && err.code === 'CUSTOMER_IDENTITY_CONFLICT'
+    err => err instanceof CustomerIdentityError && err.code === 'AUTHENTICATED_BOOKER_CONTACT_FORBIDDEN'
   );
 });
 
 test('E. Logged in verified member booking uses authoritative customer identity with verified: true', async () => {
   const client = {
     query: async (sql, params) => {
-      if (/identity_status='verified_member'/.test(sql)) {
+      if (/SELECT id, name, phone, phone_normalized, email, phone_verified_at/.test(sql)) {
         return {
           rows: [{
             id: 'verified-member-1',
+            name: 'Verified Member',
             phone: '+6581234567',
-            phone_normalized: '+6581234567'
+            phone_normalized: '+6581234567',
+            email: 'member@example.invalid',
+            phone_verified_at: new Date('2026-01-01T00:00:00Z')
           }]
         };
       }
@@ -198,10 +151,7 @@ test('E. Logged in verified member booking uses authoritative customer identity 
   const result = await resolveBookingParties(client, {
     shopId: 'shop-1',
     verifiedSession: session,
-    body: {
-      customerName: 'Verified Member',
-      phone: '+6581234567'
-    }
+    body: {}
   });
 
   assert.equal(result.booker.customerId, 'verified-member-1');
@@ -227,10 +177,7 @@ test('F. Cross-shop session booking attempt is rejected with CUSTOMER_SESSION_SH
 test('G. Invalid session (customer not in shop) is rejected with CUSTOMER_SESSION_INVALID', async () => {
   const client = {
     query: async sql => {
-      // verified_member check returns empty
-      if (/identity_status='verified_member'/.test(sql)) return { rows: [] };
-      // customer existence check returns empty
-      if (/SELECT id, phone, phone_normalized, identity_status/.test(sql)) return { rows: [] };
+      if (/SELECT id, name, phone, phone_normalized, email, phone_verified_at/.test(sql)) return { rows: [] };
       return { rows: [] };
     }
   };
@@ -240,7 +187,7 @@ test('G. Invalid session (customer not in shop) is rejected with CUSTOMER_SESSIO
     resolveBookingParties(client, {
       shopId: 'shop-1',
       verifiedSession: session,
-      body: { customerName: 'Ghost User', phone: '+6581234567' }
+      body: {}
     }),
     err => err instanceof CustomerIdentityError && err.code === 'CUSTOMER_SESSION_INVALID'
   );
@@ -249,11 +196,9 @@ test('G. Invalid session (customer not in shop) is rejected with CUSTOMER_SESSIO
 test('H. Booking for someone else with unverified session creates distinct unverified recipient', async () => {
   const client = {
     query: async (sql, params) => {
-      if (/identity_status='verified_member'/.test(sql)) return { rows: [] };
-      if (/SELECT id, phone, phone_normalized, identity_status/.test(sql)) {
-        return { rows: [{ id: 'booker-cust-1', phone: '+6581111111', phone_normalized: '+6581111111', identity_status: 'unverified_contact' }] };
+      if (/SELECT id, name, phone, phone_normalized, email, phone_verified_at/.test(sql)) {
+        return { rows: [{ id: 'booker-cust-1', name: 'Booker', phone: '+6581111111', phone_normalized: '+6581111111', email: null, phone_verified_at: null }] };
       }
-      if (/phone_normalized=\$2/.test(sql)) return { rows: [{ id: 'booker-cust-1' }] };
       if (/INSERT INTO customers.*identity_status/.test(sql)) {
         return { rows: [{ id: 'recipient-cust-2' }] };
       }
@@ -267,8 +212,6 @@ test('H. Booking for someone else with unverified session creates distinct unver
     verifiedSession: session,
     body: {
       bookingFor: 'someone_else',
-      customerName: 'Booker',
-      phone: '+6581111111',
       recipient: {
         name: 'Recipient Friend',
         phone: '+6582222222'

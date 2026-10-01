@@ -206,6 +206,10 @@ test('Customer Account & Membership Foundation (PostgreSQL 17)', { timeout: 1200
       gender: 'female'
     });
     assert.ok(regResult.customerId);
+    await assert.rejects(service.signInWithPhone({
+      shopSlug: 'shop-a', countryCode: '+65', phone: '91234568', name: 'Impossible Date', dateOfBirth: '2001-02-29'
+    }), error => error.code === 'DOB_INVALID');
+    assert.equal((await db.query(`SELECT count(*) FROM public.customers WHERE shop_id = $1 AND phone_normalized = '+6591234568'`, [shopAId])).rows[0].count, '0');
 
     // Check customer row in DB: phone_verified_at must be NULL, identity_status 'unverified_contact'
     const custRow = (await db.query(`SELECT * FROM public.customers WHERE id = $1`, [regResult.customerId])).rows[0];
@@ -249,6 +253,7 @@ test('Customer Account & Membership Foundation (PostgreSQL 17)', { timeout: 1200
       name: 'Alice Tan Updated'
     });
     assert.equal(regRepeat.customerId, regResult.customerId);
+    assert.equal((await db.query(`SELECT name FROM public.customers WHERE id = $1`, [regResult.customerId])).rows[0].name, 'Alice Tan');
     const custCountAfterRepeat = (await db.query(`SELECT count(*) FROM public.customers WHERE shop_id = $1 AND phone_normalized = '+6591234567'`, [shopAId])).rows[0].count;
     assert.equal(custCountAfterRepeat, '1');
     const acctCountAfterRepeat = (await db.query(`SELECT count(*) FROM public.customer_accounts WHERE customer_id = $1`, [regResult.customerId])).rows[0].count;
@@ -379,7 +384,7 @@ test('Customer Account & Membership Foundation (PostgreSQL 17)', { timeout: 1200
     });
     assert.equal(carolReg.customerId, carolCust.id);
     const carolAfter = (await db.query(`SELECT id, name, member_code FROM public.customers WHERE id = $1`, [carolCust.id])).rows[0];
-    assert.equal(carolAfter.name, 'Carol Updated');
+    assert.equal(carolAfter.name, 'Carol Direct');
     assert.equal(carolAfter.member_code, carolCust.member_code); // preserved!
     const carolAcct = (await db.query(`SELECT * FROM public.customer_accounts WHERE customer_id = $1`, [carolCust.id])).rows[0];
     assert.equal(carolAcct.status, 'active');
