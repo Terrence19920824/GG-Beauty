@@ -10,6 +10,8 @@ const categoryFlow = require('../public/customer-category-flow');
 const cartApi = require('../public/customer-multi-service-cart');
 const shopContext = require('../public/customer-shop-context');
 const bookingCalendar = require('../public/customer-booking-calendar');
+const phoneSelector = require('../public/customer-phone-selector');
+const { getWalkInPhoneCountries } = require('../lib/phone-normalization');
 
 const root = path.resolve(__dirname, '..');
 const html = fs.readFileSync(path.join(root, 'public/index.html'), 'utf8');
@@ -39,6 +41,7 @@ const createCustomerContext = async ({
       dataset: {},
       children,
       options: [],
+      ownerDocument: { createElement: nextTag => makeElement(nextTag) },
       get className() { return className; },
       set className(val) { className = String(val); },
       classList: {
@@ -69,6 +72,7 @@ const createCustomerContext = async ({
         textContent = String(val);
         innerHTML = String(val);
         children.length = 0;
+        el.options.length = 0;
       },
       get innerHTML() { return innerHTML; },
       set innerHTML(val) {
@@ -131,6 +135,10 @@ const createCustomerContext = async ({
       if (urlStr.includes('/api/customer/booking-identity')) {
         return { ok: true, status: 200, json: async () => ({ success: true, data: bookingIdentity }) };
       }
+      if (urlStr.includes('/api/customer/phone-countries')) {
+        const requestedLocale = urlStr.includes('locale=en') ? 'en' : 'zh-CN';
+        return { ok: true, status: 200, json: async () => ({ success: true, data: getWalkInPhoneCountries(requestedLocale) }) };
+      }
       if (urlStr.includes('/api/new-db')) {
         return { ok: true, status: 200, json: async () => submitResponse };
       }
@@ -165,6 +173,10 @@ const createCustomerContext = async ({
       createElement: tag => makeElement(tag)
     }
   };
+  contextObj.globalThis.ggCustomerPhoneSelector = {
+    ...phoneSelector,
+    bind: options => phoneSelector.bind({ ...options, fetchImpl: contextObj.fetch })
+  };
 
   const elementIds = [
     'date', 'dateDisplay', 'service', 'times', 'message', 'languageZh', 'languageEn',
@@ -172,7 +184,7 @@ const createCustomerContext = async ({
     'categoryGrid', 'bookingStep', 'contactStep', 'cartPanel', 'cartItems', 'cartTotals',
     'confirmationSummary', 'addServiceBtn', 'addAnotherBtn', 'bookForMyself', 'bookForSomeoneElse',
     'recipientFields', 'recipientName', 'recipientPhone', 'recipientEmail',
-    'bookerCountryCode', 'recipientCountryCode', 'previousMonth', 'nextMonth',
+    'bookerCountrySearch', 'recipientCountrySearch', 'bookerCountryCode', 'recipientCountryCode', 'previousMonth', 'nextMonth',
     'calendarTitle', 'calendarGrid', 'nextAvailableDates', 'serviceCards', 'servicesLoading',
     'servicesEmpty', 'servicesError', 'servicesRetryContainer', 'servicesRetryBtn',
     'staffSection', 'staffItemsList', 'memberEntry', 'servicesErrorText',

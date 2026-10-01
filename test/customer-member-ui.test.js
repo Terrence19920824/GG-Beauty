@@ -39,7 +39,7 @@ test('member entry reuses the matching verified shop session and rejects a diffe
 });
 
 test('member UI covers registration returning member profile phone change and logout with module cards',()=>{
-  for(const id of ['authPanel','countryCode','memberPhone','registrationStep','registrationName','registrationEmail','registrationDob','registrationGender','memberPanel','memberCode','memberVerifiedPhone','editMemberProfile','changeMemberPhone','phoneChangePanel','changeCountryCode','changePhone','sendPhoneChangeCode','phoneChangeCode','confirmPhoneChange','logoutMember']) assert.match(html,new RegExp(`id="${id}"`));
+  for(const id of ['authPanel','countrySearch','countryCode','memberPhone','registrationStep','registrationName','registrationEmail','registrationDob','registrationBack','memberPanel','memberCode','memberVerifiedPhone','editMemberProfile','changeMemberPhone','phoneChangePanel','changeCountrySearch','changeCountryCode','changePhone','sendPhoneChangeCode','phoneChangeCode','confirmPhoneChange','logoutMember']) assert.match(html,new RegExp(`id="${id}"`));
   for(const endpoint of ['/api/customer/me','/api/customer/phone-change/request','/api/customer/phone-change/confirm','/api/customer/logout']) assert.ok(ui.includes(endpoint));
   assert.match(html,/class="member-card"/);assert.match(html,/class="logo [^"]*notranslate"/);
 });
@@ -61,14 +61,18 @@ test('phone change uses verified session endpoints and never sends shop or custo
   assert.match(server,/shopSlug:session\.shop_slug/);
 });
 
-test('OTP UI uses explicit countries generic messages and keeps shared locale state',()=>{
-  for(const code of ['+65','+60','+62','+86','+1']) assert.ok(ui.includes(`'${code}'`));
+test('OTP UI uses the shared searchable global country source and keeps shared locale state',()=>{
+  assert.match(html,/customer-phone-selector\.js/);
+  assert.match(ui,/ggCustomerPhoneSelector/);
+  assert.match(ui,/phoneSelector\.bind/);
+  assert.doesNotMatch(ui,/const countries=/);
   assert.equal(i18n.t('otpSentGeneric','en'),'If this number can receive messages, a code has been sent.');
   assert.equal(i18n.t('otpSentGeneric','zh-CN'),'如果该号码可接收短信，验证码已发送。');
-  const setLocale=ui.match(/function setLocale\(locale\)\{([^}]*)\}/)[1];
+  const setLocale=ui.match(/async function setLocale\(locale\)\{([^}]*)\}/)[1];
   assert.match(setLocale,/i18n\.setLocale/);assert.match(setLocale,/renderLocale/);
-  assert.doesNotMatch(setLocale,/fetch|challengeId|member=null|location\.reload/);
-  assert.match(ui,/state\.config\?\.defaultPhoneCountryCode\|\|'\+65'/);
+  assert.match(setLocale,/renderCountries/);
+  assert.doesNotMatch(setLocale,/challengeId|member=null|location\.reload/);
+  assert.match(ui,/state\.config\?\.defaultPhoneCountryCode\|\|'SG'/);
   assert.match(ui,/clearTimeout\(state\.timer\)/);
   assert.match(ui,/state\.timer=root\.setTimeout/);
   assert.doesNotMatch(ui,/setInterval/);
@@ -86,6 +90,6 @@ test('member API trusts session and shop slug, rejects client authority, and use
 });
 
 test('member UI dictionary is complete in Chinese and English',()=>{
-  const keys=['myMembership','memberLabel','backToBooking','memberSignInHelp','sendCode','verificationCode','verifyCode','resendCode','completeMembership','dateOfBirth','genderOptional','profile','editProfile','profileSaved','changePhone','newPhone','verifyNewPhone','phoneChanged'];
+  const keys=['myMembership','memberLabel','backToBooking','memberSignInHelp','sendCode','verificationCode','verifyCode','resendCode','completeRegistration','useAnotherPhone','dateOfBirth','dateOfBirthOptional','genderOptional','profile','editProfile','profileSaved','changePhone','newPhone','verifyNewPhone','phoneChanged'];
   for(const key of keys){assert.notEqual(i18n.t(key,'zh-CN'),key);assert.notEqual(i18n.t(key,'en'),key);}
 });

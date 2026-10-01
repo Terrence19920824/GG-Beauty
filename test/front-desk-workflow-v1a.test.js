@@ -92,14 +92,17 @@ test('detail workspace is centered, scrollable, focus-contained and has fixed op
   assert.match(admin, /activeDrawerTriggerElement\.focus/);
 });
 
-test('calendar shows quarter-hour guidance and normalizes clicks to authoritative 15-minute slots', () => {
+test('calendar keeps quarter-hour snapping while visually emphasizing only hours and half-hours', () => {
   assert.match(admin, /FRONT_DESK_SLOT_MINUTES = 15/);
   assert.match(admin, /Math\.round\(rawMinutes \/ FRONT_DESK_SLOT_MINUTES\) \* FRONT_DESK_SLOT_MINUTES/);
   assert.match(admin, /isNormalizedFrontDeskSlotTime/);
   assert.match(server, /OWNER_APPOINTMENT_SLOT_MINUTES = 15/);
   assert.match(server, /minutes % OWNER_APPOINTMENT_SLOT_MINUTES === 0/);
-  assert.match(css, /18\.75px/);
-  assert.match(admin, /owner-calendar-time-tick is-minor/);
+  assert.doesNotMatch(css, /18\.75px/);
+  assert.match(css, /37\.5px/);
+  assert.match(admin, /is-major is-hour/);
+  assert.match(admin, /is-minor is-half-hour/);
+  assert.match(admin, /is-minor is-quarter-hour/);
 });
 
 test('membership projection is feature-gated, recipient-scoped and tenant-scoped', () => {

@@ -56,10 +56,8 @@ const {
 const {
   validateCustomerIdentityPhone,
   PhoneValidationError,
-  isSupportedCountryIso,
-  getSupportedPhoneCountries,
   getWalkInPhoneCountries,
-  REGION_KINDS
+  resolvePhoneCountryIso
 } = require('./lib/phone-normalization');
 const {
   COOKIE: CUSTOMER_SESSION_COOKIE,
@@ -183,6 +181,12 @@ app.get('/api/customer/member/config',async(req,res)=>{
   if(rejectCustomerAuthority(req.query)) return res.status(400).json({success:false,code:'INVALID_IDENTITY_CONTEXT'});
   try { const data=await resolveCustomerMemberIdentity().getPublicConfig(req.query.shopSlug); return res.json({success:true,data}); }
   catch(error){ return customerIdentityError(res,error); }
+});
+
+app.get('/api/customer/phone-countries', (req, res) => {
+  const locale = normalizeLocale(req.query?.locale);
+  res.setHeader('Cache-Control', 'public, max-age=3600');
+  return res.json({ success: true, data: getWalkInPhoneCountries(locale) });
 });
 
 app.post('/api/customer/auth/sign-in', async (req, res) => {
@@ -3041,28 +3045,7 @@ const normalizeCustomerSpecialRequest = body => {
   return trimmed || null;
 };
 
-const CALLING_CODE_TO_ISO = {
-  '+65': 'SG',
-  '+60': 'MY',
-  '+62': 'ID',
-  '+86': 'CN',
-  '+1': 'US'
-};
-
-const resolveCountryIso = countryInput => {
-  if (!countryInput || typeof countryInput !== 'string') return null;
-  const raw = countryInput.trim().toUpperCase();
-  if (!raw) return null;
-  if (/^[A-Z]{2}$/.test(raw)) {
-    return isSupportedCountryIso(raw) ? raw : null;
-  }
-  const calling = raw.startsWith('+') ? raw : `+${raw}`;
-  if (CALLING_CODE_TO_ISO[calling]) return CALLING_CODE_TO_ISO[calling];
-  const match = getSupportedPhoneCountries().find(
-    c => c.callingCode === calling && c.regionKind === REGION_KINDS.ISO3166
-  );
-  return match ? match.countryIso2 : null;
-};
+const resolveCountryIso = countryInput => resolvePhoneCountryIso(countryInput);
 
 const validateBookingPhone = (rawPhone, countryInput) => {
   if (typeof rawPhone !== 'string' || !rawPhone.trim()) {
@@ -3072,15 +3055,16 @@ const validateBookingPhone = (rawPhone, countryInput) => {
   if (/[\r\n\t\0<>]/.test(trimmed)) {
     throw new AppointmentMutationError('INVALID_PHONE', 400, '请输入有效的手机号码');
   }
+  const normalizedInput = trimmed.startsWith('00') ? `+${trimmed.slice(2)}` : trimmed;
 
   const countryIso = countryInput ? resolveCountryIso(countryInput) : null;
   if (countryInput && !countryIso) {
     throw new AppointmentMutationError('INVALID_PHONE', 400, '请输入有效的手机号码');
   }
 
-  if (trimmed.startsWith('+')) {
+  if (normalizedInput.startsWith('+')) {
     try {
-      return validateCustomerIdentityPhone(trimmed, countryIso || undefined).e164;
+      return validateCustomerIdentityPhone(normalizedInput, countryIso || undefined).e164;
     } catch (err) {
       if (err instanceof PhoneValidationError) {
         throw new AppointmentMutationError('INVALID_PHONE', 400, '请输入有效的手机号码');
@@ -3092,7 +3076,7 @@ const validateBookingPhone = (rawPhone, countryInput) => {
       throw new AppointmentMutationError('INVALID_PHONE', 400, '请输入有效的手机号码');
     }
     try {
-      return validateCustomerIdentityPhone(trimmed, countryIso).e164;
+      return validateCustomerIdentityPhone(normalizedInput, countryIso).e164;
     } catch (err) {
       if (err instanceof PhoneValidationError) {
         throw new AppointmentMutationError('INVALID_PHONE', 400, '请输入有效的手机号码');

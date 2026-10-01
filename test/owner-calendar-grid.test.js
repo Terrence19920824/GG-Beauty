@@ -702,3 +702,13 @@ test('18 & 26. 44px minimum touch targets and focus-visible styling defined in c
   assert.match(css, /:focus-visible/);
   assert.match(css, /prefers-reduced-motion/);
 });
+
+test('60. calendar grid renders premium hour, half-hour, and quarter-hour visual classes', async () => {
+  const { elements, load } = createTestContext({ gg_beauty_owner_view: 'calendar' });
+  await load([sampleAppointment], sampleStaff);
+  const html = elements.get('content').innerHTML;
+  assert.match(html, /owner-calendar-time-tick is-major is-hour[^>]*>10:00</);
+  assert.match(html, /owner-calendar-time-tick is-minor is-half-hour[^>]*>10:30</);
+  assert.match(html, /owner-calendar-time-tick is-minor is-quarter-hour[^>]*>10:15</);
+  assert.match(html, /owner-calendar-time-tick is-minor is-quarter-hour[^>]*>10:45</);
+});

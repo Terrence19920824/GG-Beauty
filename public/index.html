@@ -254,6 +254,7 @@
     .recipient-option { margin: 0; padding: 13px 10px; background: var(--theme-surface, #fff); color: var(--theme-text, #222); border: 1px solid var(--theme-border, #ddd); font-size: 14px; }
     .recipient-option.selected { background: var(--theme-primary, #111); color: var(--theme-primary-contrast, #fff); border-color: var(--theme-primary, #111); }
     .phone-row { display: grid; grid-template-columns: 145px 1fr; gap: 8px; }
+    .country-search { min-height: 44px; padding: 10px 12px; font-size: 14px; margin-bottom: 7px; }
     .authenticated-booker-summary { margin-top: 10px; padding: 14px; border: 1px solid var(--theme-border, #ddd); border-radius: 12px; background: var(--theme-surface-subtle, #f5f5f5); }
     .authenticated-booker-label { color: var(--theme-text-muted, #777); font-size: 13px; font-weight: 600; }
     .authenticated-booker-name { display: block; margin-top: 5px; font-size: 16px; }
@@ -424,6 +425,7 @@
         <label data-i18n="recipientName">服务接收人姓名</label>
         <input id="recipientName" type="text" data-i18n-placeholder="enterRecipientName" placeholder="请输入服务接收人姓名">
         <label data-i18n="countryRegion">国家 / 地区</label>
+        <input id="recipientCountrySearch" class="country-search" type="search" autocomplete="off" data-i18n-placeholder="countrySearch" placeholder="搜索国家、地区或区号">
         <div class="phone-row">
           <select id="recipientCountryCode" aria-label="Recipient country or region"></select>
           <input id="recipientPhone" type="tel" data-i18n-placeholder="enterPhone" placeholder="请输入手机号码">
@@ -482,6 +484,7 @@
       >
 
       <label data-i18n="countryRegion">国家 / 地区</label>
+      <input id="bookerCountrySearch" class="country-search" type="search" autocomplete="off" data-i18n-placeholder="countrySearch" placeholder="搜索国家、地区或区号">
       <div class="phone-row">
         <select id="bookerCountryCode" aria-label="Country or region"></select>
         <input type="tel" id="phone" placeholder="请输入手机号码" data-i18n-placeholder="enterPhone">
@@ -520,6 +523,7 @@
 </div>
 
 <script src="/shared-i18n.js?v=2.0.0"></script>
+<script src="/customer-phone-selector.js"></script>
 <!-- canonical script source: src="/shared-i18n.js" -->
 <script src="/service-locale.js"></script>
 <script src="/customer-shop-context.js"></script>
@@ -703,22 +707,37 @@ function applyPublicConfig(cfgData) {
 }
 const calendarApi = globalThis.ggCustomerBookingCalendar;
 const customerT = key => localeApi.t(key, currentLocale);
-const COUNTRY_CODES = [
-  ['+65', 'countrySingapore'], ['+60', 'countryMalaysia'], ['+62', 'countryIndonesia'],
-  ['+86', 'countryChina'], ['+1', 'countryUnitedStates']
-];
+const phoneSelectorApi = globalThis.ggCustomerPhoneSelector;
+let bookerPhoneCountrySelector = null;
+let recipientPhoneCountrySelector = null;
 
-function renderCountryOptions(select) {
-  const selected = select.value || '+65';
-  select.innerHTML = COUNTRY_CODES.map(([code, countryKey]) => `<option value="${code}">${code} ${customerT(countryKey)}</option>`).join('');
-  select.value = selected;
+async function loadPhoneCountryOptions() {
+  if (!phoneSelectorApi || typeof phoneSelectorApi.bind !== 'function') throw new Error('PHONE_COUNTRY_SOURCE_UNAVAILABLE');
+  if (!bookerPhoneCountrySelector) {
+    bookerPhoneCountrySelector = phoneSelectorApi.bind({
+      select: bookerCountryCode,
+      searchInput: document.getElementById('bookerCountrySearch'),
+      locale: currentLocale,
+      defaultCountry: 'SG'
+    });
+  }
+  if (!recipientPhoneCountrySelector) {
+    recipientPhoneCountrySelector = phoneSelectorApi.bind({
+      select: recipientCountryCode,
+      searchInput: document.getElementById('recipientCountrySearch'),
+      locale: currentLocale,
+      defaultCountry: 'SG'
+    });
+  }
+  await Promise.all([
+    bookerPhoneCountrySelector.load(currentLocale, bookerCountryCode.value || 'SG'),
+    recipientPhoneCountrySelector.load(currentLocale, recipientCountryCode.value || 'SG')
+  ]);
 }
 
 function explicitContactPhone(countryCode, value) {
   const phone = typeof value === 'string' ? value.trim() : '';
-  if (!phone) return '';
-  if (phone.startsWith('+') || phone.startsWith('00')) return phone;
-  return `${countryCode}${phone}`;
+  return phone;
 }
 
 function isValidCustomerPhone(countryCode, value) {
@@ -730,35 +749,12 @@ function isValidCustomerPhone(countryCode, value) {
   if ((raw.match(/\+/g) || []).length > 1) return false;
   if (raw.includes('+') && !raw.startsWith('+')) return false;
 
-  const KNOWN_CODES = ['+65', '+60', '+62', '+86', '+1'];
-  const selectedCode = (countryCode || '+65').trim();
-  if (!KNOWN_CODES.includes(selectedCode)) return false;
-
-  let nationalStr = raw;
-  if (raw.startsWith('+')) {
-    const matchedPrefix = KNOWN_CODES.find(code => raw.startsWith(code));
-    if (!matchedPrefix) return false;
-    if (matchedPrefix !== selectedCode) return false;
-    nationalStr = raw.slice(matchedPrefix.length);
-  }
-
-  const cleanDigits = nationalStr.replace(/[\s\-()]/g, '');
-  if (!/^\d+$/.test(cleanDigits)) return false;
-
-  switch (selectedCode) {
-    case '+65':
-      return /^[3689]\d{7}$/.test(cleanDigits);
-    case '+86':
-      return /^1[3-9]\d{9}$/.test(cleanDigits);
-    case '+60':
-      return /^(?:1[0-46-9]\d{7,8}|[3-9]\d{6,8})$/.test(cleanDigits);
-    case '+62':
-      return /^(?:8[1-9]\d{7,10}|[2-9]\d{6,10})$/.test(cleanDigits);
-    case '+1':
-      return /^[2-9]\d{2}[2-9]\d{6}$/.test(cleanDigits);
-    default:
-      return false;
-  }
+  const selectedCountry = String(countryCode || '').trim().toUpperCase();
+  if (!/^[A-Z]{2}$/.test(selectedCountry)) return false;
+  const compact = raw.replace(/[\s\-().]/g, '');
+  return raw.startsWith('+')
+    ? /^\+[1-9]\d{6,14}$/.test(compact)
+    : /^\d{4,15}$/.test(compact);
 }
 
 function mapBookingErrorCode(code) {
@@ -1557,8 +1553,6 @@ async function setLocale(locale) {
       submitBtn.textContent = customerT('bookAppointment');
     }
   }
-  renderCountryOptions(bookerCountryCode);
-  renderCountryOptions(recipientCountryCode);
   renderBookingIdentity();
   renderRecipientChoice();
   renderSelectedDate();
@@ -1569,6 +1563,7 @@ async function setLocale(locale) {
   await renderCart();
   renderLocaleDependentBookingState();
   if (cachedMerchantContact) applyPublicConfig(cachedMerchantContact);
+  await loadPhoneCountryOptions();
 }
 
 async function switchLanguage(locale) {
@@ -1637,8 +1632,6 @@ const bookForSomeoneElse = document.getElementById('bookForSomeoneElse');
 const recipientFields = document.getElementById('recipientFields');
 const bookerCountryCode = document.getElementById('bookerCountryCode');
 const recipientCountryCode = document.getElementById('recipientCountryCode');
-renderCountryOptions(bookerCountryCode);
-renderCountryOptions(recipientCountryCode);
 
 
 function renderSelectedDate() {

@@ -128,11 +128,11 @@ test('PostgreSQL 17 member identity, OTP, tenant, and phone-change foundation', 
     assert.equal(fingerprintRace.filter(result=>result.status==='rejected' && result.reason.code==='OTP_RATE_LIMITED').length,2);
     assert.equal(sent.length-fingerprintRaceSentBefore,10);
 
-    const change=await service.requestOtp({shopSlug:'a',countryCode:'+60',phone:'1234 5678',purpose:'phone_change',customerId:signedIn.customerId,ip:'127.0.0.2',userAgent:'test'});
+    const change=await service.requestOtp({shopSlug:'a',countryCode:'+60',phone:'1234 56789',purpose:'phone_change',customerId:signedIn.customerId,ip:'127.0.0.2',userAgent:'test'});
     const oldCode=member.member_code;
     await service.confirmPhoneChange({session:{shop_id:ID.shopA,customer_id:signedIn.customerId},challengeId:change.challengeId,code:sent.at(-1).code});
     const changed=(await db.query('SELECT id,member_code,phone_normalized FROM customers WHERE id=$1',[signedIn.customerId])).rows[0];
-    assert.equal(changed.id,signedIn.customerId);assert.equal(changed.member_code,oldCode);assert.equal(changed.phone_normalized,'+6012345678');
+    assert.equal(changed.id,signedIn.customerId);assert.equal(changed.member_code,oldCode);assert.equal(changed.phone_normalized,'+60123456789');
     assert.equal(Number((await db.query('SELECT COUNT(*) FROM customer_phone_identities WHERE customer_id=$1',[signedIn.customerId])).rows[0].count),2);
 
     clock=new Date(clock.getTime()+61000);

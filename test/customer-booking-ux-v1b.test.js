@@ -149,7 +149,7 @@ test('booking and account UIs implement authenticated summary, anonymous fields,
 test('new booking and birthday UI strings are complete in Chinese and English', () => {
   const expected = {
     bookingAsAccount: ['使用以下账号预约', 'Booking with this account'],
-    dateOfBirthOptional: ['出生日期（选填）', 'Date of birth (optional)'],
+    dateOfBirthOptional: ['生日（选填）', 'Birthday (optional)'],
     dobInvalid: ['请输入有效的出生日期', 'Enter a valid date of birth'],
     profileVerificationRequired: ['验证手机号码后才可编辑个人资料', 'Verify your mobile number before editing your profile']
   };

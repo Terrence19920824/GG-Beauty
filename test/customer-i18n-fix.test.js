@@ -22,7 +22,7 @@ const createCustomerContext = () => {
     options: [], dataset: {}, hidden: false, classList: { add() {}, remove() {}, toggle() {} },
     addEventListener() {}, setAttribute() {}, appendChild(child) { this.options.push(child); }
   });
-  for (const id of ['date', 'dateDisplay', 'service', 'times', 'message', 'languageZh', 'languageEn', 'shopBrandName', 'submitBtn', 'customerName', 'phone', 'email', 'categoryStep', 'categoryGrid', 'bookingStep', 'contactStep', 'cartPanel', 'cartItems', 'cartTotals', 'confirmationSummary', 'addServiceBtn', 'addAnotherBtn', 'bookForMyself', 'bookForSomeoneElse', 'recipientFields', 'recipientName', 'recipientPhone', 'recipientEmail', 'bookerCountryCode', 'recipientCountryCode', 'previousMonth', 'nextMonth', 'calendarTitle', 'calendarGrid', 'nextAvailableDates']) {
+  for (const id of ['date', 'dateDisplay', 'service', 'times', 'message', 'languageZh', 'languageEn', 'shopBrandName', 'submitBtn', 'customerName', 'phone', 'email', 'categoryStep', 'categoryGrid', 'bookingStep', 'contactStep', 'cartPanel', 'cartItems', 'cartTotals', 'confirmationSummary', 'addServiceBtn', 'addAnotherBtn', 'bookForMyself', 'bookForSomeoneElse', 'recipientFields', 'recipientName', 'recipientPhone', 'recipientEmail', 'bookerCountrySearch', 'recipientCountrySearch', 'bookerCountryCode', 'recipientCountryCode', 'previousMonth', 'nextMonth', 'calendarTitle', 'calendarGrid', 'nextAvailableDates']) {
     elements.set(id, makeElement());
   }
   const fetchUrls = [];
@@ -39,6 +39,17 @@ const createCustomerContext = () => {
       ggCustomerCategoryFlow: categoryFlow,
       ggCustomerMultiServiceCart: require('../public/customer-multi-service-cart'),
       ggCustomerBookingCalendar: bookingCalendar,
+      ggCustomerPhoneSelector: {
+        bind: ({ select, defaultCountry }) => ({
+          load: (_locale, preferredCountry) => {
+            const preferred = typeof preferredCountry === 'string' ? preferredCountry.toUpperCase() : '';
+            select.value = /^[A-Z]{2}$/.test(preferred)
+              ? preferred
+              : (preferred === '+65' ? 'SG' : defaultCountry);
+            return Promise.resolve();
+          }
+        })
+      },
       location: { hostname: 'localhost', pathname: '/', search: '' }
     },
     localStorage: { getItem: () => 'zh-CN', setItem() {} },
@@ -144,7 +155,7 @@ test('recipient choice and draft survive locale switching without an availabilit
     document.getElementById('recipientName').value = 'Recipient B';
     document.getElementById('recipientPhone').value = '9123 4567';
     document.getElementById('recipientEmail').value = 'b@example.invalid';
-    recipientCountryCode.value = '+65';
+    recipientCountryCode.value = 'SG';
     dateInput.value = '2030-01-07';
     selectedSlot = { time: '10:00', startAt: '2030-01-07T02:00:00Z' };
     cart = [{ clientItemKey: 'stable', categoryId: 'beauty', serviceId: 'facial', staffSelectionType: 'specific', staffId: 'staff-a' }];
@@ -157,15 +168,16 @@ test('recipient choice and draft survive locale switching without an availabilit
     date: dateInput.value, slot: selectedSlot, cart: cart[0]
   })`, page.context)), {
     bookingFor: 'someone_else', name: 'Recipient B', phone: '9123 4567',
-    email: 'b@example.invalid', country: '+65', date: '2030-01-07',
+    email: 'b@example.invalid', country: 'SG', date: '2030-01-07',
     slot: { time: '10:00', startAt: '2030-01-07T02:00:00Z' },
     cart: { clientItemKey: 'stable', categoryId: 'beauty', serviceId: 'facial', staffSelectionType: 'specific', staffId: 'staff-a' }
   });
   assert.equal(page.fetchUrls.some(url => url.includes('available-times')), false);
 });
 
-test('recipient fields toggle without clearing their draft and Singapore is the default', () => {
+test('recipient fields toggle without clearing their draft and Singapore is the default', async () => {
   const page = createCustomerContext();
+  await vm.runInContext("setLocale('zh-CN')", page.context);
   vm.runInContext(`
     document.getElementById('recipientName').value = 'Recipient B';
     bookingFor = 'someone_else'; renderRecipientChoice();
@@ -175,8 +187,8 @@ test('recipient fields toggle without clearing their draft and Singapore is the 
   assert.equal(page.elements.get('recipientFields').hidden, true);
   vm.runInContext(`bookingFor = 'someone_else'; renderRecipientChoice();`, page.context);
   assert.equal(page.elements.get('recipientName').value, 'Recipient B');
-  assert.equal(page.elements.get('bookerCountryCode').value, '+65');
-  assert.equal(page.elements.get('recipientCountryCode').value, '+65');
+  assert.equal(page.elements.get('bookerCountryCode').value, 'SG');
+  assert.equal(page.elements.get('recipientCountryCode').value, 'SG');
 });
 
 test('recipient UI is bilingual, has explicit country selection, and sends no customer id', () => {
@@ -184,8 +196,11 @@ test('recipient UI is bilingual, has explicit country selection, and sends no cu
     assert.notEqual(i18n.t(key, 'zh-CN'), key);
     assert.notEqual(i18n.t(key, 'en'), key);
   }
-  assert.match(customerHtml, /\['\+65', 'countrySingapore'\]/);
-  assert.match(customerHtml, /\['\+60', 'countryMalaysia'\]/);
+  assert.match(customerHtml, /customer-phone-selector\.js/);
+  assert.match(customerHtml, /phoneSelectorApi\.bind/);
+  assert.doesNotMatch(customerHtml, /const COUNTRY_CODES/);
+  assert.match(customerHtml, /bookerCountrySearch/);
+  assert.match(customerHtml, /recipientCountrySearch/);
   assert.match(customerHtml, /bookingFor,\s*\.\.\.\(recipient \? \{ recipient \}/);
   assert.doesNotMatch(customerHtml, /customerId\s*:/);
 });

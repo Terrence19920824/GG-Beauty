@@ -800,8 +800,21 @@ a:focus-visible {
   color: #94a3b8;
 }
 
-.owner-calendar-time-tick.is-major {
+.owner-calendar-time-tick.is-hour {
   color: #475569;
+  font-size: 0.72rem;
+  font-weight: 750;
+}
+
+.owner-calendar-time-tick.is-half-hour {
+  color: #94a3b8;
+  font-size: 0.64rem;
+}
+
+.owner-calendar-time-tick.is-quarter-hour {
+  color: #cbd5e1;
+  font-size: 0.58rem;
+  font-weight: 500;
 }
 
 .owner-calendar-staff-column {
@@ -814,16 +827,19 @@ a:focus-visible {
   background-image:
     repeating-linear-gradient(
       to bottom,
-      transparent 0,
-      transparent 18px,
-      rgba(148, 163, 184, 0.16) 18.75px,
-      transparent 19.5px
+      rgba(71, 85, 105, 0.34) 0,
+      rgba(71, 85, 105, 0.34) 1.25px,
+      transparent 1.25px,
+      transparent 75px
     ),
     repeating-linear-gradient(
       to bottom,
       transparent 0,
-      transparent 74px,
-      rgba(100, 116, 139, 0.34) 75px
+      transparent 37px,
+      rgba(148, 163, 184, 0.16) 37.5px,
+      rgba(148, 163, 184, 0.16) 38.25px,
+      transparent 38.25px,
+      transparent 75px
     );
 }
 

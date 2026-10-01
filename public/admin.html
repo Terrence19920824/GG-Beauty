@@ -2127,7 +2127,11 @@ const renderAppointmentsView = () => {
       const hourNum = Math.floor(totalMinutes / 60);
       const minuteNum = totalMinutes % 60;
       const timeStr = `${String(hourNum).padStart(2, '0')}:${String(minuteNum).padStart(2, '0')}`;
-      const tickClass = minuteNum === 0 ? 'owner-calendar-time-tick is-major' : 'owner-calendar-time-tick is-minor';
+      const tickClass = minuteNum === 0
+        ? 'owner-calendar-time-tick is-major is-hour'
+        : minuteNum === 30
+          ? 'owner-calendar-time-tick is-minor is-half-hour'
+          : 'owner-calendar-time-tick is-minor is-quarter-hour';
       timeAxisHtml += `<div class="${tickClass}" style="top: ${(totalMinutes - CALENDAR_START_MINUTES) * CALENDAR_PIXELS_PER_MINUTE}px;">${escapeHtml(timeStr)}</div>`;
     }
 
