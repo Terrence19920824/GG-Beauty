@@ -20,16 +20,18 @@ const ID = Object.freeze({
   item: '88888888-8888-4888-8888-888888888888',
   assignment: '99999999-9999-4999-8999-999999999999',
   ownerAccount: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-  membership: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+  frontDeskAccount: 'bbbbbbbb-bbbb-4bbb-8bbb-aaaaaaaaaaaa',
+  membershipOwner: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+  membershipFrontDesk: 'cccccccc-cccc-4ccc-8ccc-bbbbbbbbbbbb',
   staffAccount: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc'
 });
 
 const ownerSession = role => ({
-  owner_account_id: ID.ownerAccount,
-  membership_id: ID.membership,
+  owner_account_id: role === 'front_desk' ? ID.frontDeskAccount : ID.ownerAccount,
+  membership_id: role === 'front_desk' ? ID.membershipFrontDesk : ID.membershipOwner,
   shop_id: ID.shop,
   login_identifier: `${role}-user`,
-  display_name: role,
+  display_name: role === 'front_desk' ? 'Front Desk Staff' : 'Store Owner',
   role,
   shop_slug: 'shop-a',
   shop_name: 'Shop A'
@@ -51,7 +53,6 @@ const staffSession = staffId => ({
 
 const makeFixture = ({
   assignedStaff = ID.assignedStaff,
-  notificationStaff = ID.assignedStaff,
   failNotifications = false
 } = {}) => {
   const state = {
@@ -99,7 +100,7 @@ const makeFixture = ({
       }
       if (/assigned_appointment_count/.test(normalized)) {
         return { rows: [{
-          staff_id: assignedStaff || ID.assignedStaff,
+          staff_id: assignedStaff,
           display_name: 'Guanguan',
           assigned_appointment_count: 0
         }] };
@@ -124,7 +125,7 @@ const makeFixture = ({
           location_id: ID.location,
           customer_id: ID.customer,
           service_id: ID.service,
-          staff_id: assignedStaff || null,
+          staff_id: assignedStaff,
           appointment_no: 'GG-SMOKE-01',
           start_at: '2030-01-07T09:30:00.000Z',
           end_at: '2030-01-07T10:30:00.000Z',
@@ -149,12 +150,26 @@ const makeFixture = ({
     async query(sql, params = []) {
       const normalized = sql.trim();
       if (/FROM owner_sessions session/.test(normalized)) {
-        return { rows: [ownerSession('owner')] };
+        const ownerTokenHash = crypto.createHash('sha256').update('test-owner-token').digest('hex');
+        const frontDeskTokenHash = crypto.createHash('sha256').update('test-front-desk-token').digest('hex');
+        if (params[0] === ownerTokenHash) {
+          return { rows: [ownerSession('owner')] };
+        }
+        if (params[0] === frontDeskTokenHash) {
+          return { rows: [ownerSession('front_desk')] };
+        }
+        return { rows: [] };
       }
       if (/FROM staff_sessions/.test(normalized)) {
-        const unrelatedTokenHash = crypto.createHash('sha256').update('unrelated-token').digest('hex');
-        const staffIdToUse = params[0] === unrelatedTokenHash ? ID.unrelatedStaff : (assignedStaff || ID.assignedStaff);
-        return { rows: [staffSession(staffIdToUse)] };
+        const assignedStaffTokenHash = crypto.createHash('sha256').update('assigned-token').digest('hex');
+        const unrelatedStaffTokenHash = crypto.createHash('sha256').update('unrelated-token').digest('hex');
+        if (params[0] === unrelatedStaffTokenHash) {
+          return { rows: [staffSession(ID.unrelatedStaff)] };
+        }
+        if (params[0] === assignedStaffTokenHash) {
+          return { rows: [staffSession(assignedStaff)] };
+        }
+        return { rows: [] };
       }
       if (/SELECT DISTINCT x\.staff_id/.test(normalized)) {
         state.notificationAfterCommit &&= state.committed;
@@ -162,7 +177,7 @@ const makeFixture = ({
           throw new Error('notification database connection failure');
         }
         assert.deepEqual(params, [ID.shop, ID.appointment]);
-        return { rows: notificationStaff ? [{ staff_id: notificationStaff }] : [] };
+        return { rows: assignedStaff ? [{ staff_id: assignedStaff }] : [] };
       }
       if (/INSERT INTO booking_notifications/.test(normalized)) {
         state.notificationAfterCommit &&= state.committed;
@@ -307,8 +322,8 @@ const postBooking = async (baseUrl, payload = customerBookingPayload()) => {
   return { status: response.status, data: await response.json() };
 };
 
-test('1. Standard customer POST /api/new-db with items creates shop and assigned staff notifications after commit', async () => {
-  const fixture = makeFixture({ assignedStaff: ID.assignedStaff, notificationStaff: ID.assignedStaff });
+test('1. Standard customer POST /api/new-db with specific staff creates shop and assigned staff notifications after commit', async () => {
+  const fixture = makeFixture({ assignedStaff: ID.assignedStaff });
   await withServer(fixture, async baseUrl => {
     const result = await postBooking(baseUrl, customerBookingPayload('specific', ID.assignedStaff));
 
@@ -339,25 +354,36 @@ test('1. Standard customer POST /api/new-db with items creates shop and assigned
   });
 });
 
-test('2. Unassigned / no-preference customer booking creates shop notification and zero staff notifications', async () => {
-  const fixture = makeFixture({ assignedStaff: ID.assignedStaff, notificationStaff: null });
+test('2. Canonical no-preference customer booking follows authoritative staff assignment: emits shop and assigned staff notifications', async () => {
+  // "No preference" request without staffId: engine allocates eligible staff member ID.assignedStaff
+  const fixture = makeFixture({ assignedStaff: ID.assignedStaff });
   await withServer(fixture, async baseUrl => {
     const result = await postBooking(baseUrl, customerBookingPayload('no_preference'));
 
     assert.equal(result.status, 200);
     assert.equal(result.data.success, true);
+    assert.equal(result.data.data.id, ID.appointment);
     assert.equal(fixture.state.committed, true);
 
-    // Exactly 1 notification for shop, 0 for staff
-    assert.equal(fixture.state.notifications.length, 1);
-    assert.equal(fixture.state.notifications[0].recipientType, 'shop');
-    assert.equal(fixture.state.notifications[0].recipientStaffId, null);
-    assert.equal(fixture.state.notifications.some(n => n.recipientType === 'staff'), false);
+    // Authoritative notification behavior: 1 shop notification + 1 staff notification for ACTUALLY ASSIGNED staff
+    assert.equal(fixture.state.notifications.length, 2);
+
+    const shopNotif = fixture.state.notifications.find(n => n.recipientType === 'shop');
+    assert.ok(shopNotif, 'shop notification must exist for no-preference booking');
+    assert.equal(shopNotif.recipientType, 'shop');
+    assert.equal(shopNotif.recipientStaffId, null);
+
+    const staffNotif = fixture.state.notifications.find(n => n.recipientType === 'staff');
+    assert.ok(staffNotif, 'notification must be created for authoritatively assigned staff member');
+    assert.equal(staffNotif.recipientStaffId, ID.assignedStaff);
+
+    // Zero notifications for unrelated staff
+    assert.equal(fixture.state.notifications.some(n => n.recipientStaffId === ID.unrelatedStaff), false);
   });
 });
 
 test('3. Deduplication prevents duplicate notification rows on repeated execution', async () => {
-  const fixture = makeFixture({ assignedStaff: ID.assignedStaff, notificationStaff: ID.assignedStaff });
+  const fixture = makeFixture({ assignedStaff: ID.assignedStaff });
   await withServer(fixture, async baseUrl => {
     // First booking
     const result1 = await postBooking(baseUrl);
@@ -393,8 +419,8 @@ test('4. Notification delivery/database failure does not roll back or fail a suc
   });
 });
 
-test('5. Owner and Front Desk notification endpoints show unread notifications created by customer booking', async () => {
-  const fixture = makeFixture({ assignedStaff: ID.assignedStaff, notificationStaff: ID.assignedStaff });
+test('5. Owner notification endpoint reads authoritative shop notification', async () => {
+  const fixture = makeFixture({ assignedStaff: ID.assignedStaff });
   await withServer(fixture, async baseUrl => {
     // Make customer booking
     await postBooking(baseUrl);
@@ -421,8 +447,42 @@ test('5. Owner and Front Desk notification endpoints show unread notifications c
   });
 });
 
-test('6. Assigned staff notification endpoint shows unread notification; unrelated staff sees zero', async () => {
-  const fixture = makeFixture({ assignedStaff: ID.assignedStaff, notificationStaff: ID.assignedStaff });
+test('6. REAL Front Desk session reads the exact same authoritative shop notification (no duplicate rows created)', async () => {
+  const fixture = makeFixture({ assignedStaff: ID.assignedStaff });
+  await withServer(fixture, async baseUrl => {
+    // Make customer booking
+    await postBooking(baseUrl);
+
+    // Ensure database contains exactly ONE shop notification row
+    const shopRows = fixture.state.notifications.filter(n => n.recipientType === 'shop');
+    assert.equal(shopRows.length, 1, 'Only one authoritative shop notification must exist');
+
+    // Read via REAL Front Desk session (authenticated with role: front_desk)
+    const frontDeskCountRes = await fetch(`${baseUrl}/api/owner/notifications/unread-count`, {
+      headers: { Cookie: 'gg_beauty_owner_session=test-front-desk-token' }
+    });
+    assert.equal(frontDeskCountRes.status, 200);
+    const frontDeskCountJson = await frontDeskCountRes.json();
+    assert.equal(frontDeskCountJson.success, true);
+    assert.equal(frontDeskCountJson.data.unreadCount, 1);
+
+    const frontDeskListRes = await fetch(`${baseUrl}/api/owner/notifications`, {
+      headers: { Cookie: 'gg_beauty_owner_session=test-front-desk-token' }
+    });
+    assert.equal(frontDeskListRes.status, 200);
+    const frontDeskListJson = await frontDeskListRes.json();
+    assert.equal(frontDeskListJson.success, true);
+    assert.equal(frontDeskListJson.data.notifications.length, 1);
+    assert.equal(frontDeskListJson.data.notifications[0].id, shopRows[0].id, 'Front Desk must see the same notification ID as Owner');
+    assert.equal(frontDeskListJson.data.notifications[0].appointmentId, ID.appointment);
+
+    // Database still has exactly ONE shop notification row (no duplicate rows created for front desk)
+    assert.equal(fixture.state.notifications.filter(n => n.recipientType === 'shop').length, 1);
+  });
+});
+
+test('7. Staff notification endpoint shows unread notification for assigned staff; unrelated staff sees zero', async () => {
+  const fixture = makeFixture({ assignedStaff: ID.assignedStaff });
   await withServer(fixture, async baseUrl => {
     // Make customer booking
     await postBooking(baseUrl);
@@ -454,11 +514,19 @@ test('6. Assigned staff notification endpoint shows unread notification; unrelat
     const unrelatedCountJson = await unrelatedCountRes.json();
     assert.equal(unrelatedCountJson.success, true);
     assert.equal(unrelatedCountJson.data.unreadCount, 0);
+
+    const unrelatedListRes = await fetch(`${baseUrl}/api/staff/notifications`, {
+      headers: { Cookie: 'gg_beauty_staff_session=unrelated-token' }
+    });
+    assert.equal(unrelatedListRes.status, 200);
+    const unrelatedListJson = await unrelatedListRes.json();
+    assert.equal(unrelatedListJson.success, true);
+    assert.equal(unrelatedListJson.data.notifications.length, 0);
   });
 });
 
-test('7. Tenant isolation: notification queries for unrelated shop return zero records', async () => {
-  const fixture = makeFixture({ assignedStaff: ID.assignedStaff, notificationStaff: ID.assignedStaff });
+test('8. Tenant isolation: notification queries for unrelated shop return zero records', async () => {
+  const fixture = makeFixture({ assignedStaff: ID.assignedStaff });
   await withServer(fixture, async baseUrl => {
     await postBooking(baseUrl);
 
