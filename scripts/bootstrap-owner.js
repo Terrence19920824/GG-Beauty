@@ -4,13 +4,12 @@ const readline = require('readline/promises');
 const bcrypt = require('bcryptjs');
 const { Pool } = require('pg');
 
-const TARGET_SHOP_SLUG = 'gg-beauty';
-const CONFIRMATION_TEXT =
-  'CREATE OWNER FOR gg-beauty';
+const DEFAULT_SHOP_SLUG = 'gg-beauty';
 const BCRYPT_COST = 12;
 const MIN_PASSWORD_LENGTH = 16;
 const MAX_PASSWORD_LENGTH = 1024;
 const MAX_TEXT_LENGTH = 200;
+const ALLOWED_ROLES = new Set(['owner', 'manager', 'admin', 'front_desk']);
 
 class BootstrapError extends Error {
   constructor(publicMessage) {
@@ -21,7 +20,7 @@ class BootstrapError extends Error {
 }
 
 const normalizeLoginIdentifier = value =>
-  value.trim().toLowerCase();
+  typeof value === 'string' ? value.trim().toLowerCase() : '';
 
 const readHiddenInput = prompt =>
   new Promise((resolve, reject) => {
@@ -124,7 +123,25 @@ const rollbackTransaction = async client => {
   }
 };
 
-const collectInputs = async () => {
+const parseArgs = argv => {
+  const args = {};
+  for (let i = 2; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg.startsWith('--')) {
+      const key = arg.slice(2);
+      const next = argv[i + 1];
+      if (next && !next.startsWith('--')) {
+        args[key] = next;
+        i++;
+      } else {
+        args[key] = true;
+      }
+    }
+  }
+  return args;
+};
+
+const collectInputs = async (cliArgs = {}) => {
   if (
     !process.stdin.isTTY ||
     !process.stdout.isTTY
@@ -139,16 +156,28 @@ const collectInputs = async () => {
     output: process.stdout
   });
 
+  let shopSlug = cliArgs.shop || cliArgs['shop-slug'] || cliArgs.shopSlug;
+  let role = cliArgs.role || 'owner';
   let confirmation;
   let loginIdentifier;
   let displayName;
 
   try {
+    if (!shopSlug) {
+      const inputSlug = (
+        await terminal.question(`Target shop slug (default: ${DEFAULT_SHOP_SLUG}): `)
+      ).trim();
+      shopSlug = inputSlug || DEFAULT_SHOP_SLUG;
+    }
+
+    shopSlug = normalizeLoginIdentifier(shopSlug);
+
+    const confirmationText = `CREATE OWNER FOR ${shopSlug}`;
     confirmation = await terminal.question(
-      `Type "${CONFIRMATION_TEXT}" to continue: `
+      `Type "${confirmationText}" to continue: `
     );
 
-    if (confirmation !== CONFIRMATION_TEXT) {
+    if (confirmation !== confirmationText) {
       throw new BootstrapError('Confirmation did not match.');
     }
 
@@ -163,6 +192,13 @@ const collectInputs = async () => {
   }
 
   if (
+    !shopSlug ||
+    shopSlug.length > MAX_TEXT_LENGTH
+  ) {
+    throw new BootstrapError('Target shop slug is invalid.');
+  }
+
+  if (
     !loginIdentifier ||
     loginIdentifier.length > MAX_TEXT_LENGTH
   ) {
@@ -174,6 +210,10 @@ const collectInputs = async () => {
     displayName.length > MAX_TEXT_LENGTH
   ) {
     throw new BootstrapError('Display name is invalid.');
+  }
+
+  if (!ALLOWED_ROLES.has(role)) {
+    throw new BootstrapError(`Role must be one of: ${Array.from(ALLOWED_ROLES).join(', ')}`);
   }
 
   let password = await readHiddenInput('Password: ');
@@ -200,6 +240,8 @@ const collectInputs = async () => {
   passwordConfirmation = null;
 
   return {
+    shopSlug,
+    role,
     loginIdentifier,
     loginIdentifierNormalized:
       normalizeLoginIdentifier(loginIdentifier),
@@ -208,14 +250,14 @@ const collectInputs = async () => {
   };
 };
 
-const createOwner = async inputs => {
+const createOwner = async (inputs, poolInstance = null) => {
   const databaseUrl = process.env.DATABASE_URL;
 
-  if (!databaseUrl) {
+  if (!databaseUrl && !poolInstance) {
     throw new BootstrapError('DATABASE_URL is not configured.');
   }
 
-  const pool = new Pool({
+  const pool = poolInstance || new Pool({
     connectionString: databaseUrl,
     ssl: {
       rejectUnauthorized: false
@@ -226,6 +268,12 @@ const createOwner = async inputs => {
   let transactionActive = false;
   let discardClient = false;
   let password = inputs.password;
+  const targetShopSlug = normalizeLoginIdentifier(inputs.shopSlug || DEFAULT_SHOP_SLUG);
+  const targetRole = inputs.role || 'owner';
+
+  if (!ALLOWED_ROLES.has(targetRole)) {
+    throw new BootstrapError(`Role must be one of: ${Array.from(ALLOWED_ROLES).join(', ')}`);
+  }
 
   try {
     client = await pool.connect();
@@ -234,18 +282,20 @@ const createOwner = async inputs => {
 
     const shopResult = await client.query(
       `
-      SELECT id
+      SELECT id, name
       FROM public.shops
-      WHERE slug = $1
+      WHERE LOWER(slug) = $1
         AND status = 'active'
       FOR SHARE
       `,
-      [TARGET_SHOP_SLUG]
+      [targetShopSlug]
     );
 
     if (shopResult.rows.length !== 1) {
-      throw new BootstrapError('Target shop is unavailable.');
+      throw new BootstrapError(`Target shop "${targetShopSlug}" is unavailable.`);
     }
+
+    const targetShop = shopResult.rows[0];
 
     const existingAccountResult = await client.query(
       `
@@ -258,57 +308,73 @@ const createOwner = async inputs => {
       [inputs.loginIdentifierNormalized]
     );
 
+    let ownerAccountId;
+
     if (existingAccountResult.rows.length > 0) {
-      throw new BootstrapError('owner account already exists');
+      // Account exists: attach new membership if not already present
+      ownerAccountId = existingAccountResult.rows[0].id;
+    } else {
+      const passwordHash = await bcrypt.hash(
+        password,
+        BCRYPT_COST
+      );
+      password = null;
+      inputs.password = null;
+
+      const accountResult = await client.query(
+        `
+        INSERT INTO public.owner_accounts (
+          login_identifier,
+          login_identifier_normalized,
+          password_hash,
+          display_name,
+          is_active,
+          session_version,
+          failed_login_attempts,
+          locked_until,
+          password_changed_at,
+          created_at,
+          updated_at
+        )
+        VALUES (
+          $1,
+          $2,
+          $3,
+          $4,
+          TRUE,
+          1,
+          0,
+          NULL,
+          NOW(),
+          NOW(),
+          NOW()
+        )
+        RETURNING id
+        `,
+        [
+          inputs.loginIdentifier,
+          inputs.loginIdentifierNormalized,
+          passwordHash,
+          inputs.displayName
+        ]
+      );
+
+      if (accountResult.rows.length !== 1) {
+        throw new BootstrapError('Owner account creation failed.');
+      }
+      ownerAccountId = accountResult.rows[0].id;
     }
 
-    const passwordHash = await bcrypt.hash(
-      password,
-      BCRYPT_COST
-    );
-    password = null;
-    inputs.password = null;
-
-    const accountResult = await client.query(
-      `
-      INSERT INTO public.owner_accounts (
-        login_identifier,
-        login_identifier_normalized,
-        password_hash,
-        display_name,
-        is_active,
-        session_version,
-        failed_login_attempts,
-        locked_until,
-        password_changed_at,
-        created_at,
-        updated_at
-      )
-      VALUES (
-        $1,
-        $2,
-        $3,
-        $4,
-        TRUE,
-        1,
-        0,
-        NULL,
-        NOW(),
-        NOW(),
-        NOW()
-      )
-      RETURNING id
-      `,
-      [
-        inputs.loginIdentifier,
-        inputs.loginIdentifierNormalized,
-        passwordHash,
-        inputs.displayName
-      ]
+    // Check if membership already exists for this shop
+    const existingMembership = await client.query(
+      `SELECT id FROM public.owner_shop_memberships
+       WHERE owner_account_id = $1 AND shop_id = $2
+       LIMIT 1`,
+      [ownerAccountId, targetShop.id]
     );
 
-    if (accountResult.rows.length !== 1) {
-      throw new BootstrapError('Owner account creation failed.');
+    if (existingMembership.rows.length > 0) {
+      throw new BootstrapError(`Account already holds a membership in shop "${targetShopSlug}".`);
     }
 
     const membershipResult = await client.query(
@@ -321,10 +387,10 @@ const createOwner = async inputs => {
         created_at,
         updated_at
       )
-      VALUES ($1, $2, 'owner', TRUE, NOW(), NOW())
+      VALUES ($1, $2, $3, TRUE, NOW(), NOW())
       RETURNING id
       `,
-      [accountResult.rows[0].id, shopResult.rows[0].id]
+      [ownerAccountId, targetShop.id, targetRole]
     );
 
     if (membershipResult.rows.length !== 1) {
@@ -336,9 +402,18 @@ const createOwner = async inputs => {
 
     process.stdout.write(
       'Owner account created successfully.\n' +
-      `Shop: ${TARGET_SHOP_SLUG}\n` +
-      'Role: owner\n'
+      `Shop: ${targetShopSlug} (${targetShop.name})\n` +
+      `Role: ${targetRole}\n`
     );
+
+    return {
+      success: true,
+      shopId: targetShop.id,
+      shopSlug: targetShopSlug,
+      ownerAccountId,
+      membershipId: membershipResult.rows[0].id,
+      role: targetRole
+    };
   } catch (error) {
     if (client && transactionActive) {
       const rollbackSucceeded =
@@ -362,26 +437,52 @@ const createOwner = async inputs => {
     inputs.password = null;
 
     if (client) {
-      client.release(discardClient || undefined);
+      if (typeof client.release === 'function') {
+        client.release(discardClient || undefined);
+      } else if (typeof client.end === 'function') {
+        await client.end().catch(() => {});
+      }
     }
 
-    await pool.end();
+    if (!poolInstance) {
+      await pool.end();
+    }
   }
 };
 
 const main = async () => {
   try {
-    const inputs = await collectInputs();
+    const cliArgs = parseArgs(process.argv);
+    if (cliArgs.help || cliArgs.h) {
+      process.stdout.write(
+        'Usage: node scripts/bootstrap-owner.js [options]\n\n' +
+        'Options:\n' +
+        '  --shop <slug>                     Target shop slug (default: gg-beauty)\n' +
+        '  --role <role>                     Account role: owner | manager | admin | front_desk (default: owner)\n' +
+        '  --help, -h                        Show this help message\n'
+      );
+      return;
+    }
+    const inputs = await collectInputs(cliArgs);
     await createOwner(inputs);
   } catch (error) {
     const message =
       error instanceof BootstrapError
         ? error.publicMessage
-        : 'Owner bootstrap failed.';
+        : error.message || 'Owner bootstrap failed.';
 
     process.stderr.write(`${message}\n`);
     process.exitCode = 1;
   }
 };
 
-main();
+if (require.main === module) {
+  main();
+}
+
+module.exports = {
+  BootstrapError,
+  collectInputs,
+  createOwner,
+  normalizeLoginIdentifier
+};
