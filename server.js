@@ -48,6 +48,26 @@ const {
 } = require('./lib/owner-schedule-management');
 const { createOwnerServiceCategoryManagement } = require('./lib/owner-service-category-management');
 const {
+  StaffActivationError,
+  createStaffActivationInvitation,
+  revokeStaffActivationInvitation,
+  validateStaffInvitation,
+  consumeStaffActivationInvitation,
+  disableStaffAccount,
+  reactivateStaffAccount,
+  getStaffAccountInfo
+} = require('./lib/staff-activation');
+const {
+  FrontDeskActivationError,
+  createFrontDeskInvitation,
+  revokeFrontDeskInvitation,
+  listFrontDeskMembers,
+  validateFrontDeskInvitation,
+  consumeFrontDeskInvitation,
+  disableFrontDeskMembership,
+  reactivateFrontDeskMembership
+} = require('./lib/front-desk-activation');
+const {
   normalizeLocale
 } = require('./public/service-locale');
 const {
@@ -165,6 +185,24 @@ app.get('/onboarding.html', (_req, res) => {
     'Referrer-Policy': 'no-referrer'
   });
   return res.sendFile(path.join(__dirname, 'public', 'onboarding.html'));
+});
+app.get('/staff-activate.html', (_req, res) => {
+  res.set({
+    'Cache-Control': 'no-store, no-cache, must-revalidate, private',
+    Pragma: 'no-cache',
+    Expires: '0',
+    'Referrer-Policy': 'no-referrer'
+  });
+  return res.sendFile(path.join(__dirname, 'public', 'staff-activate.html'));
+});
+app.get('/front-desk-activate.html', (_req, res) => {
+  res.set({
+    'Cache-Control': 'no-store, no-cache, must-revalidate, private',
+    Pragma: 'no-cache',
+    Expires: '0',
+    'Referrer-Policy': 'no-referrer'
+  });
+  return res.sendFile(path.join(__dirname, 'public', 'front-desk-activate.html'));
 });
 app.use(express.static('public'));
 
@@ -801,6 +839,87 @@ app.post(
   '/api/merchant-onboarding/invitation/consume',
   merchantOnboarding.consumeInvitation
 );
+
+// Public Staff Activation Endpoints
+app.post('/api/staff-activation/validate', async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  const token = req.body && typeof req.body.token === 'string' ? req.body.token.trim() : '';
+  if (!token) {
+    return res.status(400).json({ success: false, code: 'INVALID_VALIDATION_REQUEST', message: 'Token is required' });
+  }
+  try {
+    const authPool = app.locals.ownerAuthPool || pool;
+    const result = await validateStaffInvitation(authPool, token);
+    return res.json({ success: true, ...result });
+  } catch (_error) {
+    return res.status(500).json({ success: false, code: 'VALIDATION_FAILED', message: 'Validation failed' });
+  }
+});
+
+app.post('/api/staff-activation/consume', async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  if (typeof isSameOriginRequest === 'function' && !isSameOriginRequest(req)) {
+    return res.status(403).json({ success: false, code: 'ORIGIN_NOT_ALLOWED' });
+  }
+  const { token, username, password, passwordConfirmation } = req.body || {};
+  try {
+    const authPool = app.locals.ownerAuthPool || pool;
+    const result = await consumeStaffActivationInvitation(authPool, {
+      token,
+      username,
+      password,
+      passwordConfirmation,
+      consumedIp: req.ip
+    });
+    return res.status(201).json({ success: true, data: result });
+  } catch (error) {
+    if (error instanceof StaffActivationError) {
+      return res.status(error.status).json({ success: false, code: error.code, message: error.publicMessage });
+    }
+    return res.status(500).json({ success: false, code: 'ACTIVATION_FAILED', message: 'Unable to complete activation' });
+  }
+});
+
+// Public Front Desk Activation Endpoints
+app.post('/api/front-desk-activation/validate', async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  const token = req.body && typeof req.body.token === 'string' ? req.body.token.trim() : '';
+  if (!token) {
+    return res.status(400).json({ success: false, code: 'INVALID_VALIDATION_REQUEST', message: 'Token is required' });
+  }
+  try {
+    const authPool = app.locals.ownerAuthPool || pool;
+    const result = await validateFrontDeskInvitation(authPool, token);
+    return res.json({ success: true, ...result });
+  } catch (_error) {
+    return res.status(500).json({ success: false, code: 'VALIDATION_FAILED', message: 'Validation failed' });
+  }
+});
+
+app.post('/api/front-desk-activation/consume', async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  if (typeof isSameOriginRequest === 'function' && !isSameOriginRequest(req)) {
+    return res.status(403).json({ success: false, code: 'ORIGIN_NOT_ALLOWED' });
+  }
+  const { token, username, password, passwordConfirmation, displayName } = req.body || {};
+  try {
+    const authPool = app.locals.ownerAuthPool || pool;
+    const result = await consumeFrontDeskInvitation(authPool, {
+      token,
+      username,
+      password,
+      passwordConfirmation,
+      displayName,
+      consumedIp: req.ip
+    });
+    return res.status(201).json({ success: true, data: result });
+  } catch (error) {
+    if (error instanceof FrontDeskActivationError) {
+      return res.status(error.status).json({ success: false, code: error.code, message: error.publicMessage });
+    }
+    return res.status(500).json({ success: false, code: 'ACTIVATION_FAILED', message: 'Unable to complete activation' });
+  }
+});
 
 const requireOwnerRole = allowedRoles =>
   (req, res, next) => {
@@ -1527,6 +1646,233 @@ app.put(
   requireOwnerAuth,
   requireOwnerRole(['owner', 'manager']),
   ownerStaffManagement.replaceStaffLocations
+);
+
+// Owner Staff Account & Activation Management
+app.get(
+  '/api/owner/staff/:staffId/account',
+  requireOwnerAuth,
+  requireOwnerRole(['owner', 'manager', 'admin']),
+  async (req, res) => {
+    if (!isUuid(req.params.staffId)) {
+      return res.status(400).json({ success: false, code: 'INVALID_STAFF_ID', message: '无效的员工ID' });
+    }
+    try {
+      const authPool = app.locals.ownerAuthPool || pool;
+      const data = await getStaffAccountInfo(authPool, {
+        shopId: req.ownerAuth.shopId,
+        staffId: req.params.staffId
+      });
+      return res.json({ success: true, data });
+    } catch (error) {
+      if (error instanceof StaffActivationError) {
+        return res.status(error.status).json({ success: false, code: error.code, message: error.publicMessage });
+      }
+      return res.status(500).json({ success: false, code: 'STAFF_ACCOUNT_FETCH_FAILED', message: '获取员工账号信息失败' });
+    }
+  }
+);
+
+app.post(
+  '/api/owner/staff/:staffId/activation-invitation',
+  requireOwnerAuth,
+  requireOwnerRole(['owner', 'manager']),
+  async (req, res) => {
+    if (!isUuid(req.params.staffId)) {
+      return res.status(400).json({ success: false, code: 'INVALID_STAFF_ID', message: '无效的员工ID' });
+    }
+    try {
+      const authPool = app.locals.ownerAuthPool || pool;
+      const baseUrl = req.get('origin') || `${req.protocol}://${req.get('host')}` || 'http://localhost:3000';
+      const ttlDays = req.body && req.body.ttlDays;
+      const data = await createStaffActivationInvitation(authPool, {
+        shopId: req.ownerAuth.shopId,
+        staffId: req.params.staffId,
+        operatorId: req.ownerAuth.ownerAccountId,
+        ttlDays,
+        baseUrl
+      });
+      return res.status(201).json({ success: true, data });
+    } catch (error) {
+      if (error instanceof StaffActivationError) {
+        return res.status(error.status).json({ success: false, code: error.code, message: error.publicMessage });
+      }
+      return res.status(500).json({ success: false, code: 'INVITATION_CREATION_FAILED', message: '创建员工激活邀请失败' });
+    }
+  }
+);
+
+app.delete(
+  '/api/owner/staff/:staffId/activation-invitation',
+  requireOwnerAuth,
+  requireOwnerRole(['owner', 'manager']),
+  async (req, res) => {
+    if (!isUuid(req.params.staffId)) {
+      return res.status(400).json({ success: false, code: 'INVALID_STAFF_ID', message: '无效的员工ID' });
+    }
+    try {
+      const authPool = app.locals.ownerAuthPool || pool;
+      await revokeStaffActivationInvitation(authPool, {
+        shopId: req.ownerAuth.shopId,
+        staffId: req.params.staffId,
+        operatorId: req.ownerAuth.ownerAccountId
+      });
+      return res.json({ success: true });
+    } catch (error) {
+      if (error instanceof StaffActivationError) {
+        return res.status(error.status).json({ success: false, code: error.code, message: error.publicMessage });
+      }
+      return res.status(500).json({ success: false, code: 'INVITATION_REVOKE_FAILED', message: '撤销员工激活邀请失败' });
+    }
+  }
+);
+
+app.patch(
+  '/api/owner/staff/:staffId/account/status',
+  requireOwnerAuth,
+  requireOwnerRole(['owner', 'manager']),
+  async (req, res) => {
+    if (!isUuid(req.params.staffId)) {
+      return res.status(400).json({ success: false, code: 'INVALID_STAFF_ID', message: '无效的员工ID' });
+    }
+    const status = req.body && typeof req.body.status === 'string' ? req.body.status.trim().toLowerCase() : '';
+    if (status !== 'active' && status !== 'disabled') {
+      return res.status(400).json({ success: false, code: 'INVALID_STATUS', message: '状态必须为 active 或 disabled' });
+    }
+    try {
+      const authPool = app.locals.ownerAuthPool || pool;
+      if (status === 'disabled') {
+        await disableStaffAccount(authPool, {
+          shopId: req.ownerAuth.shopId,
+          staffId: req.params.staffId,
+          operatorId: req.ownerAuth.ownerAccountId
+        });
+      } else {
+        await reactivateStaffAccount(authPool, {
+          shopId: req.ownerAuth.shopId,
+          staffId: req.params.staffId,
+          operatorId: req.ownerAuth.ownerAccountId
+        });
+      }
+      return res.json({ success: true });
+    } catch (error) {
+      if (error instanceof StaffActivationError) {
+        return res.status(error.status).json({ success: false, code: error.code, message: error.publicMessage });
+      }
+      return res.status(500).json({ success: false, code: 'ACCOUNT_STATUS_UPDATE_FAILED', message: '更新员工账号状态失败' });
+    }
+  }
+);
+
+// Owner Front Desk Team Management
+app.get(
+  '/api/owner/team/front-desk',
+  requireOwnerAuth,
+  requireOwnerRole(['owner', 'manager', 'admin']),
+  async (req, res) => {
+    try {
+      const authPool = app.locals.ownerAuthPool || pool;
+      const data = await listFrontDeskMembers(authPool, {
+        shopId: req.ownerAuth.shopId
+      });
+      return res.json({ success: true, data });
+    } catch (error) {
+      if (error instanceof FrontDeskActivationError) {
+        return res.status(error.status).json({ success: false, code: error.code, message: error.publicMessage });
+      }
+      return res.status(500).json({ success: false, code: 'FRONT_DESK_FETCH_FAILED', message: '获取前台成员失败' });
+    }
+  }
+);
+
+app.post(
+  '/api/owner/team/front-desk/invitation',
+  requireOwnerAuth,
+  requireOwnerRole(['owner', 'manager']),
+  async (req, res) => {
+    try {
+      const authPool = app.locals.ownerAuthPool || pool;
+      const baseUrl = req.get('origin') || `${req.protocol}://${req.get('host')}` || 'http://localhost:3000';
+      const { displayName, phone, email, ttlDays } = req.body || {};
+      const data = await createFrontDeskInvitation(authPool, {
+        shopId: req.ownerAuth.shopId,
+        operatorId: req.ownerAuth.ownerAccountId,
+        displayNameHint: displayName,
+        phone,
+        email,
+        ttlDays,
+        baseUrl
+      });
+      return res.status(201).json({ success: true, data });
+    } catch (error) {
+      if (error instanceof FrontDeskActivationError) {
+        return res.status(error.status).json({ success: false, code: error.code, message: error.publicMessage });
+      }
+      return res.status(500).json({ success: false, code: 'INVITATION_CREATION_FAILED', message: '创建前台激活邀请失败' });
+    }
+  }
+);
+
+app.delete(
+  '/api/owner/team/front-desk/invitation/:invitationId',
+  requireOwnerAuth,
+  requireOwnerRole(['owner', 'manager']),
+  async (req, res) => {
+    if (!isUuid(req.params.invitationId)) {
+      return res.status(400).json({ success: false, code: 'INVALID_INVITATION_ID', message: '无效的邀请ID' });
+    }
+    try {
+      const authPool = app.locals.ownerAuthPool || pool;
+      await revokeFrontDeskInvitation(authPool, {
+        shopId: req.ownerAuth.shopId,
+        invitationId: req.params.invitationId,
+        operatorId: req.ownerAuth.ownerAccountId
+      });
+      return res.json({ success: true });
+    } catch (error) {
+      if (error instanceof FrontDeskActivationError) {
+        return res.status(error.status).json({ success: false, code: error.code, message: error.publicMessage });
+      }
+      return res.status(500).json({ success: false, code: 'INVITATION_REVOKE_FAILED', message: '撤销前台激活邀请失败' });
+    }
+  }
+);
+
+app.patch(
+  '/api/owner/team/front-desk/:membershipId/status',
+  requireOwnerAuth,
+  requireOwnerRole(['owner', 'manager']),
+  async (req, res) => {
+    if (!isUuid(req.params.membershipId)) {
+      return res.status(400).json({ success: false, code: 'INVALID_MEMBERSHIP_ID', message: '无效的成员ID' });
+    }
+    const status = req.body && typeof req.body.status === 'string' ? req.body.status.trim().toLowerCase() : '';
+    if (status !== 'active' && status !== 'disabled') {
+      return res.status(400).json({ success: false, code: 'INVALID_STATUS', message: '状态必须为 active 或 disabled' });
+    }
+    try {
+      const authPool = app.locals.ownerAuthPool || pool;
+      if (status === 'disabled') {
+        await disableFrontDeskMembership(authPool, {
+          shopId: req.ownerAuth.shopId,
+          membershipId: req.params.membershipId,
+          operatorId: req.ownerAuth.ownerAccountId
+        });
+      } else {
+        await reactivateFrontDeskMembership(authPool, {
+          shopId: req.ownerAuth.shopId,
+          membershipId: req.params.membershipId,
+          operatorId: req.ownerAuth.ownerAccountId
+        });
+      }
+      return res.json({ success: true });
+    } catch (error) {
+      if (error instanceof FrontDeskActivationError) {
+        return res.status(error.status).json({ success: false, code: error.code, message: error.publicMessage });
+      }
+      return res.status(500).json({ success: false, code: 'MEMBERSHIP_STATUS_UPDATE_FAILED', message: '更新前台成员状态失败' });
+    }
+  }
 );
 
 const ownerStaffCapabilityManagement =

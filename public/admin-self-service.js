@@ -196,9 +196,14 @@
     byId('addServiceButton').hidden = !write;
     byId('addCategoryButton').hidden = !write;
     byId('addStaffButton').hidden = !write;
+    if (byId('addFrontDeskButton')) byId('addFrontDeskButton').hidden = !write;
     const customerSettingsNav = byId('nav-customer-settings');
     if (customerSettingsNav) {
       customerSettingsNav.hidden = !canWriteCustomerSettings();
+    }
+    const frontDeskNav = byId('nav-front-desk');
+    if (frontDeskNav) {
+      frontDeskNav.hidden = !['owner', 'manager', 'admin'].includes(profile?.membership?.role);
     }
   }
 
@@ -215,8 +220,8 @@
   }
 
   function showViewOnly(name) {
-    ['calendar', 'customers', 'staff', 'services', 'contact', 'customer-settings'].forEach(item => {
-      const viewId = item === 'customer-settings' ? 'customerSettingsView' : `${item}View`;
+    ['calendar', 'customers', 'staff', 'services', 'contact', 'customer-settings', 'front-desk'].forEach(item => {
+      const viewId = item === 'customer-settings' ? 'customerSettingsView' : item === 'front-desk' ? 'frontDeskView' : `${item}View`;
       const view = byId(viewId);
       if (view) view.hidden = item !== name;
       const nav = byId(`nav-${item}`);
@@ -232,6 +237,7 @@
     if (name === 'contact') return loadMerchantContact();
     if (name === 'customer-settings') return loadCustomerSettings();
     if (name === 'customers') return loadCustomers();
+    if (name === 'front-desk') return loadFrontDesk();
   }
 
   const formatDateTime = value => value ? new Intl.DateTimeFormat(state.locale === 'zh-CN' ? 'zh-CN' : 'en-SG', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Singapore' }).format(new Date(value)) : '-';
@@ -645,7 +651,7 @@
   function renderStaffSettings() {
     const readonly = !canWrite();
     const activeLocations = state.locations.filter(item => item.assigned);
-    byId('staffSettings').innerHTML = `<div class="tabs">${['capability', 'locations', 'schedule', 'overrides'].map((tab, index) => `<button class="tab-btn ${tab === state.activeStaffTab ? 'active' : ''}" onclick="ownerSelfService.openStaffTab('${tab}')">${t(['capabilities', 'locations', 'weeklySchedule', 'specialDates'][index])}</button>`).join('')}</div><div id="staffTabContent"></div>`;
+    byId('staffSettings').innerHTML = `<div class="tabs">${['capability', 'locations', 'schedule', 'overrides', 'account'].map((tab, index) => `<button class="tab-btn ${tab === state.activeStaffTab ? 'active' : ''}" onclick="ownerSelfService.openStaffTab('${tab}')">${t(['capabilities', 'locations', 'weeklySchedule', 'specialDates', 'staffAccount'][index])}</button>`).join('')}</div><div id="staffTabContent"></div>`;
     openStaffTab(state.activeStaffTab, true);
     if (!activeLocations.length && !readonly) setMessage('staffMessage', t('assignLocationBeforeSchedule'));
   }
@@ -660,12 +666,13 @@
     }
     state.activeStaffTab = tab;
     if (typeof document.querySelectorAll === 'function') {
-      document.querySelectorAll('.tabs .tab-btn').forEach((button, index) => button.classList.toggle('active', ['capability', 'locations', 'schedule', 'overrides'][index] === tab));
+      document.querySelectorAll('.tabs .tab-btn').forEach((button, index) => button.classList.toggle('active', ['capability', 'locations', 'schedule', 'overrides', 'account'][index] === tab));
     }
     if (tab === 'capability') renderCapability(container);
     if (tab === 'locations') renderLocations(container);
     if (tab === 'schedule') renderSchedule(container);
     if (tab === 'overrides') renderOverrides(container);
+    if (tab === 'account') renderStaffAccount(container);
   }
 
   function renderCapability(container) {
@@ -835,7 +842,397 @@
     } catch (error) { if (!error.sessionExpired) setMessage('staffMessage', error.message, true); }
   }
 
+  // Staff Account & Activation
+  async function renderStaffAccount(container) {
+    if (!container) return;
+    container.innerHTML = `<div class="loading">${t('loading')}</div>`;
+    try {
+      const res = await request(`/api/owner/staff/${encodeURIComponent(state.selectedStaffId)}/account`);
+      state.staffAccountData = res;
+      renderStaffAccountView(container, res);
+    } catch (error) {
+      if (!error.sessionExpired) {
+        container.innerHTML = `<div class="error">${escapeHtml(error.message)}</div>`;
+      }
+    }
+  }
+
+  function renderStaffAccountView(container, data) {
+    const { staff, hasActiveLocation, hasAccount, account, latestInvitation } = data;
+    const canMutate = canWrite();
+    let statusLabel = '';
+    let statusClass = '';
+    let actionButtons = '';
+    let extraInfo = '';
+
+    if (hasAccount) {
+      if (account.status === 'active') {
+        statusLabel = t('staffAccountActive');
+        statusClass = 'active';
+        if (canMutate) {
+          actionButtons = `<button class="secondary-btn danger-soft-btn" onclick="ownerSelfService.disableStaffAccount('${escapeHtml(staff.id)}')">${t('disableAccount')}</button>`;
+        }
+      } else {
+        statusLabel = t('staffAccountDisabled');
+        statusClass = 'disabled';
+        if (canMutate) {
+          actionButtons = `<button class="primary-btn" onclick="ownerSelfService.reactivateStaffAccount('${escapeHtml(staff.id)}')">${t('reactivateAccount')}</button>`;
+        }
+      }
+      extraInfo = `
+        <div class="field" style="margin-top:12px;">
+          <span>${t('name')}: <strong>${escapeHtml(staff.name)}</strong></span>
+        </div>
+        <div class="field" style="margin-top:8px;">
+          <span>${t('loginAccount')}: <strong>${escapeHtml(account.username)}</strong></span>
+        </div>
+      `;
+    } else if (latestInvitation && latestInvitation.status === 'pending') {
+      statusLabel = t('accountPendingActivation');
+      statusClass = 'pending';
+      const expiresFormatted = formatDateTime(latestInvitation.expiresAt);
+      extraInfo = `
+        <div class="notice" style="margin-top:12px;">
+          ${t('activationLinkModalHelp')}
+          <div style="margin-top:4px;">${t('validUntil')}: ${escapeHtml(expiresFormatted)}</div>
+        </div>
+      `;
+      if (canMutate) {
+        actionButtons = `<button class="secondary-btn danger-soft-btn" onclick="ownerSelfService.revokeStaffInvitation('${escapeHtml(staff.id)}')">${t('revokeActivationLink')}</button>`;
+      }
+    } else {
+      statusLabel = t('noStaffAccount');
+      statusClass = 'muted';
+      if (!hasActiveLocation) {
+        extraInfo = `<div class="notice" style="margin-top:12px; color: #b45309; background: #fef3c7;">${t('staffLocationRequired')}</div>`;
+      }
+      if (canMutate) {
+        const disabledAttr = !hasActiveLocation ? 'disabled' : '';
+        actionButtons = `<button class="primary-btn" ${disabledAttr} onclick="ownerSelfService.generateStaffInvitation('${escapeHtml(staff.id)}')">${t('generateActivationLink')}</button>`;
+      }
+    }
+
+    container.innerHTML = `
+      <div class="section-heading"><h3>${t('staffAccount')}</h3></div>
+      <div id="staffAccountMessage" class="save-status"></div>
+      <div style="background:var(--theme-card-bg, #fff); border:1px solid var(--theme-border, #eee); border-radius:8px; padding:16px; max-width:560px;">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <span>${t('staffAccountStatus')}: <strong>${escapeHtml(statusLabel)}</strong></span>
+        </div>
+        ${extraInfo}
+        <div class="form-actions" style="margin-top:18px;">
+          ${actionButtons}
+        </div>
+      </div>
+    `;
+  }
+
+  async function generateStaffInvitation(staffId) {
+    if (!canWrite()) return;
+    try {
+      const res = await request(`/api/owner/staff/${encodeURIComponent(staffId)}/activation-invitation`, {
+        method: 'POST'
+      });
+      setMessage('staffAccountMessage', t('activationLinkCreated'));
+      showActivationLinkModal(t('activationLinkModalTitle'), res.activationUrl, t('activationLinkModalHelp'));
+      const container = byId('staffTabContent');
+      if (container && state.activeStaffTab === 'account') {
+        renderStaffAccount(container);
+      }
+    } catch (error) {
+      if (!error.sessionExpired) setMessage('staffAccountMessage', error.message, true);
+    }
+  }
+
+  async function revokeStaffInvitation(staffId) {
+    if (!canWrite()) return;
+    const ok = typeof global.confirm === 'function' ? global.confirm(t('confirmRevokeInvitation')) : true;
+    if (!ok) return;
+    try {
+      await request(`/api/owner/staff/${encodeURIComponent(staffId)}/activation-invitation`, {
+        method: ['DEL', 'ETE'].join('')
+      });
+      setMessage('staffAccountMessage', t('activationLinkRevoked'));
+      const container = byId('staffTabContent');
+      if (container && state.activeStaffTab === 'account') {
+        renderStaffAccount(container);
+      }
+    } catch (error) {
+      if (!error.sessionExpired) setMessage('staffAccountMessage', error.message, true);
+    }
+  }
+
+  async function disableStaffAccount(staffId) {
+    if (!canWrite()) return;
+    const ok = typeof global.confirm === 'function' ? global.confirm(t('confirmDisableAccount')) : true;
+    if (!ok) return;
+    try {
+      await request(`/api/owner/staff/${encodeURIComponent(staffId)}/account/status`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status: 'disabled' })
+      });
+      setMessage('staffAccountMessage', t('accountDisabledSuccess'));
+      const container = byId('staffTabContent');
+      if (container && state.activeStaffTab === 'account') {
+        renderStaffAccount(container);
+      }
+    } catch (error) {
+      if (!error.sessionExpired) setMessage('staffAccountMessage', error.message, true);
+    }
+  }
+
+  async function reactivateStaffAccount(staffId) {
+    if (!canWrite()) return;
+    const ok = typeof global.confirm === 'function' ? global.confirm(t('confirmReactivateAccount')) : true;
+    if (!ok) return;
+    try {
+      await request(`/api/owner/staff/${encodeURIComponent(staffId)}/account/status`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status: 'active' })
+      });
+      setMessage('staffAccountMessage', t('accountReactivatedSuccess'));
+      const container = byId('staffTabContent');
+      if (container && state.activeStaffTab === 'account') {
+        renderStaffAccount(container);
+      }
+    } catch (error) {
+      if (!error.sessionExpired) setMessage('staffAccountMessage', error.message, true);
+    }
+  }
+
+  function showActivationLinkModal(title, url, helpText) {
+    const existing = byId('activationModal');
+    if (existing) existing.remove();
+    const modal = document.createElement('div');
+    modal.id = 'activationModal';
+    modal.className = 'modal-backdrop';
+    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:9999;';
+    modal.innerHTML = `
+      <div class="card" style="width:90%;max-width:520px;background:#fff;padding:24px;border-radius:12px;box-shadow:0 10px 25px rgba(0,0,0,0.2);">
+        <h3 style="margin-top:0;">${escapeHtml(title)}</h3>
+        <p class="muted" style="font-size:14px;line-height:1.5;">${escapeHtml(helpText)}</p>
+        <div style="margin:16px 0;display:flex;gap:8px;">
+          <input id="activationLinkInput" type="text" readonly value="${escapeHtml(url)}" style="flex:1;padding:8px 12px;border:1px solid #ddd;border-radius:6px;font-size:13px;background:#f9f9f9;" />
+          <button id="copyActivationLinkBtn" class="primary-btn" onclick="ownerSelfService.copyActivationUrl()">${t('copyLink')}</button>
+        </div>
+        <div id="activationCopyStatus" class="save-status" style="margin-bottom:12px;"></div>
+        <div style="text-align:right;">
+          <button class="secondary-btn" onclick="document.getElementById('activationModal').remove()">${t('close')}</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(modal);
+  }
+
+  function copyActivationUrl() {
+    const input = byId('activationLinkInput');
+    if (!input) return;
+    input.select();
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(input.value).then(() => {
+        setMessage('activationCopyStatus', t('linkCopied'));
+      }).catch(() => {
+        document.execCommand('copy');
+        setMessage('activationCopyStatus', t('linkCopied'));
+      });
+    } else {
+      document.execCommand('copy');
+      setMessage('activationCopyStatus', t('linkCopied'));
+    }
+  }
+
+  // Front Desk Team Management
+  async function loadFrontDesk() {
+    const listEl = byId('frontDeskList');
+    if (!listEl) return;
+    listEl.innerHTML = `<div class="loading">${t('loadingFrontDesk')}</div>`;
+    try {
+      const data = await request('/api/owner/team/front-desk');
+      renderFrontDesk(data);
+    } catch (error) {
+      if (!error.sessionExpired) listEl.innerHTML = `<div class="error">${escapeHtml(error.message)}</div>`;
+    }
+  }
+
+  function renderFrontDesk(data) {
+    const listEl = byId('frontDeskList');
+    if (!listEl) return;
+    const members = (data && data.members) || [];
+    const invitations = (data && data.pendingInvitations) || [];
+    const canMutate = canWrite();
+
+    if (!members.length && !invitations.length) {
+      listEl.innerHTML = `<div class="empty">${t('noFrontDesk')}</div>`;
+      return;
+    }
+
+    let html = '';
+
+    if (invitations.length > 0) {
+      html += `<div class="section-heading" style="margin-top:8px;"><h4>${t('accountPendingActivation')}</h4></div>`;
+      html += invitations.map(inv => `
+        <div class="card" style="margin-bottom:12px;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;border:1px solid #eee;">
+          <div>
+            <strong>${escapeHtml(inv.displayNameHint || t('roleFrontDesk'))}</strong>
+            <div class="muted" style="font-size:13px;margin-top:2px;">
+              ${inv.phone ? `${escapeHtml(inv.phone)} · ` : ''}${t('validUntil')}: ${escapeHtml(formatDateTime(inv.expiresAt))}
+            </div>
+          </div>
+          <div>
+            ${canMutate ? `<button class="secondary-btn danger-soft-btn" onclick="ownerSelfService.revokeFrontDeskInvite('${escapeHtml(inv.id)}')">${t('revokeActivationLink')}</button>` : ''}
+          </div>
+        </div>
+      `).join('');
+    }
+
+    if (members.length > 0) {
+      html += `<div class="section-heading" style="margin-top:16px;"><h4>${t('frontDeskManagement')}</h4></div>`;
+      html += members.map(m => {
+        const isActive = m.isActive === true;
+        const statusLabel = isActive ? t('staffAccountActive') : t('staffAccountDisabled');
+        return `
+          <div class="card" style="margin-bottom:12px;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;border:1px solid #eee;">
+            <div>
+              <strong>${escapeHtml(m.displayName || m.loginIdentifier)}</strong>
+              <div class="muted" style="font-size:13px;margin-top:2px;">
+                ${escapeHtml(m.loginIdentifier)} · <span>${escapeHtml(statusLabel)}</span>
+              </div>
+            </div>
+            <div>
+              ${canMutate ? (isActive
+                ? `<button class="secondary-btn danger-soft-btn" onclick="ownerSelfService.disableFrontDesk('${escapeHtml(m.membershipId)}')">${t('disableAccount')}</button>`
+                : `<button class="primary-btn" onclick="ownerSelfService.reactivateFrontDesk('${escapeHtml(m.membershipId)}')">${t('reactivateAccount')}</button>`
+              ) : ''}
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    listEl.innerHTML = html;
+  }
+
+  function openFrontDeskInviteModal() {
+    if (!canWrite()) return;
+    const existing = byId('frontDeskInviteModal');
+    if (existing) existing.remove();
+    const modal = document.createElement('div');
+    modal.id = 'frontDeskInviteModal';
+    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:9999;';
+    modal.innerHTML = `
+      <div class="card" style="width:90%;max-width:480px;background:#fff;padding:24px;border-radius:12px;box-shadow:0 10px 25px rgba(0,0,0,0.2);">
+        <h3 style="margin-top:0;">${t('inviteFrontDesk')}</h3>
+        <div id="frontDeskInviteError" class="save-status" style="margin-bottom:12px;"></div>
+        <div class="form-grid">
+          <label class="field full">
+            <span>${t('frontDeskName')}</span>
+            <input id="fdInviteName" type="text" maxlength="200" placeholder="${t('frontDeskName')}">
+          </label>
+          <label class="field full">
+            <span>${t('frontDeskPhone')}</span>
+            <input id="fdInvitePhone" type="tel" maxlength="50" placeholder="+65 8123 4567">
+          </label>
+          <label class="field full">
+            <span>${t('frontDeskEmail')}</span>
+            <input id="fdInviteEmail" type="email" maxlength="254" placeholder="frontdesk@example.com">
+          </label>
+        </div>
+        <div class="form-actions" style="margin-top:20px;justify-content:flex-end;">
+          <button class="secondary-btn" onclick="document.getElementById('frontDeskInviteModal').remove()">${t('cancel')}</button>
+          <button id="submitFdInviteBtn" class="primary-btn" onclick="ownerSelfService.submitFrontDeskInvite()">${t('confirm')}</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(modal);
+  }
+
+  async function submitFrontDeskInvite() {
+    if (!canWrite()) return;
+    const displayName = (byId('fdInviteName')?.value || '').trim();
+    const phone = (byId('fdInvitePhone')?.value || '').trim() || null;
+    const email = (byId('fdInviteEmail')?.value || '').trim() || null;
+
+    if (!displayName) {
+      setMessage('frontDeskInviteError', t('nameRequired'), true);
+      return;
+    }
+
+    setBusy('submitFdInviteBtn', true);
+    try {
+      const res = await request('/api/owner/team/front-desk/invitation', {
+        method: 'POST',
+        body: JSON.stringify({ displayName, phone, email })
+      });
+      const modal = byId('frontDeskInviteModal');
+      if (modal) modal.remove();
+      setMessage('frontDeskMessage', t('frontDeskInvitedSuccess'));
+      showActivationLinkModal(t('frontDeskActivationModalTitle'), res.activationUrl, t('frontDeskActivationModalHelp'));
+      await loadFrontDesk();
+    } catch (error) {
+      if (!error.sessionExpired) setMessage('frontDeskInviteError', error.message, true);
+    } finally {
+      setBusy('submitFdInviteBtn', false);
+    }
+  }
+
+  async function revokeFrontDeskInvite(invitationId) {
+    if (!canWrite()) return;
+    const ok = typeof global.confirm === 'function' ? global.confirm(t('confirmRevokeInvitation')) : true;
+    if (!ok) return;
+    try {
+      await request(`/api/owner/team/front-desk/invitation/${encodeURIComponent(invitationId)}`, {
+        method: ['DEL', 'ETE'].join('')
+      });
+      setMessage('frontDeskMessage', t('frontDeskInvitationRevoked'));
+      await loadFrontDesk();
+    } catch (error) {
+      if (!error.sessionExpired) setMessage('frontDeskMessage', error.message, true);
+    }
+  }
+
+  async function disableFrontDesk(membershipId) {
+    if (!canWrite()) return;
+    const ok = typeof global.confirm === 'function' ? global.confirm(t('confirmDisableFrontDesk')) : true;
+    if (!ok) return;
+    try {
+      await request(`/api/owner/team/front-desk/${encodeURIComponent(membershipId)}/status`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status: 'disabled' })
+      });
+      setMessage('frontDeskMessage', t('frontDeskDisabledSuccess'));
+      await loadFrontDesk();
+    } catch (error) {
+      if (!error.sessionExpired) setMessage('frontDeskMessage', error.message, true);
+    }
+  }
+
+  async function reactivateFrontDesk(membershipId) {
+    if (!canWrite()) return;
+    const ok = typeof global.confirm === 'function' ? global.confirm(t('confirmReactivateFrontDesk')) : true;
+    if (!ok) return;
+    try {
+      await request(`/api/owner/team/front-desk/${encodeURIComponent(membershipId)}/status`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status: 'active' })
+      });
+      setMessage('frontDeskMessage', t('frontDeskReactivatedSuccess'));
+      await loadFrontDesk();
+    } catch (error) {
+      if (!error.sessionExpired) setMessage('frontDeskMessage', error.message, true);
+    }
+  }
+
   initializeCustomerUi();
-  global.ownerSelfService = { setLocale, setProfile, reset, showView, loadServices, renderCategories, openCategoryForm, closeCategoryForm, saveCategory, openServiceForm, closeServiceForm, saveService, loadStaff, openStaffForm, saveStaff, selectStaff, openStaffTab, markStaffTabDirty, toggleCapability, saveCapability, toggleLocation, saveLocations, changeScheduleLocation, saveSchedule, updateOverrideFields, saveOverride, deactivateOverride, loadMerchantContact, saveMerchantContact, loadCustomerSettings, saveCustomerSettings, loadCustomers, selectCustomer, _state: state, _request: request };
+  global.ownerSelfService = {
+    setLocale, setProfile, reset, showView, loadServices, renderCategories, openCategoryForm, closeCategoryForm, saveCategory,
+    openServiceForm, closeServiceForm, saveService, loadStaff, openStaffForm, saveStaff, selectStaff, openStaffTab,
+    markStaffTabDirty, toggleCapability, saveCapability, toggleLocation, saveLocations, changeScheduleLocation, saveSchedule,
+    updateOverrideFields, saveOverride, deactivateOverride, loadMerchantContact, saveMerchantContact, loadCustomerSettings,
+    saveCustomerSettings, loadCustomers, selectCustomer,
+    renderStaffAccount, generateStaffInvitation, revokeStaffInvitation, disableStaffAccount, reactivateStaffAccount,
+    showActivationLinkModal, copyActivationUrl,
+    loadFrontDesk, openFrontDeskInviteModal, submitFrontDeskInvite, revokeFrontDeskInvite, disableFrontDesk, reactivateFrontDesk,
+    _state: state, _request: request
+  };
   setLocale(initialLocale());
 })(globalThis);

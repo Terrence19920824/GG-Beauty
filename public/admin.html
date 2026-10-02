@@ -732,6 +732,7 @@
   <nav class="main-nav" aria-label="老板后台导航">
     <button id="nav-calendar" class="nav-btn active" data-i18n="calendar" onclick="ownerSelfService.showView('calendar')">日历</button>
     <button id="nav-staff" class="nav-btn" data-i18n="staff" onclick="ownerSelfService.showView('staff')">员工</button>
+    <button id="nav-front-desk" class="nav-btn" data-i18n="frontDeskManagement" onclick="ownerSelfService.showView('front-desk')">前台管理</button>
     <button id="nav-services" class="nav-btn" data-i18n="services" onclick="ownerSelfService.showView('services')">服务</button>
     <button id="nav-contact" class="nav-btn" data-i18n="merchantContactSettings" onclick="ownerSelfService.showView('contact')">店铺联系方式</button>
     <button id="nav-customer-settings" class="nav-btn" data-i18n="customerModuleSettings" onclick="ownerSelfService.showView('customer-settings')">会员与资产</button>
@@ -919,6 +920,20 @@
         <div class="form-actions"><button id="customerPrevButton" type="button" class="secondary-btn" data-i18n="previousPage">上一页</button><button id="customerNextButton" type="button" class="secondary-btn" data-i18n="nextPage">下一页</button></div>
       </div>
       <div class="card panel" id="customerProfilePanel"><div class="empty" data-i18n="selectCustomer">请选择一位顾客查看档案</div></div>
+    </div>
+  </section>
+
+  <section id="frontDeskView" class="view" hidden>
+    <div class="toolbar">
+      <div>
+        <h2 data-i18n="frontDeskManagement">前台管理</h2>
+        <div class="muted" data-i18n="frontDeskHelp">管理前台账号与激活邀请</div>
+      </div>
+      <button id="addFrontDeskButton" class="primary-btn" data-i18n="inviteFrontDesk" onclick="ownerSelfService.openFrontDeskInviteModal()">邀请前台</button>
+    </div>
+    <div class="card panel">
+      <div id="frontDeskMessage" class="save-status" aria-live="polite"></div>
+      <div id="frontDeskList" class="loading" data-i18n="loadingFrontDesk">正在读取前台列表...</div>
     </div>
   </section>
 

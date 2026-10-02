@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="referrer" content="no-referrer">
+  <title id="page-title">前台账号激活 | GG-Beauty</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: Arial, "PingFang SC", sans-serif;
+      background: #f7f3f5;
+      color: #2d2429;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: linear-gradient(180deg, #fbf8fa 0%, #f4eef1 100%);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 24px 16px;
+    }
+    button, input { font: inherit; min-height: 44px; }
+    [hidden] { display: none !important; }
+    .card {
+      width: min(100%, 460px);
+      padding: clamp(24px, 5vw, 36px);
+      border: 1px solid #eadfe4;
+      border-radius: 20px;
+      background: #fff;
+      box-shadow: 0 18px 55px rgba(67, 42, 54, .10);
+    }
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 20px;
+    }
+    .brand { font-weight: 800; letter-spacing: .02em; color: #7c3f5d; }
+    .lang-switch {
+      display: flex;
+      gap: 4px;
+      padding: 3px;
+      border: 1px solid #dfd1d8;
+      border-radius: 10px;
+      background: #fff;
+    }
+    .lang-switch button {
+      min-height: 28px;
+      padding: 4px 10px;
+      border: 0;
+      border-radius: 6px;
+      font-size: 13px;
+      color: #604e57;
+      background: transparent;
+      cursor: pointer;
+    }
+    .lang-switch button[aria-pressed="true"] {
+      background: #7c3f5d;
+      color: #fff;
+      font-weight: 700;
+    }
+    .kicker {
+      margin: 0 0 6px;
+      color: #8c4968;
+      font-size: 13px;
+      font-weight: 800;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+    }
+    h1 {
+      margin: 0 0 8px;
+      font-size: 24px;
+      line-height: 1.25;
+    }
+    .intro {
+      margin: 0 0 20px;
+      color: #6f6067;
+      font-size: 15px;
+      line-height: 1.5;
+    }
+    .status {
+      padding: 20px;
+      border-radius: 12px;
+      background: #f8f3f5;
+      text-align: center;
+      margin: 16px 0;
+    }
+    .status.error { background: #fff1f2; color: #842b3b; }
+    .status.success { background: #edf8f2; color: #205c43; }
+    .status h2 { margin: 0 0 6px; font-size: 18px; }
+    .status p { margin: 0; font-size: 14px; line-height: 1.5; }
+    form { margin-top: 16px; }
+    .field { margin-bottom: 16px; }
+    label { display: block; margin-bottom: 6px; font-weight: 700; font-size: 14px; }
+    input {
+      width: 100%;
+      border: 1px solid #d8cbd1;
+      border-radius: 10px;
+      padding: 10px 12px;
+      background: #fff;
+      color: #2d2429;
+    }
+    input:focus, button:focus-visible {
+      outline: 3px solid rgba(140, 73, 104, .2);
+      outline-offset: 2px;
+      border-color: #8c4968;
+    }
+    .help {
+      display: block;
+      margin-top: 5px;
+      color: #74656c;
+      font-size: 12px;
+      line-height: 1.4;
+    }
+    .form-error {
+      min-height: 20px;
+      margin: 12px 0;
+      color: #a12d3c;
+      font-size: 14px;
+      line-height: 1.4;
+    }
+    .primary {
+      width: 100%;
+      margin-top: 10px;
+      border: 0;
+      border-radius: 11px;
+      padding: 12px 18px;
+      background: #7c3f5d;
+      color: #fff;
+      font-weight: 800;
+      cursor: pointer;
+    }
+    .primary:disabled { opacity: .65; cursor: wait; }
+    .link-btn {
+      display: inline-flex;
+      width: 100%;
+      min-height: 44px;
+      margin-top: 16px;
+      align-items: center;
+      justify-content: center;
+      border-radius: 10px;
+      background: #276749;
+      color: #fff;
+      font-weight: 800;
+      text-decoration: none;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="topbar">
+      <div class="brand">GG-Beauty</div>
+      <div class="lang-switch">
+        <button id="lang-zh" type="button" aria-pressed="true">中文</button>
+        <button id="lang-en" type="button" aria-pressed="false">EN</button>
+      </div>
+    </div>
+
+    <p class="kicker" id="txt-kicker">前台账号激活</p>
+    <h1 id="txt-title">加入前台团队</h1>
+    <p class="intro" id="txt-intro">验证通过后，请设置您的前台姓名与专属密码。</p>
+
+    <div id="status-box" class="status">
+      <h2 id="status-title">正在验证激活链接…</h2>
+      <p id="status-desc">请稍候</p>
+    </div>
+
+    <form id="activate-form" hidden novalidate>
+      <div class="field">
+        <label for="display-name" id="lbl-display-name">前台姓名 / 昵称</label>
+        <input id="display-name" name="displayName" maxlength="100" autocomplete="name" required>
+      </div>
+
+      <div class="field">
+        <label for="username" id="lbl-username">登录账号</label>
+        <input id="username" name="username" maxlength="50" autocomplete="username" required>
+        <small class="help" id="help-username">支持字母、数字、点、减号与下划线（3-50字符）</small>
+      </div>
+
+      <div class="field">
+        <label for="password" id="lbl-password">登录密码</label>
+        <input id="password" name="password" type="password" autocomplete="new-password" minlength="16" required>
+        <small class="help" id="help-password">密码长度至少16位字符，最多72字节</small>
+      </div>
+
+      <div class="field">
+        <label for="confirm-password" id="lbl-confirm">确认密码</label>
+        <input id="confirm-password" name="passwordConfirmation" type="password" autocomplete="new-password" required>
+      </div>
+
+      <div id="form-error" class="form-error" role="alert"></div>
+
+      <button id="submit-btn" type="submit" class="primary">确认激活前台账号</button>
+    </form>
+
+    <div id="success-box" class="status success" hidden>
+      <h2 id="success-title">前台账号激活成功！</h2>
+      <p id="success-desc">您的前台账号已开通，请前往前台管理系统登录。</p>
+      <a id="login-link" href="/admin.html" class="link-btn">前往前台系统</a>
+    </div>
+  </div>
+
+  <script>
+    const I18N = {
+      zh: {
+        pageTitle: '前台账号激活 | GG-Beauty',
+        kicker: '前台账号激活',
+        title: '加入前台团队',
+        intro: '验证通过后，请设置您的前台姓名与专属密码。',
+        checkingTitle: '正在验证激活链接…',
+        checkingDesc: '请稍候',
+        lblDisplayName: '前台姓名 / 昵称',
+        lblUsername: '登录账号',
+        helpUsername: '支持字母、数字、点、减号与下划线（3-50字符）',
+        lblPassword: '登录密码',
+        helpPassword: '密码长度至少16位字符，最多72字节',
+        lblConfirm: '确认密码',
+        btnSubmit: '确认激活前台账号',
+        btnSubmitting: '正在激活…',
+        successTitle: '前台账号激活成功！',
+        successDesc: '您的前台账号已开通，请前往前台管理系统登录。',
+        btnLogin: '前往前台系统',
+        welcome: shop => `欢迎加入 ${shop} 前台团队！`,
+        errInvalid: '激活链接无效或不完整。',
+        errExpired: '激活链接已过期，请联系老板重新生成。',
+        errRevoked: '激活链接已被作废，请联系老板获取新链接。',
+        errConsumed: '该激活链接已被使用。如已设置密码，请直接登录。',
+        errInactive: '店铺已被停用，无法激活。',
+        errPasswordMismatch: '两次输入的密码不一致。',
+        errPasswordTooShort: '密码长度不能少于16位字符。',
+        errPasswordTooLong: '密码长度不能超过72字节。',
+        errUsernameRequired: '请输入有效的登录账号（3-50字符）。',
+        errDisplayNameRequired: '请输入前台姓名或昵称。'
+      },
+      en: {
+        pageTitle: 'Front Desk Activation | GG-Beauty',
+        kicker: 'Front Desk Activation',
+        title: 'Join the Front Desk Team',
+        intro: 'Once verified, set your display name and password.',
+        checkingTitle: 'Validating activation link…',
+        checkingDesc: 'Please wait a moment',
+        lblDisplayName: 'Display Name / Nickname',
+        lblUsername: 'Login Username',
+        helpUsername: 'Letters, numbers, dots, hyphens, and underscores (3-50 characters)',
+        lblPassword: 'Password',
+        helpPassword: 'At least 16 characters, maximum 72 bytes',
+        lblConfirm: 'Confirm Password',
+        btnSubmit: 'Activate Front Desk Account',
+        btnSubmitting: 'Activating…',
+        successTitle: 'Front Desk Activated Successfully!',
+        successDesc: 'Your account has been created. Please proceed to the portal.',
+        btnLogin: 'Go to Front Desk Portal',
+        welcome: shop => `Welcome to the ${shop} front desk team!`,
+        errInvalid: 'This activation link is invalid or incomplete.',
+        errExpired: 'This activation link has expired. Please contact your manager.',
+        errRevoked: 'This activation link has been revoked. Please ask for a new link.',
+        errConsumed: 'This activation link has already been used. Please log in directly.',
+        errInactive: 'This shop is currently inactive.',
+        errPasswordMismatch: 'Passwords do not match.',
+        errPasswordTooShort: 'Password must be at least 16 characters.',
+        errPasswordTooLong: 'Password must not exceed 72 bytes.',
+        errUsernameRequired: 'Please enter a valid username (3-50 characters).',
+        errDisplayNameRequired: 'Please enter a display name.'
+      }
+    };
+
+    let currentLang = 'zh';
+    let currentShopData = null;
+
+    const byId = id => document.getElementById(id);
+    const token = new URLSearchParams(window.location.search).get('token') || '';
+
+    function setLanguage(lang) {
+      currentLang = lang;
+      byId('lang-zh').setAttribute('aria-pressed', lang === 'zh');
+      byId('lang-en').setAttribute('aria-pressed', lang === 'en');
+      const t = I18N[lang];
+
+      byId('page-title').textContent = t.pageTitle;
+      byId('txt-kicker').textContent = t.kicker;
+      byId('txt-title').textContent = t.title;
+      byId('lbl-display-name').textContent = t.lblDisplayName;
+      byId('lbl-username').textContent = t.lblUsername;
+      byId('help-username').textContent = t.helpUsername;
+      byId('lbl-password').textContent = t.lblPassword;
+      byId('help-password').textContent = t.helpPassword;
+      byId('lbl-confirm').textContent = t.lblConfirm;
+      byId('submit-btn').textContent = t.btnSubmit;
+      byId('success-title').textContent = t.successTitle;
+      byId('success-desc').textContent = t.successDesc;
+      byId('login-link').textContent = t.btnLogin;
+
+      if (currentShopData) {
+        byId('txt-intro').textContent = t.welcome(currentShopData.shopName);
+      } else {
+        byId('txt-intro').textContent = t.intro;
+      }
+    }
+
+    byId('lang-zh').addEventListener('click', () => setLanguage('zh'));
+    byId('lang-en').addEventListener('click', () => setLanguage('en'));
+
+    async function init() {
+      const t = I18N[currentLang];
+      const statusBox = byId('status-box');
+      const form = byId('activate-form');
+
+      if (!token) {
+        statusBox.className = 'status error';
+        byId('status-title').textContent = t.errInvalid;
+        byId('status-desc').textContent = '';
+        return;
+      }
+
+      try {
+        const res = await fetch('/api/front-desk-activation/validate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token })
+        });
+        const json = await res.json();
+
+        if (!json.success || !json.data) {
+          statusBox.className = 'status error';
+          if (json.state === 'EXPIRED') byId('status-title').textContent = t.errExpired;
+          else if (json.state === 'REVOKED') byId('status-title').textContent = t.errRevoked;
+          else if (json.state === 'ALREADY_CONSUMED') byId('status-title').textContent = t.errConsumed;
+          else if (json.state === 'INACTIVE') byId('status-title').textContent = t.errInactive;
+          else byId('status-title').textContent = t.errInvalid;
+          byId('status-desc').textContent = '';
+          return;
+        }
+
+        currentShopData = json.data;
+        statusBox.hidden = true;
+        form.hidden = false;
+        byId('txt-intro').textContent = t.welcome(json.data.shopName);
+
+        if (json.data.displayNameHint) {
+          byId('display-name').value = json.data.displayNameHint;
+        }
+      } catch (err) {
+        statusBox.className = 'status error';
+        byId('status-title').textContent = t.errInvalid;
+        byId('status-desc').textContent = '';
+      }
+    }
+
+    byId('activate-form').addEventListener('submit', async event => {
+      event.preventDefault();
+      const t = I18N[currentLang];
+      const errorEl = byId('form-error');
+      const submitBtn = byId('submit-btn');
+      errorEl.textContent = '';
+
+      const displayName = byId('display-name').value.trim();
+      const username = byId('username').value.trim();
+      const password = byId('password').value;
+      const passwordConfirmation = byId('confirm-password').value;
+
+      if (!displayName) {
+        errorEl.textContent = t.errDisplayNameRequired;
+        return;
+      }
+      if (!username || username.length < 3 || username.length > 50) {
+        errorEl.textContent = t.errUsernameRequired;
+        return;
+      }
+      if (password.length < 16) {
+        errorEl.textContent = t.errPasswordTooShort;
+        return;
+      }
+      const byteLen = new TextEncoder().encode(password).length;
+      if (byteLen > 72) {
+        errorEl.textContent = t.errPasswordTooLong;
+        return;
+      }
+      if (password !== passwordConfirmation) {
+        errorEl.textContent = t.errPasswordMismatch;
+        return;
+      }
+
+      submitBtn.disabled = true;
+      submitBtn.textContent = t.btnSubmitting;
+
+      try {
+        const res = await fetch('/api/front-desk-activation/consume', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            token,
+            displayName,
+            username,
+            password,
+            passwordConfirmation
+          })
+        });
+        const json = await res.json();
+
+        if (!res.ok || !json.success) {
+          errorEl.textContent = json.message || t.errInvalid;
+          submitBtn.disabled = false;
+          submitBtn.textContent = t.btnSubmit;
+          return;
+        }
+
+        byId('activate-form').hidden = true;
+        byId('success-box').hidden = false;
+      } catch (err) {
+        errorEl.textContent = t.errInvalid;
+        submitBtn.disabled = false;
+        submitBtn.textContent = t.btnSubmit;
+      }
+    });
+
+    init();
+  </script>
+</body>
+</html>
