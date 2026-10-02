@@ -230,15 +230,27 @@ test('Migration numbering continuity verification', () => {
   const numbers = files.map(f => parseInt(f.slice(0, 3), 10));
   const maxNumber = Math.max(...numbers);
 
-  assert.equal(maxNumber, 103, 'Highest migration number must now be 103');
+  assert.equal(maxNumber, 106, 'Highest migration number must now be 106');
+
+  // Verify strict continuity from 000 to 106 without any gaps or omissions
+  const uniqueNumbers = new Set(numbers);
+  assert.equal(uniqueNumbers.size, 107, 'Must have exactly 107 migration versions from 000 to 106 without gaps');
+  for (let i = 0; i <= 106; i += 1) {
+    assert.ok(uniqueNumbers.has(i), `Migration number ${String(i).padStart(3, '0')} must exist without gaps`);
+  }
+
   assert.ok(files.includes('098_merchant_onboarding_invitation_preflight_readonly.sql'));
   assert.ok(files.includes('099_merchant_onboarding_invitation_schema.sql'));
   assert.ok(files.includes('100_merchant_onboarding_invitation_verification_readonly.sql'));
   assert.ok(files.includes('101_merchant_business_defaults_preflight_readonly.sql'));
   assert.ok(files.includes('102_merchant_business_defaults_schema.sql'));
   assert.ok(files.includes('103_merchant_business_defaults_verification_readonly.sql'));
+  assert.ok(files.includes('104_staff_front_desk_activation_preflight_readonly.sql'));
+  assert.ok(files.includes('105_staff_front_desk_activation_schema.sql'));
+  assert.ok(files.includes('106_staff_front_desk_activation_verification_readonly.sql'));
 
   const rollbackFiles = fs.readdirSync(path.join(migrationsDir, 'rollback'));
   assert.ok(rollbackFiles.includes('099_merchant_onboarding_invitation_rollback.sql'));
   assert.ok(rollbackFiles.includes('102_merchant_business_defaults_rollback.sql'));
+  assert.ok(rollbackFiles.includes('105_staff_front_desk_activation_rollback.sql'));
 });

@@ -573,29 +573,242 @@ test('8. Reactivate staff account sets status active without resurrecting old se
   assert.equal(state.staffSessions[0].revoked_at, revokedTime);
 });
 
-test('9. Audit trail safety: sanitizeAuditMetadata strips passwords, tokens, cookies, secrets', () => {
-  const dirty = {
-    staff_id: 'staff-1',
-    password: 'supersecretpassword',
-    PasswordConfirmation: 'supersecretpassword',
-    token: 'raw-token-12345',
-    token_hash: 'hash-abc',
-    session_token: 'sess-xyz',
-    secret: 'platform_key',
-    auth_token: 'auth-val',
-    safe_field: 'safe_value'
+test('9. Audit trail safety: comprehensive adversarial secret sanitization', () => {
+  // 1. Top-level object
+  const topLevel = {
+    invitation_id: 'inv-123',
+    staff_id: 'staff-456',
+    password: 'plain_password',
+    token: 'raw_token',
+    secret: 'render_secret'
   };
+  const cleanTopLevel = sanitizeAuditMetadata(topLevel);
+  assert.equal(cleanTopLevel.invitation_id, 'inv-123');
+  assert.equal(cleanTopLevel.staff_id, 'staff-456');
+  assert.equal(cleanTopLevel.password, undefined);
+  assert.equal(cleanTopLevel.token, undefined);
+  assert.equal(cleanTopLevel.secret, undefined);
 
-  const clean = sanitizeAuditMetadata(dirty);
-  assert.equal(clean.staff_id, 'staff-1');
-  assert.equal(clean.safe_field, 'safe_value');
-  assert.equal(clean.password, undefined);
-  assert.equal(clean.PasswordConfirmation, undefined);
-  assert.equal(clean.token, undefined);
-  assert.equal(clean.token_hash, undefined);
-  assert.equal(clean.session_token, undefined);
-  assert.equal(clean.secret, undefined);
-  assert.equal(clean.auth_token, undefined);
+  // 2. Nested object
+  const nestedObj = {
+    event: 'account_update',
+    reason: 'owner_request',
+    details: {
+      password: 'nested_secret_password',
+      account_id: 'acc-789',
+      sub_details: {
+        password_hash: 'nested_hash_value',
+        from_status: 'pending',
+        to_status: 'active'
+      }
+    }
+  };
+  const cleanNestedObj = sanitizeAuditMetadata(nestedObj);
+  assert.equal(cleanNestedObj.event, 'account_update');
+  assert.equal(cleanNestedObj.reason, 'owner_request');
+  assert.equal(cleanNestedObj.details.account_id, 'acc-789');
+  assert.equal(cleanNestedObj.details.password, undefined);
+  assert.equal(cleanNestedObj.details.sub_details.from_status, 'pending');
+  assert.equal(cleanNestedObj.details.sub_details.to_status, 'active');
+  assert.equal(cleanNestedObj.details.sub_details.password_hash, undefined);
+
+  // 3. Nested array
+  const nestedArray = {
+    membership_id: 'mem-999',
+    matrix: [
+      [
+        { token: 'secret_token_1', action: 'keep_me_1' },
+        { session_token: 'sess_1', action: 'keep_me_2' }
+      ]
+    ]
+  };
+  const cleanNestedArray = sanitizeAuditMetadata(nestedArray);
+  assert.equal(cleanNestedArray.membership_id, 'mem-999');
+  assert.equal(cleanNestedArray.matrix[0][0].action, 'keep_me_1');
+  assert.equal(cleanNestedArray.matrix[0][0].token, undefined);
+  assert.equal(cleanNestedArray.matrix[0][1].action, 'keep_me_2');
+  assert.equal(cleanNestedArray.matrix[0][1].session_token, undefined);
+
+  // 4. Object inside array
+  const objInArray = {
+    event_type: 'staff_audit',
+    items: [
+      { raw_token: 'secret_raw', staff_id: 'staff-11' },
+      { cookie: 'cookie_val', account_id: 'acc-22' }
+    ]
+  };
+  const cleanObjInArray = sanitizeAuditMetadata(objInArray);
+  assert.equal(cleanObjInArray.event_type, 'staff_audit');
+  assert.equal(cleanObjInArray.items[0].staff_id, 'staff-11');
+  assert.equal(cleanObjInArray.items[0].raw_token, undefined);
+  assert.equal(cleanObjInArray.items[1].account_id, 'acc-22');
+  assert.equal(cleanObjInArray.items[1].cookie, undefined);
+
+  // 5. Mixed-case secret keys
+  const mixedCase = {
+    pAsSwOrD: 'secret1',
+    ToKeN: 'secret2',
+    DaTaBaSe_UrL: 'postgres://user:pass@host/db',
+    ApI_kEy: 'key_123',
+    SuPaBaSe_KeY: 'sb_123',
+    AuThOrIzAtIoN: 'Bearer xxx',
+    safe_field: 'keep'
+  };
+  const cleanMixedCase = sanitizeAuditMetadata(mixedCase);
+  assert.equal(cleanMixedCase.safe_field, 'keep');
+  assert.equal(cleanMixedCase.pAsSwOrD, undefined);
+  assert.equal(cleanMixedCase.ToKeN, undefined);
+  assert.equal(cleanMixedCase.DaTaBaSe_UrL, undefined);
+  assert.equal(cleanMixedCase.ApI_kEy, undefined);
+  assert.equal(cleanMixedCase.SuPaBaSe_KeY, undefined);
+  assert.equal(cleanMixedCase.AuThOrIzAtIoN, undefined);
+
+  // 6. Snake_case secret keys
+  const snakeCase = {
+    raw_token: 'token_val',
+    token_hash: 'hash_val',
+    session_token: 'session_val',
+    session_cookie: 'cookie_val',
+    db_url: 'postgres://...',
+    api_key: 'api_val',
+    supabase_key: 'sb_val',
+    supabase_service_role_key: 'sb_role',
+    render_secret: 'rndr_secret',
+    password_hash: 'pwd_hash',
+    invitation_id: 'inv-safe'
+  };
+  const cleanSnakeCase = sanitizeAuditMetadata(snakeCase);
+  assert.equal(cleanSnakeCase.invitation_id, 'inv-safe');
+  assert.equal(cleanSnakeCase.raw_token, undefined);
+  assert.equal(cleanSnakeCase.token_hash, undefined);
+  assert.equal(cleanSnakeCase.session_token, undefined);
+  assert.equal(cleanSnakeCase.session_cookie, undefined);
+  assert.equal(cleanSnakeCase.db_url, undefined);
+  assert.equal(cleanSnakeCase.api_key, undefined);
+  assert.equal(cleanSnakeCase.supabase_key, undefined);
+  assert.equal(cleanSnakeCase.supabase_service_role_key, undefined);
+  assert.equal(cleanSnakeCase.render_secret, undefined);
+  assert.equal(cleanSnakeCase.password_hash, undefined);
+
+  // 7. CamelCase secret keys
+  const camelCase = {
+    rawToken: 'token_val',
+    tokenHash: 'hash_val',
+    sessionToken: 'session_val',
+    sessionCookie: 'cookie_val',
+    dbUrl: 'db_val',
+    databaseUrl: 'db_val',
+    apiKey: 'api_val',
+    supabaseKey: 'sb_val',
+    renderSecret: 'rndr_val',
+    passwordHash: 'pwd_hash',
+    membership_id: 'mem-safe'
+  };
+  const cleanCamelCase = sanitizeAuditMetadata(camelCase);
+  assert.equal(cleanCamelCase.membership_id, 'mem-safe');
+  assert.equal(cleanCamelCase.rawToken, undefined);
+  assert.equal(cleanCamelCase.tokenHash, undefined);
+  assert.equal(cleanCamelCase.sessionToken, undefined);
+  assert.equal(cleanCamelCase.sessionCookie, undefined);
+  assert.equal(cleanCamelCase.dbUrl, undefined);
+  assert.equal(cleanCamelCase.databaseUrl, undefined);
+  assert.equal(cleanCamelCase.apiKey, undefined);
+  assert.equal(cleanCamelCase.supabaseKey, undefined);
+  assert.equal(cleanCamelCase.renderSecret, undefined);
+  assert.equal(cleanCamelCase.passwordHash, undefined);
+
+  // 8. DATABASE_URL variants
+  const dbUrlVariants = {
+    DATABASE_URL: 'postgres://...',
+    databaseUrl: 'postgres://...',
+    db_url: 'postgres://...',
+    dbUrl: 'postgres://...',
+    reason: 'safe_operation'
+  };
+  const cleanDbUrl = sanitizeAuditMetadata(dbUrlVariants);
+  assert.equal(cleanDbUrl.reason, 'safe_operation');
+  assert.equal(cleanDbUrl.DATABASE_URL, undefined);
+  assert.equal(cleanDbUrl.databaseUrl, undefined);
+  assert.equal(cleanDbUrl.db_url, undefined);
+  assert.equal(cleanDbUrl.dbUrl, undefined);
+
+  // 9. api_key / apiKey variants
+  const apiKeyVariants = {
+    api_key: 'secret_api',
+    apiKey: 'secret_api',
+    API_KEY: 'secret_api',
+    action: 'validated'
+  };
+  const cleanApiKey = sanitizeAuditMetadata(apiKeyVariants);
+  assert.equal(cleanApiKey.action, 'validated');
+  assert.equal(cleanApiKey.api_key, undefined);
+  assert.equal(cleanApiKey.apiKey, undefined);
+  assert.equal(cleanApiKey.API_KEY, undefined);
+
+  // 10. supabase_* key variants
+  const supabaseVariants = {
+    supabase_key: 'sb_anon',
+    supabaseKey: 'sb_anon',
+    supabase_service_role_key: 'sb_service',
+    SUPABASE_ANON_KEY: 'sb_anon_2',
+    state_transition: 'pending_to_active'
+  };
+  const cleanSupabase = sanitizeAuditMetadata(supabaseVariants);
+  assert.equal(cleanSupabase.state_transition, 'pending_to_active');
+  assert.equal(cleanSupabase.supabase_key, undefined);
+  assert.equal(cleanSupabase.supabaseKey, undefined);
+  assert.equal(cleanSupabase.supabase_service_role_key, undefined);
+  assert.equal(cleanSupabase.SUPABASE_ANON_KEY, undefined);
+
+  // 11. password/hash/token/session/cookie/authorization variants
+  const authVariants = {
+    password: 'p1',
+    password_hash: 'p2',
+    passwordHash: 'p3',
+    raw_token: 't1',
+    rawToken: 't2',
+    token_hash: 't3',
+    tokenHash: 't4',
+    session_token: 's1',
+    sessionToken: 's2',
+    session_cookie: 'c1',
+    cookie: 'c2',
+    authorization: 'Bearer tok',
+    authToken: 'tok_auth',
+    account_id: 'acc-safe',
+    status: 'active'
+  };
+  const cleanAuth = sanitizeAuditMetadata(authVariants);
+  assert.equal(cleanAuth.account_id, 'acc-safe');
+  assert.equal(cleanAuth.status, 'active');
+  assert.equal(cleanAuth.password, undefined);
+  assert.equal(cleanAuth.password_hash, undefined);
+  assert.equal(cleanAuth.passwordHash, undefined);
+  assert.equal(cleanAuth.raw_token, undefined);
+  assert.equal(cleanAuth.rawToken, undefined);
+  assert.equal(cleanAuth.token_hash, undefined);
+  assert.equal(cleanAuth.tokenHash, undefined);
+  assert.equal(cleanAuth.session_token, undefined);
+  assert.equal(cleanAuth.sessionToken, undefined);
+  assert.equal(cleanAuth.session_cookie, undefined);
+  assert.equal(cleanAuth.cookie, undefined);
+  assert.equal(cleanAuth.authorization, undefined);
+  assert.equal(cleanAuth.authToken, undefined);
+
+  // Verification of non-mutation of original metadata
+  const originalDirty = {
+    details: {
+      password: 'do_not_mutate',
+      staff_id: 's-original'
+    }
+  };
+  const snapshotBefore = JSON.stringify(originalDirty);
+  const resultClean = sanitizeAuditMetadata(originalDirty);
+  const snapshotAfter = JSON.stringify(originalDirty);
+  assert.equal(snapshotBefore, snapshotAfter, 'Original metadata object must never be mutated');
+  assert.equal(resultClean.details.password, undefined);
+  assert.equal(resultClean.details.staff_id, 's-original');
+  assert.equal(originalDirty.details.password, 'do_not_mutate');
 });
 
 // ==================================================

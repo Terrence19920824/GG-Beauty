@@ -15,7 +15,8 @@ const {
   validateFrontDeskInvitation,
   consumeFrontDeskInvitation,
   disableFrontDeskMembership,
-  reactivateFrontDeskMembership
+  reactivateFrontDeskMembership,
+  sanitizeAuditMetadata
 } = require('../lib/front-desk-activation');
 
 const ID = {
@@ -617,4 +618,47 @@ test('10. HTTP Owner Front Desk API: authenticated owner can list, invite, revok
     assert.equal(typeof bodyInv.data.rawToken, 'string');
     assert(bodyInv.data.activationUrl.includes('/front-desk-activate.html?token='));
   });
+});
+
+test('11. Front Desk audit trail safety: shared recursive secret sanitization', () => {
+  const dirty = {
+    invitation_id: 'inv-fd-1',
+    membership_id: 'mem-fd-1',
+    role: 'front_desk',
+    credentials: {
+      user_password: 'plain_password'
+    },
+    details: {
+      password: 'plain_password',
+      password_hash: 'hash_val',
+      DATABASE_URL: 'postgres://user:pass@host/db',
+      nested: {
+        api_key: 'sk_live_123',
+        supabase_service_role_key: 'sb_secret',
+        session_token: 'sess_abc',
+        safe_action: 'membership_linked'
+      }
+    },
+    items: [
+      { rawToken: 'token_val', status: 'pending' },
+      { cookie: 'sess_cookie', reason: 'valid_invite' }
+    ]
+  };
+
+  const clean = sanitizeAuditMetadata(dirty);
+  assert.equal(clean.invitation_id, 'inv-fd-1');
+  assert.equal(clean.membership_id, 'mem-fd-1');
+  assert.equal(clean.role, 'front_desk');
+  assert.equal(clean.credentials, undefined, 'credential container key must be stripped');
+  assert.equal(clean.details.password, undefined);
+  assert.equal(clean.details.password_hash, undefined);
+  assert.equal(clean.details.DATABASE_URL, undefined);
+  assert.equal(clean.details.nested.api_key, undefined);
+  assert.equal(clean.details.nested.supabase_service_role_key, undefined);
+  assert.equal(clean.details.nested.session_token, undefined);
+  assert.equal(clean.details.nested.safe_action, 'membership_linked');
+  assert.equal(clean.items[0].rawToken, undefined);
+  assert.equal(clean.items[0].status, 'pending');
+  assert.equal(clean.items[1].cookie, undefined);
+  assert.equal(clean.items[1].reason, 'valid_invite');
 });
