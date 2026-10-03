@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="referrer" content="no-referrer">
+  <title data-i18n="platformPageTitle">Merchant Invitations | GG-Beauty Platform</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      background: #f7f4f6;
+      color: #241c21;
+    }
+
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; background: linear-gradient(180deg, #faf7f8 0%, #f2ebef 100%); }
+    button, input, select { font: inherit; }
+    button, input, select { min-height: 44px; }
+    [hidden] { display: none !important; }
+
+    .page { width: min(100% - 32px, 860px); margin: 0 auto; padding: 24px 0 64px; }
+    .topbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 24px; }
+    .brand-group { display: flex; align-items: baseline; gap: 10px; }
+    .brand { font-size: 19px; font-weight: 800; letter-spacing: .02em; color: #733352; }
+    .brand-sub { font-size: 13px; color: #7e6b75; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; }
+
+    .top-actions { display: flex; align-items: center; gap: 10px; }
+    .language-switch { display: flex; gap: 4px; padding: 3px; border: 1px solid #d9cbce; border-radius: 10px; background: #fff; }
+    .language-switch button { min-height: 36px; min-width: 56px; border: 0; border-radius: 7px; padding: 6px 10px; color: #5a4b52; background: transparent; cursor: pointer; font-size: 13px; font-weight: 600; }
+    .language-switch button[aria-pressed="true"] { background: #733352; color: #fff; }
+    .btn-logout { border: 1px solid #d9cbce; border-radius: 10px; background: #fff; color: #742a2a; padding: 6px 14px; min-height: 38px; cursor: pointer; font-size: 13px; font-weight: 600; }
+    .btn-logout:hover { background: #fff1f2; }
+
+    .card { padding: clamp(20px, 4vw, 36px); border: 1px solid #e7dce0; border-radius: 18px; background: #fff; box-shadow: 0 12px 40px rgba(50, 24, 38, .07); }
+    h1 { margin: 0; font-size: clamp(24px, 4.5vw, 32px); line-height: 1.2; color: #241c21; }
+    .subtitle { margin: 8px 0 0; color: #72626b; font-size: 14px; line-height: 1.5; }
+
+    /* Form styling */
+    .field { margin-top: 16px; }
+    .field.full { grid-column: 1 / -1; }
+    .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+    label { display: block; margin-bottom: 6px; font-weight: 700; font-size: 14px; color: #35262e; }
+    input { width: 100%; border: 1px solid #d4c5ca; border-radius: 10px; padding: 10px 12px; background: #fff; color: #241c21; font-size: 15px; }
+    input:focus, button:focus-visible { outline: 3px solid rgba(115, 51, 82, .25); outline-offset: 2px; border-color: #733352; }
+    .help { display: block; margin-top: 5px; color: #75666f; font-size: 12px; line-height: 1.4; }
+
+    /* Primary and secondary buttons */
+    .btn-primary { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; border: 0; border-radius: 10px; padding: 10px 20px; background: #733352; color: #fff; font-weight: 700; cursor: pointer; font-size: 15px; transition: background .15s; }
+    .btn-primary:hover { background: #5f2942; }
+    .btn-primary:disabled { opacity: .6; cursor: wait; }
+    .btn-secondary { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; border: 1px solid #d4c5ca; border-radius: 10px; padding: 10px 18px; background: #fff; color: #43333b; font-weight: 600; cursor: pointer; font-size: 14px; }
+    .btn-secondary:hover { background: #f9f5f7; }
+    .btn-danger { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; border: 1px solid #fecaca; border-radius: 10px; padding: 8px 16px; background: #fff; color: #b91c1c; font-weight: 600; cursor: pointer; font-size: 13px; }
+    .btn-danger:hover { background: #fee2e2; }
+    .btn-danger:disabled { opacity: .5; cursor: not-allowed; }
+
+    /* Login section */
+    .login-container { max-width: 440px; margin: 40px auto 0; }
+    .form-message { min-height: 20px; margin: 12px 0 0; font-size: 14px; font-weight: 600; }
+    .form-message.error { color: #b91c1c; }
+    .form-message.success { color: #15803d; }
+
+    /* Section Header and Actions */
+    .section-bar { display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; margin-bottom: 20px; }
+    .action-panel { margin-bottom: 24px; padding: 22px; border: 1px solid #eadfe3; border-radius: 14px; background: #faf6f8; }
+
+    /* Success URL Banner */
+    .url-banner { margin-bottom: 24px; padding: 22px; border: 2px solid #86efac; border-radius: 14px; background: #f0fdf4; color: #166534; }
+    .url-banner h2 { margin: 0 0 6px; font-size: 18px; color: #14532d; font-weight: 800; }
+    .url-banner p { margin: 0 0 14px; font-size: 13px; color: #166534; line-height: 1.5; }
+    .url-box { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; }
+    .url-display { word-break: break-all; padding: 10px 12px; background: #fff; border: 1px solid #bbf7d0; border-radius: 8px; font-family: monospace; font-size: 13px; color: #1e293b; user-select: all; }
+
+    /* Filter tabs */
+    .filter-tabs { display: flex; gap: 6px; margin-bottom: 18px; flex-wrap: wrap; }
+    .tab-btn { min-height: 40px; padding: 8px 14px; border: 1px solid #e1d4d8; border-radius: 9px; background: #fff; color: #5c4d54; font-size: 13px; font-weight: 600; cursor: pointer; }
+    .tab-btn[aria-selected="true"] { background: #733352; color: #fff; border-color: #733352; }
+
+    /* Invitations list */
+    .invitation-item { padding: 18px 20px; border: 1px solid #ebdfe3; border-radius: 12px; background: #fff; margin-bottom: 12px; transition: box-shadow .15s; }
+    .invitation-item:hover { box-shadow: 0 4px 18px rgba(60, 30, 45, .05); }
+    .item-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; flex-wrap: wrap; }
+    .item-id { font-family: monospace; font-size: 13px; font-weight: 700; color: #5b4751; word-break: break-all; }
+    .badge { display: inline-flex; align-items: center; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; }
+    .badge-pending { background: #fef3c7; color: #92400e; border: 1px solid #fde68a; }
+    .badge-consumed { background: #dcfce7; color: #166534; border: 1px solid #bbf7d0; }
+    .badge-expired { background: #f3f4f6; color: #6b7280; border: 1px solid #e5e7eb; }
+    .badge-revoked { background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; }
+
+    .item-details { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; font-size: 13px; color: #5a4b52; margin-bottom: 12px; }
+    .detail-label { color: #8c7a83; font-weight: 600; font-size: 11px; text-transform: uppercase; display: block; margin-bottom: 2px; }
+    .detail-val { font-weight: 600; color: #2e2128; }
+
+    .item-actions { display: flex; justify-content: flex-end; gap: 8px; border-top: 1px solid #f4eef1; padding-top: 12px; }
+
+    .empty-state { text-align: center; padding: 48px 16px; color: #7e6c75; font-size: 15px; }
+
+    @media (max-width: 640px) {
+      .grid { grid-template-columns: 1fr; }
+      .url-box { grid-template-columns: 1fr; }
+      .section-bar { flex-direction: column; align-items: stretch; }
+      .item-actions { justify-content: stretch; }
+      .item-actions button { width: 100%; }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="topbar">
+      <div class="brand-group">
+        <span class="brand">GG-Beauty</span>
+        <span class="brand-sub" data-i18n="platformSubtitle">Platform Administration</span>
+      </div>
+      <div class="top-actions">
+        <div class="language-switch" role="group" aria-label="Language">
+          <button type="button" id="lang-zh" data-lang="zh-CN" aria-pressed="false">中文</button>
+          <button type="button" id="lang-en" data-lang="en" aria-pressed="true">EN</button>
+        </div>
+        <button type="button" class="btn-logout" id="logout-btn" hidden data-i18n="platformLogout">Log Out</button>
+      </div>
+    </header>
+
+    <!-- Login View -->
+    <main id="login-view" class="card login-container">
+      <h1 data-i18n="platformLoginTitle">Platform Admin Login</h1>
+      <p class="subtitle" data-i18n="platformLoginHelp">Enter the platform administrator credential to manage merchant onboarding invitations.</p>
+
+      <form id="login-form">
+        <div class="field">
+          <label for="admin-token" data-i18n="platformLoginSecret">Admin Credential</label>
+          <input type="password" id="admin-token" name="adminToken" required autocomplete="current-password" placeholder="••••••••••••••••">
+        </div>
+        <div class="field" style="margin-top: 24px;">
+          <button type="submit" id="login-submit-btn" class="btn-primary" style="width: 100%;" data-i18n="platformLoginSubmit">Log In</button>
+        </div>
+        <div id="login-message" class="form-message" role="alert"></div>
+      </form>
+    </main>
+
+    <!-- Main View (Invitations Management) -->
+    <main id="main-view" class="card" hidden>
+      <div class="section-bar">
+        <div>
+          <h1 data-i18n="platformTitle">Merchant Invitations</h1>
+          <p class="subtitle" data-i18n="platformSubtitle">Platform Administration</p>
+        </div>
+        <button type="button" id="toggle-create-btn" class="btn-primary" data-i18n="platformInviteNew">Invite New Merchant</button>
+      </div>
+
+      <!-- One-time Generated URL Banner -->
+      <section id="created-url-banner" class="url-banner" hidden>
+        <h2 data-i18n="platformCreatedSuccess">Invitation Generated</h2>
+        <p data-i18n="platformCreatedHelp">Copy the onboarding link below and send it to the merchant. The raw link cannot be displayed or recovered again after leaving or reloading this page.</p>
+        <div class="url-box">
+          <input type="text" id="created-url-input" class="url-display" readonly>
+          <button type="button" id="copy-url-btn" class="btn-primary" style="background: #166534;" data-i18n="platformCopyLink">Copy Link</button>
+        </div>
+        <div id="copy-message" class="form-message success" style="margin-top: 8px;"></div>
+      </section>
+
+      <!-- Create Invitation Form Panel -->
+      <section id="create-panel" class="action-panel" hidden>
+        <form id="create-invitation-form">
+          <div class="grid">
+            <div class="field">
+              <label for="merchant-name-hint" data-i18n="platformMerchantNameHint">Business / shop name (optional)</label>
+              <input type="text" id="merchant-name-hint" name="merchantNameHint" maxlength="200" placeholder="e.g. Blossom Spa">
+            </div>
+            <div class="field">
+              <label for="contact-email" data-i18n="platformContactEmail">Contact email (optional)</label>
+              <input type="email" id="contact-email" name="contactEmail" maxlength="255" placeholder="owner@example.com">
+            </div>
+            <div class="field">
+              <label for="contact-phone" data-i18n="platformContactPhone">Contact phone (optional)</label>
+              <input type="tel" id="contact-phone" name="contactPhone" maxlength="50" placeholder="+65 9123 4567">
+            </div>
+            <div class="field">
+              <label for="ttl-days" data-i18n="platformTtlDays">Validity (days, 1-30)</label>
+              <input type="number" id="ttl-days" name="ttlDays" min="1" max="30" value="7" required>
+            </div>
+          </div>
+          <div style="display: flex; gap: 10px; margin-top: 20px; justify-content: flex-end;">
+            <button type="button" id="cancel-create-btn" class="btn-secondary" data-i18n="cancel">Cancel</button>
+            <button type="submit" id="create-submit-btn" class="btn-primary" data-i18n="platformCreateSubmit">Generate Invitation</button>
+          </div>
+          <div id="create-message" class="form-message" role="alert"></div>
+        </form>
+      </section>
+
+      <!-- Filter tabs -->
+      <div class="filter-tabs" role="tablist">
+        <button type="button" class="tab-btn" data-filter="all" aria-selected="true" data-i18n="platformFilterAll">All</button>
+        <button type="button" class="tab-btn" data-filter="pending" aria-selected="false" data-i18n="platformFilterPending">Pending</button>
+        <button type="button" class="tab-btn" data-filter="consumed" aria-selected="false" data-i18n="platformFilterConsumed">Used</button>
+        <button type="button" class="tab-btn" data-filter="expired" aria-selected="false" data-i18n="platformFilterExpired">Expired</button>
+        <button type="button" class="tab-btn" data-filter="revoked" aria-selected="false" data-i18n="platformFilterRevoked">Revoked</button>
+      </div>
+
+      <!-- Invitations container -->
+      <div id="invitations-container">
+        <div id="invitations-loading" class="empty-state" data-i18n="platformLoadingInvitations">Loading invitations…</div>
+        <div id="invitations-list"></div>
+      </div>
+    </main>
+  </div>
+
+  <script src="/shared-i18n.js"></script>
+  <script src="/platform-invitations.js"></script>
+</body>
+</html>

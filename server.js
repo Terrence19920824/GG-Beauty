@@ -39,8 +39,20 @@ const {
   createMerchantOnboarding
 } = require('./lib/merchant-onboarding');
 const {
-  createMerchantLaunchReadiness
+  createMerchantLaunchReadiness,
+  normalizePublicBaseUrl,
+  PublicBaseUrlError
 } = require('./lib/merchant-launch-readiness');
+const {
+  createPlatformAuth,
+  PLATFORM_SESSION_COOKIE
+} = require('./lib/platform-auth');
+const {
+  createMerchantInvitation,
+  revokeInvitation,
+  listMerchantInvitations,
+  MerchantInvitationError
+} = require('./lib/merchant-invitation');
 const {
   createOwnerStaffManagement
 } = require('./lib/owner-staff-management');
@@ -161,6 +173,7 @@ app.locals.bookingPool = pool;
 app.locals.bookingValidator = validateStaffBookability;
 app.locals.ownerAuthPool = pool;
 app.locals.merchantOnboardingPool = pool;
+app.locals.platformPool = pool;
 app.locals.customerOtpProvider = null;
 
 // ==================================================
@@ -207,6 +220,15 @@ app.get('/front-desk-activate.html', (_req, res) => {
     'Referrer-Policy': 'no-referrer'
   });
   return res.sendFile(path.join(__dirname, 'public', 'front-desk-activate.html'));
+});
+app.get(['/platform-invitations.html', '/platform/invitations'], (_req, res) => {
+  res.set({
+    'Cache-Control': 'no-store, no-cache, must-revalidate, private',
+    Pragma: 'no-cache',
+    Expires: '0',
+    'Referrer-Policy': 'no-referrer'
+  });
+  return res.sendFile(path.join(__dirname, 'public', 'platform-invitations.html'));
 });
 app.use(express.static('public'));
 
@@ -843,6 +865,176 @@ app.post(
   '/api/merchant-onboarding/invitation/consume',
   merchantOnboarding.consumeInvitation
 );
+
+// ==================================================
+// Platform Admin Merchant Invitation Management V1
+// ==================================================
+
+const platformAuth = createPlatformAuth({
+  getPlatformToken: () => app.locals.platformAdminToken !== undefined
+    ? app.locals.platformAdminToken
+    : process.env.PLATFORM_ADMIN_TOKEN,
+  isSameOriginRequest,
+  isProduction: process.env.NODE_ENV === 'production'
+});
+
+app.post('/api/platform/login', platformAuth.login);
+app.post('/api/platform/logout', platformAuth.logout);
+app.get('/api/platform/me', platformAuth.requirePlatformAuth, platformAuth.me);
+
+app.get('/api/platform/invitations', platformAuth.requirePlatformAuth, async (req, res) => {
+  try {
+    const dbPool = app.locals.platformPool || pool;
+    const invitations = await listMerchantInvitations(dbPool, {
+      limit: req.query.limit
+    });
+
+    platformAuth.auditPlatformEvent({
+      actor: req.platformAuth.actor,
+      action: 'list_merchant_invitations',
+      result: 'success',
+      details: { count: invitations.length }
+    });
+
+    return res.json({ success: true, data: invitations });
+  } catch (_error) {
+    return res.status(500).json({
+      success: false,
+      code: 'PLATFORM_INVITATION_LIST_FAILED',
+      message: 'Failed to list merchant invitations'
+    });
+  }
+});
+
+app.post('/api/platform/invitations', platformAuth.requirePlatformAuth, async (req, res) => {
+  if (req.headers && req.headers.origin && typeof isSameOriginRequest === 'function' && !isSameOriginRequest(req)) {
+    return res.status(403).json({
+      success: false,
+      code: 'ORIGIN_NOT_ALLOWED',
+      message: 'Cross-origin request rejected'
+    });
+  }
+
+  let publicBaseUrl;
+  try {
+    const rawUrl = app.locals.publicBaseUrl !== undefined
+      ? app.locals.publicBaseUrl
+      : process.env.PUBLIC_BASE_URL;
+    publicBaseUrl = normalizePublicBaseUrl(rawUrl);
+  } catch (_urlErr) {
+    return res.status(500).json({
+      success: false,
+      code: 'PUBLIC_BASE_URL_UNAVAILABLE',
+      message: 'Trusted public base URL is not configured'
+    });
+  }
+
+  const { merchantNameHint, contactEmail, contactPhone, ttlDays } = req.body || {};
+
+  try {
+    const dbPool = app.locals.platformPool || pool;
+    const invitation = await createMerchantInvitation(dbPool, {
+      merchantNameHint,
+      contactEmail,
+      contactPhone,
+      ttlDays,
+      createdBy: req.platformAuth.actor || 'platform_operator',
+      baseUrl: publicBaseUrl
+    });
+
+    platformAuth.auditPlatformEvent({
+      actor: req.platformAuth.actor,
+      action: 'create_merchant_invitation',
+      invitationId: invitation.invitationId,
+      result: 'success',
+      details: {
+        hasNameHint: Boolean(merchantNameHint),
+        hasEmail: Boolean(contactEmail),
+        hasPhone: Boolean(contactPhone)
+      }
+    });
+
+    return res.status(201).json({
+      success: true,
+      data: {
+        invitationId: invitation.invitationId,
+        status: invitation.status,
+        expiresAt: invitation.expiresAt,
+        createdAt: invitation.createdAt,
+        merchantNameHint: invitation.merchantNameHint,
+        contactEmail: invitation.contactEmail,
+        contactPhone: invitation.contactPhone,
+        createdBy: invitation.createdBy,
+        onboardingUrl: invitation.onboardingUrl
+      }
+    });
+  } catch (error) {
+    if (error instanceof MerchantInvitationError) {
+      return res.status(error.status).json({
+        success: false,
+        code: error.code,
+        message: error.message
+      });
+    }
+    return res.status(500).json({
+      success: false,
+      code: 'INVITATION_CREATION_FAILED',
+      message: 'Failed to create merchant invitation'
+    });
+  }
+});
+
+app.post('/api/platform/invitations/:id/revoke', platformAuth.requirePlatformAuth, async (req, res) => {
+  if (req.headers && req.headers.origin && typeof isSameOriginRequest === 'function' && !isSameOriginRequest(req)) {
+    return res.status(403).json({
+      success: false,
+      code: 'ORIGIN_NOT_ALLOWED',
+      message: 'Cross-origin request rejected'
+    });
+  }
+
+  const invitationId = req.params.id;
+  if (!isUuid(invitationId)) {
+    return res.status(400).json({
+      success: false,
+      code: 'INVALID_INVITATION_ID',
+      message: 'Invalid invitation ID format'
+    });
+  }
+
+  try {
+    const dbPool = app.locals.platformPool || pool;
+    const revoked = await revokeInvitation(dbPool, invitationId);
+    if (!revoked) {
+      return res.status(409).json({
+        success: false,
+        code: 'INVITATION_NOT_REVOCABLE',
+        message: 'Invitation is not pending or does not exist'
+      });
+    }
+
+    platformAuth.auditPlatformEvent({
+      actor: req.platformAuth.actor,
+      action: 'revoke_merchant_invitation',
+      invitationId,
+      result: 'success'
+    });
+
+    return res.json({
+      success: true,
+      data: {
+        invitationId,
+        status: 'revoked'
+      }
+    });
+  } catch (_error) {
+    return res.status(500).json({
+      success: false,
+      code: 'INVITATION_REVOCATION_FAILED',
+      message: 'Failed to revoke invitation'
+    });
+  }
+});
 
 // Public Staff Activation Endpoints
 app.post('/api/staff-activation/validate', async (req, res) => {
@@ -6830,5 +7022,6 @@ module.exports = {
   normalizeCustomerSpecialRequest,
   validateBookingPhone,
   loadMultiServiceAvailableTimes,
-  loadMultiServiceAvailableDates
+  loadMultiServiceAvailableDates,
+  platformAuth
 };
