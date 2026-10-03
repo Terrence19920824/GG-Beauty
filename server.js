@@ -148,6 +148,18 @@ const {
 } = require('./lib/customer-calendar');
 
 const app = express();
+
+// Render reverse proxy integration:
+// Render operates as a single-hop reverse proxy in front of the web service.
+// Narrowly configure trust proxy to 1 hop when running on Render or in production with proxy enabled.
+const isRenderEnvironment = process.env.RENDER === 'true' || Boolean(process.env.RENDER_SERVICE_ID);
+const isTrustProxyConfigured = process.env.TRUST_PROXY === '1' || process.env.TRUST_PROXY === 'true';
+const isProduction = process.env.NODE_ENV === 'production' && process.env.TRUST_PROXY !== 'false';
+
+if (isRenderEnvironment || isTrustProxyConfigured || isProduction) {
+  app.set('trust proxy', 1);
+}
+
 const OWNER_MERCHANT_CONTACT_READ_ROLES = Object.freeze(['owner', 'manager', 'admin']);
 const OWNER_MERCHANT_CONTACT_WRITE_ROLES = Object.freeze(['owner', 'manager', 'admin']);
 const OWNER_APPOINTMENT_INTERNAL_NOTES_WRITE_ROLES = Object.freeze(['owner', 'manager']);
@@ -903,6 +915,12 @@ app.get('/api/platform/invitations', platformAuth.requirePlatformAuth, async (re
 
     return res.json({ success: true, data: invitations });
   } catch (_error) {
+    platformAuth.auditPlatformEvent({
+      actor: req.platformAuth ? req.platformAuth.actor : 'platform_operator',
+      action: 'list_merchant_invitations_failed',
+      result: 'failure',
+      details: { reason: 'database_query_error' }
+    });
     return res.status(500).json({
       success: false,
       code: 'PLATFORM_INVITATION_LIST_FAILED',
@@ -1024,6 +1042,13 @@ app.post('/api/platform/invitations/:id/revoke', platformAuth.requirePlatformAut
 
   const invitationId = req.params.id;
   if (!isUuid(invitationId)) {
+    platformAuth.auditPlatformEvent({
+      actor: req.platformAuth ? req.platformAuth.actor : 'platform_operator',
+      action: 'revoke_merchant_invitation_failed',
+      invitationId: null,
+      result: 'failure',
+      details: { reason: 'invalid_invitation_id_format' }
+    });
     return res.status(400).json({
       success: false,
       code: 'INVALID_INVITATION_ID',

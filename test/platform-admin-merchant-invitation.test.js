@@ -16,7 +16,9 @@ const {
 const {
   createPlatformAuth,
   PLATFORM_SESSION_COOKIE,
-  MIN_SECRET_LENGTH
+  MIN_SECRET_LENGTH,
+  sanitizeAuditDetails,
+  isSensitiveKey
 } = require('../lib/platform-auth');
 
 const TEST_PLATFORM_TOKEN = 'test-platform-secret-token-32-chars-long!';
@@ -287,6 +289,108 @@ test('Authentication Rate Limiting & Bypass Prevention: Lockout after 5 failures
   }
 });
 
+test('Render & Trusted Proxy Client IP Handling: Isolated rate-limit buckets and spoofed forwarding rejection', async () => {
+  const server = await listen();
+  const address = server.address();
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  app.locals.platformAdminToken = TEST_PLATFORM_TOKEN;
+  app.locals.platformSessionSecret = TEST_PLATFORM_SESSION_SECRET;
+
+  const originalTrustProxy = app.get('trust proxy');
+
+  try {
+    // 1. Enable trust proxy = 1 (matching Render's single-hop proxy architecture)
+    app.set('trust proxy', 1);
+
+    const clientIpA = '203.0.113.195';
+    const clientIpB = '198.51.100.20';
+
+    if (app.locals.platformAuth) {
+      app.locals.platformAuth.resetRateLimit(clientIpA);
+      app.locals.platformAuth.resetRateLimit(clientIpB);
+    }
+
+    // Client A fails 5 times
+    for (let i = 1; i <= 5; i++) {
+      const failRes = await fetch(`${baseUrl}/api/platform/login`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Origin': baseUrl,
+          'X-Forwarded-For': clientIpA
+        },
+        body: JSON.stringify({ token: `invalid-attempt-number-${i}-32-chars-long` })
+      });
+      assert.equal(failRes.status, 401);
+    }
+
+    // Client A 6th attempt is locked out (429)
+    const lockedRes = await fetch(`${baseUrl}/api/platform/login`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Origin': baseUrl,
+        'X-Forwarded-For': clientIpA
+      },
+      body: JSON.stringify({ token: TEST_PLATFORM_TOKEN })
+    });
+    assert.equal(lockedRes.status, 429);
+
+    // CRITICAL: Client B from a different IP must NOT share Client A's lockout bucket!
+    const clientBRes = await fetch(`${baseUrl}/api/platform/login`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Origin': baseUrl,
+        'X-Forwarded-For': clientIpB
+      },
+      body: JSON.stringify({ token: TEST_PLATFORM_TOKEN })
+    });
+    assert.equal(clientBRes.status, 200, 'Client B must have separate rate-limit bucket and succeed');
+
+    // 2. Attacker on locked clientIpA tries to spoof by prepending another IP
+    // With trust proxy = 1, Express trusts only 1 hop from socket, so clientIpA remains resolved IP
+    const spoofAttempt = await fetch(`${baseUrl}/api/platform/login`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Origin': baseUrl,
+        'X-Forwarded-For': `8.8.8.8, ${clientIpA}`
+      },
+      body: JSON.stringify({ token: TEST_PLATFORM_TOKEN })
+    });
+    assert.equal(spoofAttempt.status, 429, 'Spoofed header must not change identity of locked client');
+
+    // 3. Untrusted context: when trust proxy is disabled, X-Forwarded-For is completely ignored
+    app.set('trust proxy', false);
+    if (app.locals.platformAuth) app.locals.platformAuth.resetRateLimit('127.0.0.1');
+
+    const untrustedRes = await fetch(`${baseUrl}/api/platform/login`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Origin': baseUrl,
+        'X-Forwarded-For': '1.2.3.4'
+      },
+      body: JSON.stringify({ token: 'wrong-token-32-chars-long-padding' })
+    });
+    assert.equal(untrustedRes.status, 401);
+
+    // Verify rate limit was charged to direct socket IP (127.0.0.1), NOT 1.2.3.4
+    const events = app.locals.platformAuth.getRecentAuditEvents();
+    const loginFailEvent = events.find(e => e.action === 'platform_login_failed' && e.details && e.details.ip === '127.0.0.1');
+    assert.ok(loginFailEvent, 'Must resolve to direct socket IP when trust proxy is false');
+    assert.ok(!events.some(e => e.details && e.details.ip === '1.2.3.4'), 'Must not trust 1.2.3.4 from untrusted header');
+  } finally {
+    app.set('trust proxy', originalTrustProxy);
+    if (app.locals.platformAuth) app.locals.platformAuth.resetRateLimit();
+    delete app.locals.platformAdminToken;
+    delete app.locals.platformSessionSecret;
+    await new Promise(resolve => server.close(resolve));
+  }
+});
+
 test('DOM & Browser State Security: One-time onboarding URL is wiped from DOM on logout and navigation', () => {
   const clientModule = require('../public/platform-invitations');
 
@@ -324,6 +428,198 @@ test('DOM & Browser State Security: One-time onboarding URL is wiped from DOM on
     assert.equal(mockElements['created-url-banner'].hidden, true, 'Banner must be hidden');
   } finally {
     global.document = originalDocument;
+  }
+});
+
+test('Adversarial Recursive Audit Sanitization: Secrets hidden in nested objects, arrays, and case-insensitive keys are purged', () => {
+  const auth = createPlatformAuth({
+    getPlatformToken: () => TEST_PLATFORM_TOKEN,
+    getSessionSecret: () => TEST_PLATFORM_SESSION_SECRET
+  });
+
+  const rawToken = generateToken();
+  const rawOnboardingUrl = `https://portal.gg-beauty.com/onboarding.html?token=${rawToken}`;
+  const rawDbUrl = 'postgres://admin:super_secret_pw@db.render.com:5432/production';
+
+  // Adversarial structure with secrets hidden under varied key formats and nesting
+  const adversarialInput = {
+    PLATFORM_ADMIN_TOKEN: 'super-secret-admin-token-value',
+    PLATFORM_SESSION_SECRET: 'super-secret-session-key-value',
+    api_key: 'top-secret-api-key',
+    APIKEY: 'all-caps-api-key',
+    generic_cookie: 'gg_beauty_platform_session=token-value',
+    SESSION_TOKEN: 'session-token-1234',
+    admin_password: 'super-sensitive-password',
+    userPasswd: 'another-password',
+    DATABASE_URL: rawDbUrl,
+    Database_Url: rawDbUrl,
+    custom_secret_key: 'custom-secret-key-data',
+    user_credentials: {
+      auth_token: 'nested-auth-token',
+      apiKey: 'nested-api-key',
+      authKey: 'nested-auth-key',
+      privateKey: 'nested-private-key'
+    },
+    nested_data: {
+      level1: {
+        level2: {
+          secret_data: 'deep-secret',
+          safe_field: 'safe_nested_value'
+        }
+      }
+    },
+    list_of_items: [
+      { token: 'item-token', label: 'item-1' },
+      rawOnboardingUrl,
+      rawDbUrl,
+      'Bearer attacker-stolen-token-1234567890',
+      'safe_string_item',
+      null,
+      12345
+    ],
+    unexpected_link: rawOnboardingUrl,
+    unexpected_field_with_db: rawDbUrl,
+    safe_merchant_hint: 'Lotus Bloom Spa',
+    safe_count: 42
+  };
+
+  const record = auth.auditPlatformEvent({
+    actor: 'platform_operator',
+    action: 'create_merchant_invitation',
+    invitationId: 'inv-uuid-adversarial',
+    result: 'success',
+    details: adversarialInput
+  });
+
+  const detailsJson = JSON.stringify(record.details);
+
+  // Assert NO secrets or sensitive tokens survive anywhere in detailsJson
+  assert.ok(!detailsJson.includes('super-secret-admin-token-value'), 'PLATFORM_ADMIN_TOKEN must not survive');
+  assert.ok(!detailsJson.includes('super-secret-session-key-value'), 'PLATFORM_SESSION_SECRET must not survive');
+  assert.ok(!detailsJson.includes('top-secret-api-key'), 'api_key must not survive');
+  assert.ok(!detailsJson.includes('all-caps-api-key'), 'APIKEY must not survive');
+  assert.ok(!detailsJson.includes('session-token-1234'), 'SESSION_TOKEN must not survive');
+  assert.ok(!detailsJson.includes('super-sensitive-password'), 'password must not survive');
+  assert.ok(!detailsJson.includes('another-password'), 'passwd must not survive');
+  assert.ok(!detailsJson.includes('deep-secret'), 'nested secret must not survive');
+  assert.ok(!detailsJson.includes('nested-auth-token'), 'nested token must not survive');
+  assert.ok(!detailsJson.includes('nested-api-key'), 'nested apiKey must not survive');
+  assert.ok(!detailsJson.includes('nested-auth-key'), 'nested authKey must not survive');
+  assert.ok(!detailsJson.includes('nested-private-key'), 'nested privateKey must not survive');
+  assert.ok(!detailsJson.includes('super_secret_pw'), 'database password must not survive');
+  assert.ok(!detailsJson.includes('attacker-stolen-token-1234567890'), 'bearer token must not survive');
+  assert.ok(!detailsJson.includes('?token='), 'onboarding token url must not survive');
+  assert.ok(!detailsJson.includes(rawToken), 'raw token must not survive');
+
+  // Assert keys were removed
+  assert.equal(record.details.PLATFORM_ADMIN_TOKEN, undefined);
+  assert.equal(record.details.PLATFORM_SESSION_SECRET, undefined);
+  assert.equal(record.details.api_key, undefined);
+  assert.equal(record.details.APIKEY, undefined);
+  assert.equal(record.details.generic_cookie, undefined);
+  assert.equal(record.details.SESSION_TOKEN, undefined);
+  assert.equal(record.details.DATABASE_URL, undefined);
+  assert.equal(record.details.user_credentials, undefined);
+
+  // Assert nested safe fields remain
+  assert.equal(record.details.nested_data.level1.level2.safe_field, 'safe_nested_value');
+  assert.equal(record.details.safe_merchant_hint, 'Lotus Bloom Spa');
+  assert.equal(record.details.safe_count, 42);
+
+  // Assert arrays sanitized properly
+  assert.equal(record.details.list_of_items[0].token, undefined);
+  assert.equal(record.details.list_of_items[0].label, 'item-1');
+  assert.equal(record.details.list_of_items[1], '[REDACTED]'); // onboarding url
+  assert.equal(record.details.list_of_items[2], '[REDACTED]'); // db url
+  assert.equal(record.details.list_of_items[3], '[REDACTED]'); // bearer string
+  assert.equal(record.details.list_of_items[4], 'safe_string_item');
+  assert.equal(record.details.list_of_items[5], null);
+  assert.equal(record.details.list_of_items[6], 12345);
+
+  // Assert unexpected fields with sensitive URLs are redacted
+  assert.equal(record.details.unexpected_link, '[REDACTED]');
+  assert.equal(record.details.unexpected_field_with_db, '[REDACTED]');
+
+  // Assert input object was NOT mutated
+  assert.equal(adversarialInput.PLATFORM_ADMIN_TOKEN, 'super-secret-admin-token-value');
+  assert.equal(adversarialInput.api_key, 'top-secret-api-key');
+
+  // Assert circular reference safety
+  const circularObj = { safe: 'yes' };
+  circularObj.cycle = circularObj;
+  const circularRecord = auth.auditPlatformEvent({
+    actor: 'platform_operator',
+    action: 'circular_test',
+    result: 'success',
+    details: circularObj
+  });
+  assert.equal(circularRecord.details.safe, 'yes');
+  assert.equal(circularRecord.details.cycle, '[CIRCULAR]');
+});
+
+test('Audit Logging for Validation & Configuration Failure Paths: Malformed UUID revoke and invalid auth config', async () => {
+  const server = await listen();
+  const address = server.address();
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  app.locals.platformAdminToken = TEST_PLATFORM_TOKEN;
+  app.locals.platformSessionSecret = TEST_PLATFORM_SESSION_SECRET;
+  app.locals.publicBaseUrl = baseUrl;
+
+  try {
+    const { cookie: sessionCookie } = await loginPlatformAdmin(baseUrl);
+    assert.ok(sessionCookie);
+
+    if (app.locals.platformAuth) app.locals.platformAuth.clearRecentAuditEvents();
+
+    // 1. Malformed invitation UUID in revoke request -> HTTP 400 + audit failure
+    const malformedRevokeRes = await fetch(`${baseUrl}/api/platform/invitations/not-a-valid-uuid/revoke`, {
+      method: 'POST',
+      headers: {
+        'Cookie': sessionCookie,
+        'Origin': baseUrl
+      }
+    });
+    assert.equal(malformedRevokeRes.status, 400);
+    const malformedBody = await malformedRevokeRes.json();
+    assert.equal(malformedBody.code, 'INVALID_INVITATION_ID');
+
+    const eventsAfterRevoke = app.locals.platformAuth.getRecentAuditEvents();
+    const revokeFailEvent = eventsAfterRevoke.find(e => e.action === 'revoke_merchant_invitation_failed');
+    assert.ok(revokeFailEvent, 'Must audit revoke_merchant_invitation_failed for malformed UUID');
+    assert.equal(revokeFailEvent.result, 'failure');
+    assert.equal(revokeFailEvent.details.reason, 'invalid_invitation_id_format');
+
+    // 2. Unconfigured / invalid Platform Admin configuration during login -> HTTP 503 + audit failure
+    app.locals.platformAdminToken = 'too-short';
+    const unconfigLoginRes = await fetch(`${baseUrl}/api/platform/login`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Origin': baseUrl
+      },
+      body: JSON.stringify({ token: TEST_PLATFORM_TOKEN })
+    });
+    assert.equal(unconfigLoginRes.status, 503);
+    const unconfigBody = await unconfigLoginRes.json();
+    assert.equal(unconfigBody.code, 'PLATFORM_AUTH_NOT_CONFIGURED');
+
+    const eventsAfterLogin = app.locals.platformAuth.getRecentAuditEvents();
+    const loginConfigFailEvent = eventsAfterLogin.find(
+      e => e.action === 'platform_login_failed' && e.actor === 'system'
+    );
+    assert.ok(loginConfigFailEvent, 'Must audit platform_login_failed with actor system on invalid config');
+    assert.equal(loginConfigFailEvent.result, 'failure');
+    assert.equal(loginConfigFailEvent.details.reason, 'SECRETS_INSUFFICIENT_LENGTH');
+    assert.equal(loginConfigFailEvent.details.path, '/api/platform/login');
+
+    // Security assertion: no secret value leaked in audit details
+    assert.equal(JSON.stringify(loginConfigFailEvent).includes('too-short'), false);
+  } finally {
+    delete app.locals.platformAdminToken;
+    delete app.locals.platformSessionSecret;
+    delete app.locals.publicBaseUrl;
+    await new Promise(resolve => server.close(resolve));
   }
 });
 
