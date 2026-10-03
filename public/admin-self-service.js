@@ -22,7 +22,8 @@
     authoritativeCapabilityIds: new Set(),
     authoritativeLocationIds: new Set(),
     authoritativeSchedule: null,
-    authoritativeOverrides: []
+    authoritativeOverrides: [],
+    launchReadiness: null
     , customerPage: 1, customerHasMore: false, customerQuery: '', selectedCustomerId: null,
     customerTransactionsPage: 1, customerTransactionsHasMore: false, customerTransactions: []
   };
@@ -108,6 +109,7 @@
         if (selected) { renderStaffForm(selected); renderStaffSettings(); }
       }
     }
+    if (state.launchReadiness) renderLaunchReadiness(state.launchReadiness);
     if (typeof global.renderAppointments === 'function' && !byId('calendarView')?.hidden) global.renderAppointments(global.currentAppointments || []);
   }
 
@@ -205,6 +207,10 @@
     if (frontDeskNav) {
       frontDeskNav.hidden = !['owner', 'manager', 'admin'].includes(profile?.membership?.role);
     }
+    const launchNav = byId('nav-launch');
+    if (launchNav) {
+      launchNav.hidden = !['owner', 'manager', 'admin'].includes(profile?.membership?.role);
+    }
   }
 
   function reset() {
@@ -213,6 +219,7 @@
     state.categories = [];
     state.staff = [];
     state.selectedStaffId = null;
+    state.launchReadiness = null;
     byId('servicesList').textContent = '';
     byId('staffList').textContent = '';
     byId('staffDetail').innerHTML = `<div class="empty">${t('chooseStaff')}</div>`;
@@ -220,7 +227,7 @@
   }
 
   function showViewOnly(name) {
-    ['calendar', 'customers', 'staff', 'services', 'contact', 'customer-settings', 'front-desk'].forEach(item => {
+    ['calendar', 'customers', 'staff', 'services', 'contact', 'launch', 'customer-settings', 'front-desk'].forEach(item => {
       const viewId = item === 'customer-settings' ? 'customerSettingsView' : item === 'front-desk' ? 'frontDeskView' : `${item}View`;
       const view = byId(viewId);
       if (view) view.hidden = item !== name;
@@ -235,9 +242,151 @@
     if (name === 'services') return loadServices();
     if (name === 'staff') return loadStaff();
     if (name === 'contact') return loadMerchantContact();
+    if (name === 'launch') return loadLaunchReadiness();
     if (name === 'customer-settings') return loadCustomerSettings();
     if (name === 'customers') return loadCustomers();
     if (name === 'front-desk') return loadFrontDesk();
+  }
+
+  function renderLaunchReadiness(data) {
+    state.launchReadiness = data;
+    const checks = Array.isArray(data?.checks) ? data.checks : [];
+    const completeCount = checks.filter(check => check.status === 'complete').length;
+    const progress = byId('launchProgress');
+    const checklist = byId('launchChecklist');
+    if (progress) {
+      progress.className = 'launch-progress';
+      progress.innerHTML = `<div><strong>${escapeHtml(t('setupProgressCount', { complete: completeCount, total: checks.length }))}</strong><div class="muted">${escapeHtml(t('setupProgressServerAuthoritative'))}</div></div><span class="launch-status ${data?.ready ? 'ready' : ''}">${escapeHtml(t(data?.ready ? 'setupReady' : 'setupNotReady'))}</span>`;
+    }
+    if (checklist) {
+      checklist.innerHTML = checks.map(check => {
+        const complete = check.status === 'complete';
+        const labelKey = `launchCheck_${check.key}`;
+        const actionKey = `launchAction_${check.key}`;
+        return `<div class="readiness-item ${complete ? 'complete' : ''}" data-check-key="${escapeHtml(check.key)}"><span class="readiness-icon" aria-hidden="true">${complete ? '&#10003;' : '!'}</span><div><strong>${escapeHtml(t(labelKey))}</strong><span class="muted">${escapeHtml(t(complete ? 'readinessComplete' : actionKey))}</span></div></div>`;
+      }).join('');
+    }
+
+    const booking = data?.booking || {};
+    const link = byId('bookingLinkBox');
+    if (link) link.textContent = booking.url || t('bookingLinkUnavailable');
+    for (const id of ['copyBookingLinkButton', 'previewBookingButton']) {
+      const button = byId(id);
+      if (button) button.disabled = !booking.url;
+    }
+    const qrAvailable = booking.qrAvailable === true && typeof booking.qrPath === 'string';
+    const image = byId('bookingQrImage');
+    if (image) {
+      image.hidden = !qrAvailable;
+      image.alt = t('bookingQrAlt');
+      image.src = qrAvailable ? booking.qrPath : '';
+    }
+    for (const id of ['downloadBookingQrButton', 'printBookingQrButton']) {
+      const button = byId(id);
+      if (button) button.disabled = !qrAvailable;
+    }
+    const message = byId('launchMessage');
+    if (message) {
+      message.textContent = booking.trustedPublicBaseUrlConfigured === false
+        ? t('trustedPublicBaseUrlMissing')
+        : '';
+      message.style.color = booking.trustedPublicBaseUrlConfigured === false ? '#c62828' : '#087443';
+    }
+  }
+
+  async function loadLaunchReadiness() {
+    const button = byId('refreshLaunchButton');
+    if (button) button.disabled = true;
+    const progress = byId('launchProgress');
+    if (progress) {
+      progress.className = 'loading';
+      progress.textContent = t('loadingLaunchReadiness');
+    }
+    try {
+      renderLaunchReadiness(await request('/api/owner/launch/readiness'));
+    } catch (error) {
+      if (!error.sessionExpired) {
+        setMessage('launchMessage', `${t('launchReadinessFailed')}: ${error.message}`, true);
+      }
+    } finally {
+      if (button) button.disabled = false;
+    }
+  }
+
+  async function copyBookingLink() {
+    const bookingUrl = state.launchReadiness?.booking?.url;
+    if (!bookingUrl) return;
+    try {
+      if (!global.navigator?.clipboard?.writeText) throw new Error('clipboard unavailable');
+      await global.navigator.clipboard.writeText(bookingUrl);
+      setMessage('launchMessage', t('bookingLinkCopied'));
+    } catch (_error) {
+      const temporary = document.createElement('input');
+      temporary.value = bookingUrl;
+      temporary.setAttribute('readonly', '');
+      document.body.appendChild(temporary);
+      temporary.select();
+      const copied = document.execCommand && document.execCommand('copy');
+      temporary.remove();
+      setMessage('launchMessage', t(copied ? 'bookingLinkCopied' : 'bookingLinkCopyFailed'), !copied);
+    }
+  }
+
+  function previewBookingPage() {
+    const bookingUrl = state.launchReadiness?.booking?.url;
+    if (bookingUrl && typeof global.open === 'function') {
+      global.open(bookingUrl, '_blank', 'noopener,noreferrer');
+    }
+  }
+
+  async function fetchBookingQrBlob() {
+    const qrPath = state.launchReadiness?.booking?.qrPath;
+    if (!qrPath) throw new Error(t('bookingQrUnavailable'));
+    const response = await fetch(qrPath, { credentials: 'same-origin', cache: 'no-store' });
+    if (!response.ok) throw new Error(t('bookingQrUnavailable'));
+    return response.blob();
+  }
+
+  async function downloadBookingQr() {
+    try {
+      const blob = await fetchBookingQrBlob();
+      const objectUrl = global.URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = objectUrl;
+      anchor.download = `${state.launchReadiness.booking.shopSlug}-booking-qr.svg`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      global.URL.revokeObjectURL(objectUrl);
+      setMessage('launchMessage', t('bookingQrDownloaded'));
+    } catch (error) {
+      setMessage('launchMessage', error.message || t('bookingQrUnavailable'), true);
+    }
+  }
+
+  async function printBookingQr() {
+    let objectUrl;
+    try {
+      const blob = await fetchBookingQrBlob();
+      objectUrl = global.URL.createObjectURL(blob);
+      const printWindow = typeof global.open === 'function' ? global.open('', '_blank') : null;
+      if (!printWindow) throw new Error(t('printWindowBlocked'));
+      printWindow.opener = null;
+      printWindow.document.title = t('bookingQrPrintTitle');
+      const image = printWindow.document.createElement('img');
+      image.alt = t('bookingQrAlt');
+      image.style.cssText = 'display:block;width:min(90vw,180mm);height:auto;margin:10mm auto;';
+      image.onload = () => {
+        printWindow.focus();
+        printWindow.print();
+        global.URL.revokeObjectURL(objectUrl);
+      };
+      image.src = objectUrl;
+      printWindow.document.body.appendChild(image);
+    } catch (error) {
+      if (objectUrl) global.URL.revokeObjectURL(objectUrl);
+      setMessage('launchMessage', error.message || t('bookingQrUnavailable'), true);
+    }
   }
 
   const formatDateTime = value => value ? new Intl.DateTimeFormat(state.locale === 'zh-CN' ? 'zh-CN' : 'en-SG', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Singapore' }).format(new Date(value)) : '-';
@@ -1227,7 +1376,8 @@
     setLocale, setProfile, reset, showView, loadServices, renderCategories, openCategoryForm, closeCategoryForm, saveCategory,
     openServiceForm, closeServiceForm, saveService, loadStaff, openStaffForm, saveStaff, selectStaff, openStaffTab,
     markStaffTabDirty, toggleCapability, saveCapability, toggleLocation, saveLocations, changeScheduleLocation, saveSchedule,
-    updateOverrideFields, saveOverride, deactivateOverride, loadMerchantContact, saveMerchantContact, loadCustomerSettings,
+    updateOverrideFields, saveOverride, deactivateOverride, loadMerchantContact, saveMerchantContact, loadLaunchReadiness,
+    renderLaunchReadiness, copyBookingLink, previewBookingPage, downloadBookingQr, printBookingQr, loadCustomerSettings,
     saveCustomerSettings, loadCustomers, selectCustomer,
     renderStaffAccount, generateStaffInvitation, revokeStaffInvitation, disableStaffAccount, reactivateStaffAccount,
     showActivationLinkModal, copyActivationUrl,

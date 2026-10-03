@@ -503,6 +503,10 @@ test('6. Valid consumption: creates staff_accounts, consumes invitation, hashes 
   assert.notEqual(acc.password_hash, validPassword);
   assert(acc.password_hash.startsWith('$2')); // bcrypt prefix
   assert(bcrypt.compareSync(validPassword, acc.password_hash));
+  const permissionInsert = state.queries.find(query =>
+    /INSERT INTO public\.staff_permissions/i.test(query.sql)
+  );
+  assert.match(permissionInsert.sql, /TRUE, TRUE, NOW\(\), NOW\(\)\)/);
 
   // Verify invitation marked consumed
   assert.equal(state.invitations[0].status, 'consumed');

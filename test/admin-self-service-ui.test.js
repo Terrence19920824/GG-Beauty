@@ -68,6 +68,7 @@ function page(replies = []) {
 const owner = { membership: { role: 'owner' } };
 const manager = { membership: { role: 'manager' } };
 const admin = { membership: { role: 'admin' } };
+const frontDesk = { membership: { role: 'front_desk' } };
 
 test('navigation exposes the enabled customer foundation and later modules remain disabled', () => {
   assert.match(html, /id="nav-calendar"[^>]*>日历/);
@@ -75,6 +76,76 @@ test('navigation exposes the enabled customer foundation and later modules remai
   assert.match(html, /id="nav-services"[^>]*>服务/);
   assert.match(html, /id="nav-customers"[^>]*data-i18n="customers"/);
   assert.match(source, /nav-customers[\s\S]*showView\('customers'\)/);
+});
+
+test('merchant launch view is mobile-friendly, bilingual, and has no manual readiness checkboxes', () => {
+  assert.match(html, /id="nav-launch"[^>]*data-i18n="launchSetup"/);
+  assert.match(html, /id="launchView"/);
+  assert.match(html, /id="copyBookingLinkButton"/);
+  assert.match(html, /id="previewBookingButton"/);
+  assert.match(html, /id="downloadBookingQrButton"/);
+  assert.match(html, /id="printBookingQrButton"/);
+  assert.match(html, /\.launch-actions button \{ min-height: 44px/);
+  const launchSection = html.match(/<section id="launchView"[\s\S]*?<\/section>/)?.[0] || '';
+  assert.doesNotMatch(launchSection, /type="checkbox"/);
+
+  for (const key of [
+    'launchSetupTitle', 'setupReady', 'setupNotReady', 'copyBookingLink',
+    'previewBookingPage', 'downloadBookingQr', 'printBookingQr',
+    'launchCheck_business_profile', 'launchCheck_active_location',
+    'launchCheck_business_timezone', 'launchCheck_active_service',
+    'launchCheck_active_staff', 'launchCheck_staff_location_assignment',
+    'launchCheck_bookable_capability', 'launchCheck_working_schedule',
+    'launchCheck_owner_membership', 'launchCheck_booking_url',
+    'launchCheck_booking_qr'
+  ]) {
+    assert.notEqual(i18n.t(key, 'zh-CN'), key);
+    assert.notEqual(i18n.t(key, 'en'), key);
+  }
+});
+
+test('launch UI renders server readiness and uses only the server-provided booking URL and QR path', async () => {
+  const checks = [
+    { key: 'business_profile', status: 'complete', blocking: true },
+    { key: 'active_location', status: 'incomplete', blocking: true }
+  ];
+  const data = {
+    ready: false,
+    checks,
+    booking: {
+      shopSlug: 'merchant-a',
+      url: 'https://booking.example.com/book/merchant-a',
+      qrAvailable: true,
+      qrPath: '/api/owner/launch/booking-qr.svg',
+      trustedPublicBaseUrlConfigured: true
+    }
+  };
+  const p = page([response(200, { success: true, data })]);
+  p.api.setProfile(owner);
+  p.api.setLocale('en');
+  await p.api.loadLaunchReadiness();
+  assert.equal(p.requests[0].url, '/api/owner/launch/readiness');
+  assert.doesNotMatch(p.requests[0].url, /shop/i);
+  assert.equal(p.elements.get('bookingLinkBox').textContent, data.booking.url);
+  assert.equal(p.elements.get('bookingQrImage').src, data.booking.qrPath);
+  assert.equal(p.elements.get('copyBookingLinkButton').disabled, false);
+  assert.equal(p.elements.get('downloadBookingQrButton').disabled, false);
+  assert.match(p.elements.get('launchChecklist').innerHTML, /Business profile exists/);
+  assert.match(p.elements.get('launchChecklist').innerHTML, /Activate at least one location/);
+
+  let copied = '';
+  p.context.navigator.clipboard = { writeText: async value => { copied = value; } };
+  await p.api.copyBookingLink();
+  assert.equal(copied, data.booking.url);
+
+  p.api.setLocale('zh-CN');
+  assert.match(p.elements.get('launchChecklist').innerHTML, /商家资料已建立/);
+  assert.doesNotMatch(p.elements.get('launchChecklist').innerHTML, /Business profile exists/);
+
+  p.api.setProfile(frontDesk);
+  assert.equal(p.elements.get('nav-launch').hidden, true);
+  p.api.setProfile(manager);
+  assert.equal(p.elements.get('nav-launch').hidden, false);
 });
 
 test('service list loads safe management fields and has no delete action', async () => {

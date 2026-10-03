@@ -320,6 +320,96 @@
       box-shadow: 0 4px 18px rgba(0,0,0,0.06);
     }
 
+    .launch-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.2fr) minmax(280px, .8fr);
+      gap: 16px;
+    }
+
+    .launch-progress {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+
+    .launch-status {
+      border-radius: 999px;
+      padding: 7px 11px;
+      font-size: 13px;
+      font-weight: 700;
+      background: var(--status-pending-soft);
+      color: var(--status-pending);
+    }
+
+    .launch-status.ready {
+      background: var(--status-active-soft);
+      color: var(--status-active);
+    }
+
+    .readiness-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .readiness-item {
+      display: grid;
+      grid-template-columns: 30px minmax(0, 1fr);
+      gap: 10px;
+      align-items: start;
+      border: 1px solid #e8e8e8;
+      border-radius: 12px;
+      padding: 12px;
+    }
+
+    .readiness-icon {
+      display: grid;
+      place-items: center;
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      background: var(--status-pending-soft);
+      color: var(--status-pending);
+      font-weight: 800;
+    }
+
+    .readiness-item.complete .readiness-icon {
+      background: var(--status-active-soft);
+      color: var(--status-active);
+    }
+
+    .readiness-item strong,
+    .readiness-item span {
+      display: block;
+    }
+
+    .booking-link-box {
+      overflow-wrap: anywhere;
+      border: 1px solid #ddd;
+      background: #fafafa;
+      border-radius: 10px;
+      padding: 12px;
+      margin: 12px 0;
+    }
+
+    .booking-qr {
+      display: block;
+      width: min(100%, 340px);
+      aspect-ratio: 1;
+      object-fit: contain;
+      margin: 12px auto;
+      border: 1px solid #eee;
+      border-radius: 12px;
+      background: white;
+    }
+
+    @media (max-width: 760px) {
+      .launch-grid { grid-template-columns: 1fr; }
+      .launch-actions { display: grid; grid-template-columns: 1fr; width: 100%; }
+      .launch-actions button { min-height: 44px; width: 100%; }
+    }
+
     table {
       width: 100%;
       border-collapse: collapse;
@@ -735,6 +825,7 @@
     <button id="nav-front-desk" class="nav-btn" data-i18n="frontDeskManagement" onclick="ownerSelfService.showView('front-desk')">前台管理</button>
     <button id="nav-services" class="nav-btn" data-i18n="services" onclick="ownerSelfService.showView('services')">服务</button>
     <button id="nav-contact" class="nav-btn" data-i18n="merchantContactSettings" onclick="ownerSelfService.showView('contact')">店铺联系方式</button>
+    <button id="nav-launch" class="nav-btn" data-i18n="launchSetup" onclick="ownerSelfService.showView('launch')">开通设置</button>
     <button id="nav-customer-settings" class="nav-btn" data-i18n="customerModuleSettings" onclick="ownerSelfService.showView('customer-settings')">会员与资产</button>
     <button id="nav-customers" class="nav-btn" data-i18n="customers">顾客</button>
     <button class="nav-btn" disabled data-i18n="checkout" data-i18n-title="comingSoon" title="即将推出">收银</button>
@@ -882,6 +973,38 @@
         </div>
       </div>
       <div class="form-actions"><button id="saveMerchantContactButton" class="primary-btn" type="button" data-i18n="saveMerchantContact" onclick="ownerSelfService.saveMerchantContact()">保存联系方式</button></div>
+    </div>
+  </section>
+
+  <section id="launchView" class="view" hidden>
+    <div class="toolbar">
+      <div>
+        <h2 data-i18n="launchSetupTitle">店铺开通进度</h2>
+        <div class="muted" data-i18n="launchSetupHelp">系统根据当前店铺配置自动检查，不需要手动勾选。</div>
+      </div>
+      <button id="refreshLaunchButton" class="secondary-btn" type="button" data-i18n="refreshLaunch" onclick="ownerSelfService.loadLaunchReadiness()">重新检查</button>
+    </div>
+    <div id="launchMessage" class="save-status" aria-live="polite"></div>
+    <div class="launch-grid">
+      <div class="card">
+        <div id="launchProgress" class="loading" data-i18n="loadingLaunchReadiness">正在检查店铺配置...</div>
+        <div id="launchChecklist" class="readiness-list"></div>
+      </div>
+      <div class="card">
+        <h3 data-i18n="customerBookingAccess">顾客预约入口</h3>
+        <p class="muted" data-i18n="customerBookingAccessHelp">此固定链接和二维码可长期使用。日常修改服务、员工和排班后无需重印。</p>
+        <div id="bookingLinkBox" class="booking-link-box" data-i18n="bookingLinkUnavailable">预约链接暂不可用</div>
+        <div class="form-actions launch-actions">
+          <button id="copyBookingLinkButton" class="secondary-btn" type="button" data-i18n="copyBookingLink" onclick="ownerSelfService.copyBookingLink()" disabled>复制链接</button>
+          <button id="previewBookingButton" class="secondary-btn" type="button" data-i18n="previewBookingPage" onclick="ownerSelfService.previewBookingPage()" disabled>预览预约页</button>
+        </div>
+        <img id="bookingQrImage" class="booking-qr" alt="" hidden>
+        <div class="form-actions launch-actions">
+          <button id="downloadBookingQrButton" class="primary-btn" type="button" data-i18n="downloadBookingQr" onclick="ownerSelfService.downloadBookingQr()" disabled>下载二维码</button>
+          <button id="printBookingQrButton" class="secondary-btn" type="button" data-i18n="printBookingQr" onclick="ownerSelfService.printBookingQr()" disabled>打印二维码</button>
+        </div>
+        <div id="bookingQrNote" class="muted" data-i18n="qrPublicUrlOnly">二维码仅包含公开预约链接，不含账号、令牌或顾客资料。</div>
+      </div>
     </div>
   </section>
 

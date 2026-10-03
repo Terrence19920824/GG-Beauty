@@ -6,6 +6,7 @@ const express = require('express');
 const path = require('path');
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
+const QRCode = require('qrcode');
 const { Pool } = require('pg');
 const {
   AppointmentMutationError,
@@ -37,6 +38,9 @@ const {
 const {
   createMerchantOnboarding
 } = require('./lib/merchant-onboarding');
+const {
+  createMerchantLaunchReadiness
+} = require('./lib/merchant-launch-readiness');
 const {
   createOwnerStaffManagement
 } = require('./lib/owner-staff-management');
@@ -936,6 +940,32 @@ const requireOwnerRole = allowedRoles =>
 
     next();
   };
+
+const merchantLaunchReadiness = createMerchantLaunchReadiness({
+  pool: {
+    query: (...args) => app.locals.ownerAuthPool.query(...args)
+  },
+  getPublicBaseUrl: () => app.locals.publicBaseUrl !== undefined
+    ? app.locals.publicBaseUrl
+    : process.env.PUBLIC_BASE_URL,
+  qrCode: {
+    toString: (...args) => (app.locals.qrCode || QRCode).toString(...args)
+  },
+  safeErrorCode: safeStaffAuthErrorCode
+});
+
+app.get(
+  '/api/owner/launch/readiness',
+  requireOwnerAuth,
+  requireOwnerRole(['owner', 'manager', 'admin']),
+  merchantLaunchReadiness.getReadiness
+);
+app.get(
+  '/api/owner/launch/booking-qr.svg',
+  requireOwnerAuth,
+  requireOwnerRole(['owner', 'manager', 'admin']),
+  merchantLaunchReadiness.getBookingQr
+);
 
 // Checkout writes are independently gated on the server. The browser feature
 // flag is presentation-only and must never authorize a financial mutation.
