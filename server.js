@@ -874,9 +874,14 @@ const platformAuth = createPlatformAuth({
   getPlatformToken: () => app.locals.platformAdminToken !== undefined
     ? app.locals.platformAdminToken
     : process.env.PLATFORM_ADMIN_TOKEN,
+  getSessionSecret: () => app.locals.platformSessionSecret !== undefined
+    ? app.locals.platformSessionSecret
+    : process.env.PLATFORM_SESSION_SECRET,
   isSameOriginRequest,
   isProduction: process.env.NODE_ENV === 'production'
 });
+
+app.locals.platformAuth = platformAuth;
 
 app.post('/api/platform/login', platformAuth.login);
 app.post('/api/platform/logout', platformAuth.logout);
@@ -908,6 +913,12 @@ app.get('/api/platform/invitations', platformAuth.requirePlatformAuth, async (re
 
 app.post('/api/platform/invitations', platformAuth.requirePlatformAuth, async (req, res) => {
   if (req.headers && req.headers.origin && typeof isSameOriginRequest === 'function' && !isSameOriginRequest(req)) {
+    platformAuth.auditPlatformEvent({
+      actor: req.platformAuth ? req.platformAuth.actor : 'unauthenticated',
+      action: 'platform_csrf_rejected',
+      result: 'failure',
+      details: { path: '/api/platform/invitations', origin: req.headers.origin }
+    });
     return res.status(403).json({
       success: false,
       code: 'ORIGIN_NOT_ALLOWED',
@@ -922,6 +933,12 @@ app.post('/api/platform/invitations', platformAuth.requirePlatformAuth, async (r
       : process.env.PUBLIC_BASE_URL;
     publicBaseUrl = normalizePublicBaseUrl(rawUrl);
   } catch (_urlErr) {
+    platformAuth.auditPlatformEvent({
+      actor: req.platformAuth.actor,
+      action: 'create_merchant_invitation_failed',
+      result: 'failure',
+      details: { reason: 'public_base_url_unavailable' }
+    });
     return res.status(500).json({
       success: false,
       code: 'PUBLIC_BASE_URL_UNAVAILABLE',
@@ -969,6 +986,12 @@ app.post('/api/platform/invitations', platformAuth.requirePlatformAuth, async (r
       }
     });
   } catch (error) {
+    platformAuth.auditPlatformEvent({
+      actor: req.platformAuth.actor,
+      action: 'create_merchant_invitation_failed',
+      result: 'failure',
+      details: { errorCode: error.code || 'unknown' }
+    });
     if (error instanceof MerchantInvitationError) {
       return res.status(error.status).json({
         success: false,
@@ -986,6 +1009,12 @@ app.post('/api/platform/invitations', platformAuth.requirePlatformAuth, async (r
 
 app.post('/api/platform/invitations/:id/revoke', platformAuth.requirePlatformAuth, async (req, res) => {
   if (req.headers && req.headers.origin && typeof isSameOriginRequest === 'function' && !isSameOriginRequest(req)) {
+    platformAuth.auditPlatformEvent({
+      actor: req.platformAuth ? req.platformAuth.actor : 'unauthenticated',
+      action: 'platform_csrf_rejected',
+      result: 'failure',
+      details: { path: req.originalUrl || req.path, origin: req.headers.origin }
+    });
     return res.status(403).json({
       success: false,
       code: 'ORIGIN_NOT_ALLOWED',
@@ -1006,6 +1035,13 @@ app.post('/api/platform/invitations/:id/revoke', platformAuth.requirePlatformAut
     const dbPool = app.locals.platformPool || pool;
     const revoked = await revokeInvitation(dbPool, invitationId);
     if (!revoked) {
+      platformAuth.auditPlatformEvent({
+        actor: req.platformAuth.actor,
+        action: 'revoke_merchant_invitation_failed',
+        invitationId,
+        result: 'failure',
+        details: { reason: 'not_pending_or_not_found' }
+      });
       return res.status(409).json({
         success: false,
         code: 'INVITATION_NOT_REVOCABLE',
@@ -1028,6 +1064,13 @@ app.post('/api/platform/invitations/:id/revoke', platformAuth.requirePlatformAut
       }
     });
   } catch (_error) {
+    platformAuth.auditPlatformEvent({
+      actor: req.platformAuth.actor,
+      action: 'revoke_merchant_invitation_failed',
+      invitationId,
+      result: 'failure',
+      details: { reason: 'exception' }
+    });
     return res.status(500).json({
       success: false,
       code: 'INVITATION_REVOCATION_FAILED',

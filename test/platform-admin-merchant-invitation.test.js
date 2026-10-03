@@ -3,6 +3,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 const { app } = require('../server');
 const { generateToken, hashToken } = require('../lib/invitation-token');
 const {
@@ -11,49 +13,112 @@ const {
   revokeInvitation,
   findInvitation
 } = require('../lib/merchant-invitation');
-const { createPlatformAuth } = require('../lib/platform-auth');
+const {
+  createPlatformAuth,
+  PLATFORM_SESSION_COOKIE,
+  MIN_SECRET_LENGTH
+} = require('../lib/platform-auth');
 
 const TEST_PLATFORM_TOKEN = 'test-platform-secret-token-32-chars-long!';
+const TEST_PLATFORM_SESSION_SECRET = 'test-platform-session-secret-32-chars-diff!';
 
 const listen = () => new Promise(resolve => {
   const server = app.listen(0, '127.0.0.1', () => resolve(server));
 });
 
-test('Platform Admin Authentication & Session Management', async () => {
+const loginPlatformAdmin = async (baseUrl, token = TEST_PLATFORM_TOKEN) => {
+  const res = await fetch(`${baseUrl}/api/platform/login`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Origin': baseUrl
+    },
+    body: JSON.stringify({ token })
+  });
+  const setCookie = res.headers.get('set-cookie');
+  return {
+    res,
+    cookie: setCookie ? setCookie.split(';')[0] : null
+  };
+};
+
+test('Platform Admin Authentication & Credential Strength: Enforces 32-char threshold, secret separation, and fails closed', async () => {
   const server = await listen();
   const address = server.address();
   const baseUrl = `http://127.0.0.1:${address.port}`;
 
-  app.locals.platformAdminToken = TEST_PLATFORM_TOKEN;
-  app.locals.publicBaseUrl = baseUrl;
-
   try {
-    // 1. Unauthenticated request to /api/platform/me fails with 401
+    // 1. Unconfigured credentials -> FAIL CLOSED (503)
+    delete app.locals.platformAdminToken;
+    delete app.locals.platformSessionSecret;
+    const noConfigRes = await fetch(`${baseUrl}/api/platform/me`);
+    assert.equal(noConfigRes.status, 503);
+    const noConfigBody = await noConfigRes.json();
+    assert.equal(noConfigBody.code, 'PLATFORM_AUTH_NOT_CONFIGURED');
+
+    // 2. Weak platform token (< 32 chars) -> FAIL CLOSED (503)
+    app.locals.platformAdminToken = 'too-short';
+    app.locals.platformSessionSecret = TEST_PLATFORM_SESSION_SECRET;
+    const weakTokenRes = await fetch(`${baseUrl}/api/platform/me`);
+    assert.equal(weakTokenRes.status, 503);
+    const weakTokenBody = await weakTokenRes.json();
+    assert.equal(weakTokenBody.code, 'PLATFORM_AUTH_NOT_CONFIGURED');
+
+    // 3. Weak session secret (< 32 chars) -> FAIL CLOSED (503)
+    app.locals.platformAdminToken = TEST_PLATFORM_TOKEN;
+    app.locals.platformSessionSecret = 'too-short-session-secret';
+    const weakSecretRes = await fetch(`${baseUrl}/api/platform/me`);
+    assert.equal(weakSecretRes.status, 503);
+
+    // 4. Identical auth token and session secret -> FAIL CLOSED (503)
+    app.locals.platformAdminToken = TEST_PLATFORM_TOKEN;
+    app.locals.platformSessionSecret = TEST_PLATFORM_TOKEN;
+    const identicalRes = await fetch(`${baseUrl}/api/platform/me`);
+    assert.equal(identicalRes.status, 503);
+
+    // Now configure valid, independent secrets (>= 32 chars)
+    app.locals.platformAdminToken = TEST_PLATFORM_TOKEN;
+    app.locals.platformSessionSecret = TEST_PLATFORM_SESSION_SECRET;
+
+    // 5. Unauthenticated request to /api/platform/me fails with 401
     const unauthRes = await fetch(`${baseUrl}/api/platform/me`);
     assert.equal(unauthRes.status, 401);
     const unauthBody = await unauthRes.json();
     assert.equal(unauthBody.code, 'PLATFORM_AUTH_REQUIRED');
 
-    // 2. Login with wrong credential fails with 401
-    const badLoginRes = await fetch(`${baseUrl}/api/platform/login`, {
+    // 6. Login with one-character candidate credential fails with 401
+    const oneCharRes = await fetch(`${baseUrl}/api/platform/login`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Origin': baseUrl
-      },
-      body: JSON.stringify({ token: 'wrong-password' })
+      headers: { 'Content-Type': 'application/json', 'Origin': baseUrl },
+      body: JSON.stringify({ token: 'a' })
     });
-    assert.equal(badLoginRes.status, 401);
-    const badLoginBody = await badLoginRes.json();
-    assert.equal(badLoginBody.code, 'INVALID_CREDENTIALS');
+    assert.equal(oneCharRes.status, 401);
+    const oneCharBody = await oneCharRes.json();
+    assert.equal(oneCharBody.code, 'INVALID_CREDENTIALS');
 
-    // 3. Login with correct credential succeeds and sets secure cookie
+    // 7. Login with 31-character candidate credential fails with 401
+    const shortCandRes = await fetch(`${baseUrl}/api/platform/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Origin': baseUrl },
+      body: JSON.stringify({ token: 'a'.repeat(31) })
+    });
+    assert.equal(shortCandRes.status, 401);
+
+    // 8. Login with wrong 32+ character credential fails with 401
+    const wrongLongRes = await fetch(`${baseUrl}/api/platform/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Origin': baseUrl },
+      body: JSON.stringify({ token: 'wrong-platform-admin-credential-32-chars!' })
+    });
+    assert.equal(wrongLongRes.status, 401);
+
+    // Reset rate limiter for the test IP so subsequent steps are not blocked
+    if (app.locals.platformAuth) app.locals.platformAuth.resetRateLimit('127.0.0.1');
+
+    // 9. Login with correct credential succeeds and sets secure cookie
     const loginRes = await fetch(`${baseUrl}/api/platform/login`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Origin': baseUrl
-      },
+      headers: { 'Content-Type': 'application/json', 'Origin': baseUrl },
       body: JSON.stringify({ token: TEST_PLATFORM_TOKEN })
     });
     assert.equal(loginRes.status, 200);
@@ -69,36 +134,41 @@ test('Platform Admin Authentication & Session Management', async () => {
 
     const sessionCookie = setCookie.split(';')[0];
 
-    // 4. Authenticated request using cookie succeeds
+    // 10. Authenticated request using cookie succeeds
     const meRes = await fetch(`${baseUrl}/api/platform/me`, {
-      headers: {
-        'Cookie': sessionCookie
-      }
+      headers: { 'Cookie': sessionCookie }
     });
     assert.equal(meRes.status, 200);
     const meBody = await meRes.json();
     assert.equal(meBody.success, true);
     assert.equal(meBody.data.actor, 'platform_operator');
+  } finally {
+    delete app.locals.platformAdminToken;
+    delete app.locals.platformSessionSecret;
+    await new Promise(resolve => server.close(resolve));
+  }
+});
 
-    // 5. Bearer token authorization succeeds
-    const bearerRes = await fetch(`${baseUrl}/api/platform/me`, {
-      headers: {
-        'Authorization': `Bearer ${TEST_PLATFORM_TOKEN}`
-      }
+test('Session Revocation & Lifecycle: Immediate revocation, bootId restart invalidation, signature tampering rejection', async () => {
+  const server = await listen();
+  const address = server.address();
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  app.locals.platformAdminToken = TEST_PLATFORM_TOKEN;
+  app.locals.platformSessionSecret = TEST_PLATFORM_SESSION_SECRET;
+
+  try {
+    // 1. Log in and obtain valid session
+    const { cookie: sessionCookie } = await loginPlatformAdmin(baseUrl);
+    assert.ok(sessionCookie);
+
+    // Verify session works
+    const meRes1 = await fetch(`${baseUrl}/api/platform/me`, {
+      headers: { 'Cookie': sessionCookie }
     });
-    assert.equal(bearerRes.status, 200);
-    const bearerBody = await bearerRes.json();
-    assert.equal(bearerBody.success, true);
+    assert.equal(meRes1.status, 200);
 
-    // 6. Bearer token with wrong secret fails
-    const badBearerRes = await fetch(`${baseUrl}/api/platform/me`, {
-      headers: {
-        'Authorization': 'Bearer wrong-secret'
-      }
-    });
-    assert.equal(badBearerRes.status, 401);
-
-    // 7. Logout clears session
+    // 2. Logout immediately and definitively revokes session server-side
     const logoutRes = await fetch(`${baseUrl}/api/platform/logout`, {
       method: 'POST',
       headers: {
@@ -110,31 +180,226 @@ test('Platform Admin Authentication & Session Management', async () => {
     const logoutSetCookie = logoutRes.headers.get('set-cookie');
     assert.match(logoutSetCookie, /Max-Age=0/);
 
-    // 8. Former session cookie is rejected after logout
+    // 3. Former session cookie is rejected server-side after logout
     const postLogoutRes = await fetch(`${baseUrl}/api/platform/me`, {
-      headers: {
-        'Cookie': sessionCookie
-      }
+      headers: { 'Cookie': sessionCookie }
     });
     assert.equal(postLogoutRes.status, 401);
+    const postLogoutBody = await postLogoutRes.json();
+    assert.equal(postLogoutBody.code, 'PLATFORM_AUTH_REQUIRED');
 
-    // 9. When token is unconfigured on server, fails closed with 503
-    app.locals.platformAdminToken = '';
-    const unconfiguredRes = await fetch(`${baseUrl}/api/platform/login`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Origin': baseUrl
-      },
-      body: JSON.stringify({ token: TEST_PLATFORM_TOKEN })
+    // 4. Signature tampering rejection: modify token signature
+    const [cookieName, cookieVal] = sessionCookie.split('=');
+    const rawToken = decodeURIComponent(cookieVal);
+    const [payloadPart, sigPart] = rawToken.split('.');
+    const tamperedToken = `${payloadPart}.${sigPart.slice(0, -4)}xxxx`;
+    const tamperedRes = await fetch(`${baseUrl}/api/platform/me`, {
+      headers: { 'Cookie': `${cookieName}=${encodeURIComponent(tamperedToken)}` }
     });
-    assert.equal(unconfiguredRes.status, 503);
-    const unconfiguredBody = await unconfiguredRes.json();
-    assert.equal(unconfiguredBody.code, 'PLATFORM_AUTH_NOT_CONFIGURED');
+    assert.equal(tamperedRes.status, 401);
+
+    // 5. Restart simulation: session created with a different bootId fails immediately
+    const otherBootAuth = createPlatformAuth({
+      getPlatformToken: () => TEST_PLATFORM_TOKEN,
+      getSessionSecret: () => TEST_PLATFORM_SESSION_SECRET,
+      bootId: 'old-instance-boot-id-12345678'
+    });
+    const preRestartToken = otherBootAuth.signSessionToken({
+      actor: 'platform_operator',
+      jti: 'jti-before-restart',
+      bootId: 'old-instance-boot-id-12345678',
+      exp: Date.now() + 3600000
+    }, TEST_PLATFORM_SESSION_SECRET);
+
+    const restartCheckRes = await fetch(`${baseUrl}/api/platform/me`, {
+      headers: { 'Cookie': `${PLATFORM_SESSION_COOKIE}=${encodeURIComponent(preRestartToken)}` }
+    });
+    assert.equal(restartCheckRes.status, 401);
+
+    // 6. Expired session token is rejected
+    const expiredToken = app.locals.platformAuth.signSessionToken({
+      actor: 'platform_operator',
+      jti: 'jti-expired',
+      bootId: app.locals.platformAuth.serverBootId,
+      exp: Date.now() - 1000 // expired 1s ago
+    }, TEST_PLATFORM_SESSION_SECRET);
+
+    const expiredRes = await fetch(`${baseUrl}/api/platform/me`, {
+      headers: { 'Cookie': `${PLATFORM_SESSION_COOKIE}=${encodeURIComponent(expiredToken)}` }
+    });
+    assert.equal(expiredRes.status, 401);
   } finally {
     delete app.locals.platformAdminToken;
-    delete app.locals.publicBaseUrl;
+    delete app.locals.platformSessionSecret;
     await new Promise(resolve => server.close(resolve));
+  }
+});
+
+test('Authentication Rate Limiting & Bypass Prevention: Lockout after 5 failures and Bearer bypass eliminated', async () => {
+  const server = await listen();
+  const address = server.address();
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  app.locals.platformAdminToken = TEST_PLATFORM_TOKEN;
+  app.locals.platformSessionSecret = TEST_PLATFORM_SESSION_SECRET;
+
+  try {
+    // 1. Bearer token path MUST be rejected (alternative bypass removed)
+    const bearerRes = await fetch(`${baseUrl}/api/platform/me`, {
+      headers: { 'Authorization': `Bearer ${TEST_PLATFORM_TOKEN}` }
+    });
+    assert.equal(bearerRes.status, 401, 'Bearer header must not bypass session auth');
+    const bearerBody = await bearerRes.json();
+    assert.equal(bearerBody.code, 'PLATFORM_AUTH_REQUIRED');
+
+    // 2. Throttling: 5 failed attempts allowed, 6th is locked out
+    if (app.locals.platformAuth) app.locals.platformAuth.resetRateLimit('127.0.0.1');
+
+    for (let i = 1; i <= 5; i++) {
+      const failRes = await fetch(`${baseUrl}/api/platform/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Origin': baseUrl },
+        body: JSON.stringify({ token: `invalid-attempt-number-${i}-32-chars-long` })
+      });
+      assert.equal(failRes.status, 401, `Attempt ${i} should be 401`);
+    }
+
+    // 6th attempt must be locked out with 429 RATE_LIMIT_EXCEEDED
+    const lockedRes = await fetch(`${baseUrl}/api/platform/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Origin': baseUrl },
+      body: JSON.stringify({ token: TEST_PLATFORM_TOKEN }) // even with correct credentials!
+    });
+    assert.equal(lockedRes.status, 429);
+    const lockedBody = await lockedRes.json();
+    assert.equal(lockedBody.code, 'RATE_LIMIT_EXCEEDED');
+
+    // Verify rate limit exceeded audit event was recorded
+    const events = app.locals.platformAuth.getRecentAuditEvents();
+    const rateLimitEvent = events.find(e => e.action === 'platform_rate_limit_exceeded');
+    assert.ok(rateLimitEvent, 'Must audit platform_rate_limit_exceeded event');
+    assert.equal(rateLimitEvent.result, 'failure');
+  } finally {
+    if (app.locals.platformAuth) app.locals.platformAuth.resetRateLimit('127.0.0.1');
+    delete app.locals.platformAdminToken;
+    delete app.locals.platformSessionSecret;
+    await new Promise(resolve => server.close(resolve));
+  }
+});
+
+test('DOM & Browser State Security: One-time onboarding URL is wiped from DOM on logout and navigation', () => {
+  const clientModule = require('../public/platform-invitations');
+
+  // Set up mock DOM elements
+  const mockElements = {
+    'created-url-banner': { hidden: false },
+    'created-url-input': {
+      value: 'https://portal.gg-beauty.com/onboarding.html?token=secret123456',
+      removeAttribute: function(_attr) { /* attribute removed */ }
+    },
+    'copy-message': { textContent: 'Onboarding link copied' },
+    'login-view': { hidden: true },
+    'main-view': { hidden: false },
+    'logout-btn': { hidden: false }
+  };
+
+  const originalDocument = global.document;
+  global.document = {
+    getElementById: id => mockElements[id] || null,
+    querySelectorAll: () => []
+  };
+
+  try {
+    // Verify initial mock state has sensitive URL
+    assert.equal(mockElements['created-url-input'].value, 'https://portal.gg-beauty.com/onboarding.html?token=secret123456');
+    assert.equal(mockElements['created-url-banner'].hidden, false);
+
+    // Call clearCreatedUrl
+    assert.equal(typeof clientModule.clearCreatedUrl, 'function');
+    clientModule.clearCreatedUrl();
+
+    // Verify the URL and messages are completely wiped, and banner hidden
+    assert.equal(mockElements['created-url-input'].value, '', 'Input value must be empty string');
+    assert.equal(mockElements['copy-message'].textContent, '', 'Copy message must be cleared');
+    assert.equal(mockElements['created-url-banner'].hidden, true, 'Banner must be hidden');
+  } finally {
+    global.document = originalDocument;
+  }
+});
+
+test('Structured Security Audit Logging: All required events emitted without leaking secrets, tokens, or hashes', () => {
+  const auth = createPlatformAuth({
+    getPlatformToken: () => TEST_PLATFORM_TOKEN,
+    getSessionSecret: () => TEST_PLATFORM_SESSION_SECRET
+  });
+
+  const rawToken = generateToken();
+  const tokenHash = hashToken(rawToken);
+
+  // Test event sanitization
+  const record = auth.auditPlatformEvent({
+    actor: 'platform_operator',
+    action: 'create_merchant_invitation',
+    invitationId: 'uuid-1234',
+    result: 'success',
+    details: {
+      rawToken,
+      token: rawToken,
+      tokenHash,
+      token_hash: tokenHash,
+      password: 'super-sensitive-password',
+      secret: 'platform-secret',
+      sessionCookie: 'session=xyz',
+      DATABASE_URL: 'postgres://user:pass@localhost:5432/db',
+      onboardingUrl: `https://example.com/onboarding.html?token=${rawToken}`,
+      merchantNameHint: 'Clean Spa'
+    }
+  });
+
+  // Verify structure
+  assert.equal(record.auditType, 'PLATFORM_SECURITY_AUDIT');
+  assert.equal(record.actor, 'platform_operator');
+  assert.equal(record.action, 'create_merchant_invitation');
+  assert.equal(record.invitationId, 'uuid-1234');
+  assert.equal(record.result, 'success');
+  assert.ok(record.timestamp);
+
+  // Security assertions: Sensitive fields MUST have been stripped
+  assert.equal(record.details.rawToken, undefined);
+  assert.equal(record.details.token, undefined);
+  assert.equal(record.details.tokenHash, undefined);
+  assert.equal(record.details.token_hash, undefined);
+  assert.equal(record.details.password, undefined);
+  assert.equal(record.details.secret, undefined);
+  assert.equal(record.details.sessionCookie, undefined);
+  assert.equal(record.details.DATABASE_URL, undefined);
+  assert.equal(record.details.onboardingUrl, undefined);
+
+  // Safe non-secret fields remain
+  assert.equal(record.details.merchantNameHint, 'Clean Spa');
+
+  // Verify all required event actions can be safely emitted
+  const requiredEventActions = [
+    { action: 'platform_login_success', actor: 'platform_operator' },
+    { action: 'platform_login_failed', actor: 'unauthenticated' },
+    { action: 'platform_rate_limit_exceeded', actor: 'unauthenticated' },
+    { action: 'platform_logout', actor: 'platform_operator' },
+    { action: 'platform_session_revoked', actor: 'platform_operator' },
+    { action: 'platform_session_expired', actor: 'unauthenticated' },
+    { action: 'platform_session_invalid', actor: 'unauthorized' },
+    { action: 'platform_unauthorized_attempt', actor: 'unauthorized' },
+    { action: 'platform_csrf_rejected', actor: 'unauthenticated' },
+    { action: 'create_merchant_invitation', actor: 'platform_operator' },
+    { action: 'create_merchant_invitation_failed', actor: 'platform_operator' },
+    { action: 'revoke_merchant_invitation', actor: 'platform_operator' },
+    { action: 'revoke_merchant_invitation_failed', actor: 'platform_operator' }
+  ];
+
+  for (const { action, actor } of requiredEventActions) {
+    const entry = auth.auditPlatformEvent({ action, actor, result: 'success' });
+    assert.equal(entry.action, action);
+    assert.equal(entry.actor, actor);
+    assert.equal(entry.auditType, 'PLATFORM_SECURITY_AUDIT');
   }
 });
 
@@ -144,6 +409,7 @@ test('Tenant & Role Authorization Security: Merchant users and unauthenticated c
   const baseUrl = `http://127.0.0.1:${address.port}`;
 
   app.locals.platformAdminToken = TEST_PLATFORM_TOKEN;
+  app.locals.platformSessionSecret = TEST_PLATFORM_SESSION_SECRET;
   app.locals.publicBaseUrl = baseUrl;
 
   try {
@@ -189,6 +455,7 @@ test('Tenant & Role Authorization Security: Merchant users and unauthenticated c
     }
   } finally {
     delete app.locals.platformAdminToken;
+    delete app.locals.platformSessionSecret;
     delete app.locals.publicBaseUrl;
     await new Promise(resolve => server.close(resolve));
   }
@@ -201,6 +468,7 @@ test('Platform Admin Invitation Creation: Token hash storage, trusted PUBLIC_BAS
   const trustedPublicBase = 'https://portal.gg-beauty.com';
 
   app.locals.platformAdminToken = TEST_PLATFORM_TOKEN;
+  app.locals.platformSessionSecret = TEST_PLATFORM_SESSION_SECRET;
   app.locals.publicBaseUrl = trustedPublicBase;
 
   const executedQueries = [];
@@ -220,12 +488,15 @@ test('Platform Admin Invitation Creation: Token hash storage, trusted PUBLIC_BAS
   app.locals.platformPool = mockDb;
 
   try {
+    const { cookie: sessionCookie } = await loginPlatformAdmin(baseUrl);
+    assert.ok(sessionCookie);
+
     // 1. CSRF rejection on cross-origin mutation
     const csrfRes = await fetch(`${baseUrl}/api/platform/invitations`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${TEST_PLATFORM_TOKEN}`,
+        'Cookie': sessionCookie,
         'Origin': 'https://evil-attacker.com'
       },
       body: JSON.stringify({ merchantNameHint: 'Spa Bloom', ttlDays: 7 })
@@ -239,7 +510,7 @@ test('Platform Admin Invitation Creation: Token hash storage, trusted PUBLIC_BAS
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${TEST_PLATFORM_TOKEN}`,
+        'Cookie': sessionCookie,
         'Origin': baseUrl,
         'Host': 'attacker-host-header.com' // Attacker attempts Host header injection
       },
@@ -302,6 +573,7 @@ test('Platform Admin Invitation Creation: Token hash storage, trusted PUBLIC_BAS
     assert.ok(!touchedTables.some(t => t.includes('appointments')));
   } finally {
     delete app.locals.platformAdminToken;
+    delete app.locals.platformSessionSecret;
     delete app.locals.publicBaseUrl;
     delete app.locals.platformPool;
     await new Promise(resolve => server.close(resolve));
@@ -314,6 +586,7 @@ test('Platform Admin Invitation Listing: Safe metadata only, never exposes token
   const baseUrl = `http://127.0.0.1:${address.port}`;
 
   app.locals.platformAdminToken = TEST_PLATFORM_TOKEN;
+  app.locals.platformSessionSecret = TEST_PLATFORM_SESSION_SECRET;
   app.locals.publicBaseUrl = baseUrl;
 
   const pastDate = new Date(Date.now() - 3600000);
@@ -385,9 +658,12 @@ test('Platform Admin Invitation Listing: Safe metadata only, never exposes token
   app.locals.platformPool = mockDb;
 
   try {
+    const { cookie: sessionCookie } = await loginPlatformAdmin(baseUrl);
+    assert.ok(sessionCookie);
+
     const res = await fetch(`${baseUrl}/api/platform/invitations`, {
       headers: {
-        'Authorization': `Bearer ${TEST_PLATFORM_TOKEN}`
+        'Cookie': sessionCookie
       }
     });
 
@@ -422,6 +698,7 @@ test('Platform Admin Invitation Listing: Safe metadata only, never exposes token
     }
   } finally {
     delete app.locals.platformAdminToken;
+    delete app.locals.platformSessionSecret;
     delete app.locals.publicBaseUrl;
     delete app.locals.platformPool;
     await new Promise(resolve => server.close(resolve));
@@ -434,6 +711,7 @@ test('Platform Admin Invitation Revocation: Pending invitation can be revoked, c
   const baseUrl = `http://127.0.0.1:${address.port}`;
 
   app.locals.platformAdminToken = TEST_PLATFORM_TOKEN;
+  app.locals.platformSessionSecret = TEST_PLATFORM_SESSION_SECRET;
   app.locals.publicBaseUrl = baseUrl;
 
   // Track invitation statuses in memory mock
@@ -460,11 +738,14 @@ test('Platform Admin Invitation Revocation: Pending invitation can be revoked, c
   app.locals.platformPool = mockDb;
 
   try {
+    const { cookie: sessionCookie } = await loginPlatformAdmin(baseUrl);
+    assert.ok(sessionCookie);
+
     // 1. Revoking a pending invitation succeeds
     const revokeRes = await fetch(`${baseUrl}/api/platform/invitations/11111111-1111-1111-1111-111111111111/revoke`, {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${TEST_PLATFORM_TOKEN}`,
+        'Cookie': sessionCookie,
         'Origin': baseUrl
       }
     });
@@ -478,7 +759,7 @@ test('Platform Admin Invitation Revocation: Pending invitation can be revoked, c
     const doubleRevokeRes = await fetch(`${baseUrl}/api/platform/invitations/11111111-1111-1111-1111-111111111111/revoke`, {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${TEST_PLATFORM_TOKEN}`,
+        'Cookie': sessionCookie,
         'Origin': baseUrl
       }
     });
@@ -490,7 +771,7 @@ test('Platform Admin Invitation Revocation: Pending invitation can be revoked, c
     const consumedRevokeRes = await fetch(`${baseUrl}/api/platform/invitations/22222222-2222-2222-2222-222222222222/revoke`, {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${TEST_PLATFORM_TOKEN}`,
+        'Cookie': sessionCookie,
         'Origin': baseUrl
       }
     });
@@ -502,7 +783,7 @@ test('Platform Admin Invitation Revocation: Pending invitation can be revoked, c
     const invalidIdRes = await fetch(`${baseUrl}/api/platform/invitations/not-a-uuid/revoke`, {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${TEST_PLATFORM_TOKEN}`,
+        'Cookie': sessionCookie,
         'Origin': baseUrl
       }
     });
@@ -511,59 +792,16 @@ test('Platform Admin Invitation Revocation: Pending invitation can be revoked, c
     assert.equal(invalidIdBody.code, 'INVALID_INVITATION_ID');
   } finally {
     delete app.locals.platformAdminToken;
+    delete app.locals.platformSessionSecret;
     delete app.locals.publicBaseUrl;
     delete app.locals.platformPool;
     await new Promise(resolve => server.close(resolve));
   }
 });
 
-test('Audit Logging: Platform events are audited without leaking raw tokens, hashes, passwords or DB secrets', () => {
-  const { createPlatformAuth } = require('../lib/platform-auth');
-  const auth = createPlatformAuth({ getPlatformToken: () => 'token' });
-
-  const rawToken = generateToken();
-  const tokenHash = hashToken(rawToken);
-
-  const entry = auth.auditPlatformEvent({
-    actor: 'platform_operator',
-    action: 'create_merchant_invitation',
-    invitationId: 'uuid-1234',
-    result: 'success',
-    details: {
-      rawToken,
-      token: rawToken,
-      tokenHash,
-      password: 'sensitive-password',
-      secret: 'secret-key',
-      session: 'session-id',
-      merchantNameHint: 'Clean Spa'
-    }
-  });
-
-  assert.equal(entry.actor, 'platform_operator');
-  assert.equal(entry.action, 'create_merchant_invitation');
-  assert.equal(entry.invitationId, 'uuid-1234');
-  assert.equal(entry.result, 'success');
-  assert.ok(entry.timestamp);
-
-  // Security assertions: Sensitive fields MUST have been stripped
-  assert.equal(entry.details.rawToken, undefined, 'rawToken must be stripped from audit');
-  assert.equal(entry.details.token, undefined, 'token must be stripped from audit');
-  assert.equal(entry.details.tokenHash, undefined, 'tokenHash must be stripped from audit');
-  assert.equal(entry.details.password, undefined, 'password must be stripped from audit');
-  assert.equal(entry.details.secret, undefined, 'secret must be stripped from audit');
-  assert.equal(entry.details.session, undefined, 'session must be stripped from audit');
-
-  // Safe non-secret fields remain
-  assert.equal(entry.details.merchantNameHint, 'Clean Spa');
-});
-
 test('Platform Admin UI & i18n Verification: 44px touch targets, required action names, full zh-CN/en coverage', () => {
-  const fs = require('fs');
-  const path = require('path');
   const rootDir = path.resolve(__dirname, '..');
   const html = fs.readFileSync(path.join(rootDir, 'public/platform-invitations.html'), 'utf8');
-  const js = fs.readFileSync(path.join(rootDir, 'public/platform-invitations.js'), 'utf8');
   const i18n = require('../public/shared-i18n');
 
   // 1. Minimum touch target requirement (44px)
@@ -641,15 +879,12 @@ test('Platform Admin UI & i18n Verification: 44px touch targets, required action
     const enVal = i18n.t(key, 'en');
     assert.ok(zhVal && zhVal !== key, `Missing zh-CN translation for ${key}`);
     assert.ok(enVal && enVal !== key, `Missing en translation for ${key}`);
-    // Ensure zhVal is Chinese and enVal is English
     assert.match(zhVal, /[\u4e00-\u9fa5]/, `zh-CN translation for ${key} must contain Chinese characters: "${zhVal}"`);
     assert.doesNotMatch(enVal, /[\u4e00-\u9fa5]/, `en translation for ${key} must not contain Chinese characters: "${enVal}"`);
   }
 });
 
 test('Merchant Onboarding Compatibility: Created invitation is consumable through existing onboarding flow', async () => {
-  const { createMerchantOnboarding } = require('../lib/merchant-onboarding');
-
   const rawToken = generateToken();
   const tokenHash = hashToken(rawToken);
 
@@ -658,8 +893,7 @@ test('Merchant Onboarding Compatibility: Created invitation is consumable throug
   let consumedAt = null;
 
   const mockDb = {
-    query: async (sql, params) => {
-      // 1. Validate invitation query
+    query: async (sql) => {
       if (/FROM public\.merchant_onboarding_invitations/i.test(sql)) {
         return {
           rows: [{
@@ -694,4 +928,3 @@ test('Merchant Onboarding Compatibility: Created invitation is consumable throug
   assert.equal(revokedInvitation.status, 'revoked');
   assert.equal(revokedInvitation.isValid, false);
 });
-

@@ -64,6 +64,24 @@
     }
   };
 
+  const clearCreatedUrl = () => {
+    const document = root.document;
+    if (!document) return;
+    const banner = document.getElementById('created-url-banner');
+    const urlInput = document.getElementById('created-url-input');
+    const copyMsg = document.getElementById('copy-message');
+    if (urlInput) {
+      urlInput.value = '';
+      urlInput.removeAttribute('value');
+    }
+    if (copyMsg) {
+      copyMsg.textContent = '';
+    }
+    if (banner) {
+      banner.hidden = true;
+    }
+  };
+
   const showView = viewName => {
     const loginView = document.getElementById('login-view');
     const mainView = document.getElementById('main-view');
@@ -74,6 +92,7 @@
       if (mainView) mainView.hidden = false;
       if (logoutBtn) logoutBtn.hidden = false;
     } else {
+      clearCreatedUrl();
       if (loginView) loginView.hidden = false;
       if (mainView) mainView.hidden = true;
       if (logoutBtn) logoutBtn.hidden = true;
@@ -145,6 +164,7 @@
   };
 
   const handleLogout = async () => {
+    clearCreatedUrl();
     try {
       await fetch('/api/platform/logout', {
         method: 'POST',
@@ -315,6 +335,7 @@
 
   const handleCreate = async event => {
     event.preventDefault();
+    clearCreatedUrl();
     const form = document.getElementById('create-invitation-form');
     const submitBtn = document.getElementById('create-submit-btn');
     const messageEl = document.getElementById('create-message');
@@ -448,6 +469,13 @@
     // Copy link button
     doc.getElementById('copy-url-btn')?.addEventListener('click', copyCreatedUrl);
 
+    // Dismiss banner button
+    doc.getElementById('dismiss-url-btn')?.addEventListener('click', clearCreatedUrl);
+
+    // Wipe DOM state on browser unload / hide
+    root.addEventListener?.('beforeunload', clearCreatedUrl);
+    root.addEventListener?.('pagehide', clearCreatedUrl);
+
     // Filter tabs
     doc.querySelectorAll('.tab-btn').forEach(btn => {
       btn.addEventListener('click', () => {
@@ -473,6 +501,7 @@
   return {
     init,
     setLocale,
-    t
+    t,
+    clearCreatedUrl
   };
 });
