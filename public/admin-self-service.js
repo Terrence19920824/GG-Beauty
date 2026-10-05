@@ -1248,6 +1248,7 @@
               </div>
             </div>
             <div>
+              ${canMutate && isActive ? `<button type="button" class="secondary-btn fd-reset-pw-btn" style="margin-right:8px;" data-membership-id="${escapeHtml(m.membershipId)}" data-display-name="${escapeHtml(m.displayName || '')}" data-login-identifier="${escapeHtml(m.loginIdentifier)}">${t('resetPassword')}</button>` : ''}
               ${canMutate ? (isActive
                 ? `<button class="secondary-btn danger-soft-btn" onclick="ownerSelfService.disableFrontDesk('${escapeHtml(m.membershipId)}')">${t('disableAccount')}</button>`
                 : `<button class="primary-btn" onclick="ownerSelfService.reactivateFrontDesk('${escapeHtml(m.membershipId)}')">${t('reactivateAccount')}</button>`
@@ -1259,6 +1260,15 @@
     }
 
     listEl.innerHTML = html;
+    listEl.querySelectorAll('.fd-reset-pw-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        openFrontDeskPasswordResetModal(
+          btn.getAttribute('data-membership-id'),
+          btn.getAttribute('data-display-name'),
+          btn.getAttribute('data-login-identifier')
+        );
+      });
+    });
   }
 
   function openFrontDeskInviteModal() {
@@ -1371,6 +1381,152 @@
     }
   }
 
+  function openFrontDeskPasswordResetModal(membershipId, displayName, loginIdentifier) {
+    if (!canWrite()) return;
+    const existing = byId('frontDeskResetModal');
+    if (existing) existing.remove();
+    const modal = document.createElement('div');
+    modal.id = 'frontDeskResetModal';
+    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:9999;';
+    modal.innerHTML = `
+      <div class="card" style="width:90%;max-width:480px;background:#fff;padding:24px;border-radius:12px;box-shadow:0 10px 25px rgba(0,0,0,0.2);">
+        <h3 style="margin-top:0;">${t('frontDeskPasswordResetTitle')}</h3>
+        <p class="muted" style="font-size:14px;margin-top:4px;margin-bottom:16px;">
+          ${escapeHtml(displayName || loginIdentifier)} (${escapeHtml(loginIdentifier)})
+        </p>
+        <div id="frontDeskResetError" class="save-status" style="margin-bottom:12px;"></div>
+        <div style="margin-bottom:16px;">
+          <label style="display:flex;align-items:center;gap:8px;margin-bottom:8px;cursor:pointer;">
+            <input id="fdResetModeAuto" type="radio" name="fdResetMode" value="auto" checked />
+            <span>${t('frontDeskResetAutoMode')}</span>
+          </label>
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+            <input id="fdResetModeManual" type="radio" name="fdResetMode" value="manual" />
+            <span>${t('frontDeskResetManualMode')}</span>
+          </label>
+        </div>
+        <div id="fdResetAutoHelp" style="padding:10px 12px;background:#f5f8ff;border:1px solid #d0e2ff;border-radius:6px;font-size:13px;color:#1d39c4;margin-bottom:16px;">
+          ${t('frontDeskTempPasswordNotice')}
+        </div>
+        <div id="fdResetManualFields" style="display:none;" class="form-grid">
+          <label class="field full">
+            <span>${t('frontDeskNewPassword')}</span>
+            <input id="fdResetNewPassword" type="password" minlength="16" placeholder="${t('frontDeskPasswordHelp')}">
+          </label>
+          <label class="field full">
+            <span>${t('frontDeskConfirmPassword')}</span>
+            <input id="fdResetConfirmPassword" type="password" minlength="16" placeholder="${t('frontDeskConfirmPassword')}">
+          </label>
+        </div>
+        <div class="form-actions" style="margin-top:20px;justify-content:flex-end;">
+          <button id="cancelFdResetBtn" type="button" class="secondary-btn">${t('cancel')}</button>
+          <button id="submitFdResetBtn" type="button" class="primary-btn">${t('confirm')}</button>
+        </div>
+      </div>
+    `;
+    modal.querySelector('#fdResetModeAuto')?.addEventListener('change', () => onFrontDeskResetModeChange('auto'));
+    modal.querySelector('#fdResetModeManual')?.addEventListener('change', () => onFrontDeskResetModeChange('manual'));
+    modal.querySelector('#cancelFdResetBtn')?.addEventListener('click', () => modal.remove());
+    modal.querySelector('#submitFdResetBtn')?.addEventListener('click', () => submitFrontDeskPasswordReset(membershipId));
+    document.body.appendChild(modal);
+  }
+
+  function onFrontDeskResetModeChange(mode) {
+    const autoHelp = byId('fdResetAutoHelp');
+    const manualFields = byId('fdResetManualFields');
+    if (mode === 'manual') {
+      if (autoHelp) autoHelp.style.display = 'none';
+      if (manualFields) manualFields.style.display = 'grid';
+    } else {
+      if (autoHelp) autoHelp.style.display = 'block';
+      if (manualFields) manualFields.style.display = 'none';
+    }
+  }
+
+  async function submitFrontDeskPasswordReset(membershipId) {
+    if (!canWrite()) return;
+    const mode = document.querySelector('input[name="fdResetMode"]:checked')?.value || 'auto';
+    let newPassword = null;
+    let confirmPassword = null;
+
+    if (mode === 'manual') {
+      newPassword = byId('fdResetNewPassword')?.value || '';
+      confirmPassword = byId('fdResetConfirmPassword')?.value || '';
+      if (!newPassword || newPassword.length < 16) {
+        setMessage('frontDeskResetError', t('onboardingPasswordTooShort') || t('frontDeskPasswordHelp'), true);
+        return;
+      }
+      if (newPassword !== confirmPassword) {
+        setMessage('frontDeskResetError', t('onboardingPasswordMismatch'), true);
+        return;
+      }
+    }
+
+    setBusy('submitFdResetBtn', true);
+    try {
+      const res = await request(`/api/owner/team/front-desk/${encodeURIComponent(membershipId)}/password-reset`, {
+        method: 'POST',
+        body: JSON.stringify({ mode, newPassword, confirmPassword })
+      });
+      const modal = byId('frontDeskResetModal');
+      if (modal) modal.remove();
+
+      if (res && res.data && res.data.temporaryPassword) {
+        showTempPasswordModal(res.data.temporaryPassword);
+      } else {
+        setMessage('frontDeskMessage', t('frontDeskPasswordResetSuccess'));
+      }
+      await loadFrontDesk();
+    } catch (error) {
+      if (!error.sessionExpired) setMessage('frontDeskResetError', error.message, true);
+    } finally {
+      setBusy('submitFdResetBtn', false);
+    }
+  }
+
+  function showTempPasswordModal(password) {
+    const existing = byId('tempPasswordModal');
+    if (existing) existing.remove();
+    const modal = document.createElement('div');
+    modal.id = 'tempPasswordModal';
+    modal.className = 'modal-backdrop';
+    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:9999;';
+    modal.innerHTML = `
+      <div class="card" style="width:90%;max-width:520px;background:#fff;padding:24px;border-radius:12px;box-shadow:0 10px 25px rgba(0,0,0,0.2);">
+        <h3 style="margin-top:0;">${t('frontDeskPasswordResetTitle')}</h3>
+        <p class="muted" style="font-size:14px;line-height:1.5;">${t('frontDeskTempPasswordNotice')}</p>
+        <div style="margin:16px 0;display:flex;gap:8px;">
+          <input id="tempPasswordInput" type="text" readonly value="${escapeHtml(password)}" style="flex:1;padding:8px 12px;border:1px solid #ddd;border-radius:6px;font-size:14px;font-family:monospace;background:#f9f9f9;font-weight:600;letter-spacing:1px;" />
+          <button id="copyTempPasswordBtn" type="button" class="primary-btn">${t('copyPassword')}</button>
+        </div>
+        <div id="tempPasswordCopyStatus" class="save-status" style="margin-bottom:12px;"></div>
+        <div style="text-align:right;">
+          <button id="closeTempPasswordBtn" type="button" class="secondary-btn">${t('close')}</button>
+        </div>
+      </div>
+    `;
+    modal.querySelector('#copyTempPasswordBtn')?.addEventListener('click', copyTempPassword);
+    modal.querySelector('#closeTempPasswordBtn')?.addEventListener('click', () => modal.remove());
+    document.body.appendChild(modal);
+  }
+
+  function copyTempPassword() {
+    const input = byId('tempPasswordInput');
+    if (!input) return;
+    input.select();
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(input.value).then(() => {
+        setMessage('tempPasswordCopyStatus', t('passwordCopied'));
+      }).catch(() => {
+        document.execCommand('copy');
+        setMessage('tempPasswordCopyStatus', t('passwordCopied'));
+      });
+    } else {
+      document.execCommand('copy');
+      setMessage('tempPasswordCopyStatus', t('passwordCopied'));
+    }
+  }
+
   initializeCustomerUi();
   global.ownerSelfService = {
     setLocale, setProfile, reset, showView, loadServices, renderCategories, openCategoryForm, closeCategoryForm, saveCategory,
@@ -1382,6 +1538,7 @@
     renderStaffAccount, generateStaffInvitation, revokeStaffInvitation, disableStaffAccount, reactivateStaffAccount,
     showActivationLinkModal, copyActivationUrl,
     loadFrontDesk, openFrontDeskInviteModal, submitFrontDeskInvite, revokeFrontDeskInvite, disableFrontDesk, reactivateFrontDesk,
+    openFrontDeskPasswordResetModal, onFrontDeskResetModeChange, submitFrontDeskPasswordReset, showTempPasswordModal, copyTempPassword,
     _state: state, _request: request
   };
   setLocale(initialLocale());

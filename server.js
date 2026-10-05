@@ -81,7 +81,8 @@ const {
   validateFrontDeskInvitation,
   consumeFrontDeskInvitation,
   disableFrontDeskMembership,
-  reactivateFrontDeskMembership
+  reactivateFrontDeskMembership,
+  resetFrontDeskPassword
 } = require('./lib/front-desk-activation');
 const {
   normalizeLocale
@@ -2161,6 +2162,37 @@ app.patch(
         return res.status(error.status).json({ success: false, code: error.code, message: error.publicMessage });
       }
       return res.status(500).json({ success: false, code: 'MEMBERSHIP_STATUS_UPDATE_FAILED', message: '更新前台成员状态失败' });
+    }
+  }
+);
+
+app.post(
+  '/api/owner/team/front-desk/:membershipId/password-reset',
+  requireOwnerAuth,
+  requireOwnerRole(['owner', 'manager', 'admin']),
+  async (req, res) => {
+    if (!isUuid(req.params.membershipId)) {
+      return res.status(400).json({ success: false, code: 'INVALID_MEMBERSHIP_ID', message: '无效的成员ID' });
+    }
+    const { mode, newPassword, confirmPassword } = req.body || {};
+    try {
+      const authPool = app.locals.ownerAuthPool || pool;
+      const data = await resetFrontDeskPassword(authPool, {
+        shopId: req.ownerAuth.shopId,
+        membershipId: req.params.membershipId,
+        operatorId: req.ownerAuth.ownerAccountId,
+        mode,
+        newPassword,
+        confirmPassword,
+        clientIp: req.ip,
+        userAgent: req.get('user-agent')
+      });
+      return res.json({ success: true, data });
+    } catch (error) {
+      if (error instanceof FrontDeskActivationError) {
+        return res.status(error.status).json({ success: false, code: error.code, message: error.publicMessage });
+      }
+      return res.status(500).json({ success: false, code: 'PASSWORD_RESET_FAILED', message: '重置前台密码失败' });
     }
   }
 );
