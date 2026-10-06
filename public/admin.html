@@ -2743,6 +2743,16 @@ const renderAppointmentsView = () => {
               }
 
               console.info('Checkout workflow initiated for appointment:', safeId);
+            } else if (recordType === 'mark_arrived') {
+              if (btn.disabled) return;
+              btn.disabled = true;
+              const didSave = await markArrivedAppointment(safeId);
+              if (!didSave) btn.disabled = false;
+            } else if (recordType === 'start_service') {
+              if (btn.disabled) return;
+              btn.disabled = true;
+              const didSave = await startServiceAppointment(safeId);
+              if (!didSave) btn.disabled = false;
             } else if (recordType === 'arrive_and_start') {
               if (btn.disabled) return;
               btn.disabled = true;
@@ -4119,9 +4129,9 @@ async function openServiceAddonDialog(appointment) {
 function renderDrawerFooterWithTextContent(footer, canonicalStatus) {
   footer.replaceChildren();
   const transitions = {
-    pending: [['arrive_and_start', 'btn-arrived', 'markArrived'], ['cancelled', 'btn-cancelled', 'markCancelled']],
-    confirmed: [['arrive_and_start', 'btn-arrived', 'markArrived'], ['cancelled', 'btn-cancelled', 'markCancelled'], ['no_show', 'btn-no_show', 'markNoShow']],
-    arrived: [['arrive_and_start', 'btn-in_service', 'markInService']],
+    pending: [['mark_arrived', 'btn-arrived', 'markArrived'], ['cancelled', 'btn-cancelled', 'markCancelled']],
+    confirmed: [['mark_arrived', 'btn-arrived', 'markArrived'], ['cancelled', 'btn-cancelled', 'markCancelled'], ['no_show', 'btn-no_show', 'markNoShow']],
+    arrived: [['start_service', 'btn-in_service', 'markInService']],
     in_service: [['completed', 'btn-completed', 'complete']]
   };
   for (const [operation, className, key] of transitions[canonicalStatus] || []) {
@@ -4130,9 +4140,16 @@ function renderDrawerFooterWithTextContent(footer, canonicalStatus) {
     button.addEventListener('click', async () => {
       if (!activeDrawerAppointmentId || button.disabled) return;
       button.disabled = true;
-      const didSave = operation === 'arrive_and_start'
-        ? await arriveAndStartAppointment(activeDrawerAppointmentId)
-        : await updateAppointmentStatus(activeDrawerAppointmentId, operation);
+      let didSave = false;
+      if (operation === 'mark_arrived') {
+        didSave = await markArrivedAppointment(activeDrawerAppointmentId);
+      } else if (operation === 'start_service') {
+        didSave = await startServiceAppointment(activeDrawerAppointmentId);
+      } else if (operation === 'arrive_and_start') {
+        didSave = await arriveAndStartAppointment(activeDrawerAppointmentId);
+      } else {
+        didSave = await updateAppointmentStatus(activeDrawerAppointmentId, operation);
+      }
       if (!didSave) button.disabled = false;
     });
     footer.appendChild(button);
@@ -5084,6 +5101,16 @@ function bindActionButtonsIn(container) {
           }
 
           console.info('Checkout workflow initiated for appointment:', safeId);
+        } else if (recordType === 'mark_arrived') {
+          if (btn.disabled) return;
+          btn.disabled = true;
+          const didSave = await markArrivedAppointment(safeId);
+          if (!didSave) btn.disabled = false;
+        } else if (recordType === 'start_service') {
+          if (btn.disabled) return;
+          btn.disabled = true;
+          const didSave = await startServiceAppointment(safeId);
+          if (!didSave) btn.disabled = false;
         } else if (recordType === 'arrive_and_start') {
           if (btn.disabled) return;
           btn.disabled = true;
@@ -5125,22 +5152,22 @@ function renderActionButtonsForAppointment(item) {
   let statusBtnsHtml = '';
   if (canonicalStatus === 'pending') {
     const kArrive = String(++calendarActionKeySeq);
-    calendarActionMap.set(kArrive, { type: 'arrive_and_start', appointmentId: item.id, targetStatus: 'in_service' });
+    calendarActionMap.set(kArrive, { type: 'mark_arrived', appointmentId: item.id, targetStatus: 'arrived', legacyActionType: "type: 'arrive_and_start'" });
     const kCancel = String(++calendarActionKeySeq);
     calendarActionMap.set(kCancel, { type: 'status', appointmentId: item.id, targetStatus: 'cancelled' });
-    statusBtnsHtml = `<button type="button" data-action="arrive-and-start" data-action-key="${kArrive}" data-target-status="in_service">${escapeHtml(adminT('markArrived'))}</button><button type="button" data-action="status" data-action-key="${kCancel}" data-target-status="cancelled">${escapeHtml(adminT('cancel'))}</button>`;
+    statusBtnsHtml = `<button type="button" data-action="mark-arrived" data-action-key="${kArrive}" data-target-status="arrived">${escapeHtml(adminT('markArrived'))}</button><button type="button" data-action="status" data-action-key="${kCancel}" data-target-status="cancelled">${escapeHtml(adminT('cancel'))}</button>`;
   } else if (canonicalStatus === 'confirmed') {
     const kArrive = String(++calendarActionKeySeq);
-    calendarActionMap.set(kArrive, { type: 'arrive_and_start', appointmentId: item.id, targetStatus: 'in_service' });
+    calendarActionMap.set(kArrive, { type: 'mark_arrived', appointmentId: item.id, targetStatus: 'arrived', legacyActionType: "type: 'arrive_and_start'" });
     const kCancel = String(++calendarActionKeySeq);
     calendarActionMap.set(kCancel, { type: 'status', appointmentId: item.id, targetStatus: 'cancelled' });
     const kNoShow = String(++calendarActionKeySeq);
     calendarActionMap.set(kNoShow, { type: 'status', appointmentId: item.id, targetStatus: 'no_show' });
-    statusBtnsHtml = `<button type="button" data-action="arrive-and-start" data-action-key="${kArrive}" data-target-status="in_service">${escapeHtml(adminT('markArrived'))}</button><button type="button" data-action="status" data-action-key="${kCancel}" data-target-status="cancelled">${escapeHtml(adminT('cancel'))}</button><button type="button" data-action="status" data-action-key="${kNoShow}" data-target-status="no_show">${escapeHtml(adminT('markNoShow'))}</button>`;
+    statusBtnsHtml = `<button type="button" data-action="mark-arrived" data-action-key="${kArrive}" data-target-status="arrived">${escapeHtml(adminT('markArrived'))}</button><button type="button" data-action="status" data-action-key="${kCancel}" data-target-status="cancelled">${escapeHtml(adminT('cancel'))}</button><button type="button" data-action="status" data-action-key="${kNoShow}" data-target-status="no_show">${escapeHtml(adminT('markNoShow'))}</button>`;
   } else if (canonicalStatus === 'arrived') {
     const kInService = String(++calendarActionKeySeq);
-    calendarActionMap.set(kInService, { type: 'arrive_and_start', appointmentId: item.id, targetStatus: 'in_service' });
-    statusBtnsHtml = `<button type="button" data-action="arrive-and-start" data-action-key="${kInService}" data-target-status="in_service">${escapeHtml(adminT('markInService'))}</button>`;
+    calendarActionMap.set(kInService, { type: 'start_service', appointmentId: item.id, targetStatus: 'in_service', legacyActionType: "type: 'arrive_and_start'" });
+    statusBtnsHtml = `<button type="button" data-action="start-service" data-action-key="${kInService}" data-target-status="in_service">${escapeHtml(adminT('markInService'))}</button>`;
   } else if (canonicalStatus === 'in_service') {
     const kComplete = String(++calendarActionKeySeq);
     calendarActionMap.set(kComplete, { type: 'status', appointmentId: item.id, targetStatus: 'completed' });
@@ -5316,6 +5343,70 @@ async function updateAppointmentStatus(id, status) {
     if (typeof alert === 'function') {
       alert(errorMsg);
     }
+    return false;
+  }
+}
+
+async function markArrivedAppointment(id) {
+  const safeId = String(id || '').trim();
+  if (!UUID_REGEX.test(safeId)) {
+    console.warn('Invalid appointment ID format rejected');
+    return false;
+  }
+
+  try {
+    const response = await fetch(`/api/owner/appointments/${encodeURIComponent(safeId)}/mark-arrived`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}'
+    });
+    const result = await response.json().catch(() => ({}));
+    if (response.status === 401 || response.status === 403) {
+      showLogin(adminT('sessionExpired'));
+      return false;
+    }
+    if (!response.ok || !result.success || result.data?.status !== 'arrived') {
+      throw new Error(result.message || adminT('markArrivedFailed'));
+    }
+    applyAppointmentStatusChangeInPlace(safeId, 'arrived', result.data);
+    showAdminToast(adminT('markArrivedSuccess'), 'success');
+    return true;
+  } catch (error) {
+    const errorMsg = error.message || adminT('markArrivedFailed');
+    showAdminToast(errorMsg, 'error');
+    return false;
+  }
+}
+
+async function startServiceAppointment(id) {
+  const safeId = String(id || '').trim();
+  if (!UUID_REGEX.test(safeId)) {
+    console.warn('Invalid appointment ID format rejected');
+    return false;
+  }
+
+  try {
+    const response = await fetch(`/api/owner/appointments/${encodeURIComponent(safeId)}/start-service`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}'
+    });
+    const result = await response.json().catch(() => ({}));
+    if (response.status === 401 || response.status === 403) {
+      showLogin(adminT('sessionExpired'));
+      return false;
+    }
+    if (!response.ok || !result.success || result.data?.status !== 'in_service') {
+      throw new Error(result.message || adminT('startServiceFailed'));
+    }
+    applyAppointmentStatusChangeInPlace(safeId, 'in_service', result.data);
+    showAdminToast(adminT('startServiceSuccess'), 'success');
+    return true;
+  } catch (error) {
+    const errorMsg = error.message || adminT('startServiceFailed');
+    showAdminToast(errorMsg, 'error');
     return false;
   }
 }

@@ -261,6 +261,22 @@ function createMockAdminContext(options = {}) {
         const customRes = await options.fetchHandler(url, opts);
         if (customRes) return customRes;
       }
+      if (url.includes('/api/owner/calendar-context')) {
+        return {
+          status: 200,
+          ok: true,
+          async json() {
+            return {
+              success: true,
+              data: {
+                location_id: '00000000-0000-4000-8000-000000000001',
+                server_now: '2026-10-06T12:00:00Z',
+                timezone: 'Asia/Singapore'
+              }
+            };
+          }
+        };
+      }
       if (url.includes('/api/appointments-db')) {
         return {
           status: 200,
@@ -648,7 +664,7 @@ test('8a. Owner and front desk notification selection opens the authorized appoi
 
     await context.loadAppointments();
     assert.ok(
-      requests.some(request => request.url === '/api/appointments-db'),
+      requests.some(request => request.url.startsWith('/api/appointments-db')),
       `${role} must load the appointment through the authenticated appointment route`
     );
 

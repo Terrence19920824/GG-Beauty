@@ -161,12 +161,81 @@ test('canonical payload preserves retry idempotency and allocates order discount
 
 test('server-authoritative totals are honored upon checkout response', async () => {
   const fixture = adapter.getMockFixture();
-  const res = await adapter.submitCheckout(fixture);
-  assert.equal(res.success, true);
-  assert.ok(res.data.receiptNumber);
-  // Authoritative fields present:
-  assert.ok(res.data.finalDueMinor !== undefined || res.data.finalTotal !== undefined);
-  assert.ok(res.data.paidMinor !== undefined || res.data.paidTotal !== undefined);
+  const originalFetch = global.fetch;
+  try {
+    global.fetch = async (url, options) => {
+      return {
+        ok: true,
+        json: async () => ({
+          success: true,
+          data: {
+            id: 'chk_srv_998877',
+            status: 'paid',
+            final_due_minor: 2000,
+            paid_minor: 2000
+          }
+        })
+      };
+    };
+    const res = await adapter.submitCheckout(fixture);
+    assert.equal(res.success, true);
+    assert.equal(res.data.isAuthoritative, true);
+    assert.equal(res.data.receiptNumber, 'REC-998877');
+    assert.equal(res.data.finalDueMinor, 2000);
+    assert.equal(res.data.paidMinor, 2000);
+    assert.equal(res.data.isMockReceipt, undefined);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test('submitCheckout fails closed on network error and never returns mock success or receipt', async () => {
+  const fixture = adapter.getMockFixture();
+  const originalFetch = global.fetch;
+  try {
+    global.fetch = async () => {
+      throw new Error('TypeError: Failed to fetch (simulated network offline)');
+    };
+    await assert.rejects(
+      async () => {
+        await adapter.submitCheckout(fixture);
+      },
+      (err) => {
+        assert.match(err.message, /Failed to fetch/);
+        return true;
+      }
+    );
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test('submitCheckout fails closed on HTTP 409 or 500 error', async () => {
+  const fixture = adapter.getMockFixture();
+  const originalFetch = global.fetch;
+  try {
+    global.fetch = async () => ({
+      ok: false,
+      status: 409,
+      json: async () => ({
+        success: false,
+        code: 'CHECKOUT_APPOINTMENT_STATUS_INVALID',
+        message: 'Appointment status must be arrived, in_service, or completed'
+      })
+    });
+    await assert.rejects(
+      async () => {
+        await adapter.submitCheckout(fixture);
+      },
+      (err) => {
+        assert.equal(err.status, 409);
+        assert.equal(err.code, 'CHECKOUT_APPOINTMENT_STATUS_INVALID');
+        return true;
+      }
+    );
+  } finally {
+    global.fetch = originalFetch;
+  }
 });
 
 test('owner checkout UI displays price override, discount reason inputs, and translation protections', () => {

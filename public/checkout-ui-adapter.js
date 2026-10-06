@@ -602,73 +602,54 @@
     const appointmentId = session.appointmentId;
     const url = `/api/owner/appointments/${encodeURIComponent(appointmentId)}/checkout`;
 
-    // In non-browser / test or offline dev prototype, return simulated response
-    if (typeof window === 'undefined' || typeof fetch !== 'function') {
-      const previewTotals = calculateTotals(session);
-      return {
-        success: true,
-        data: {
-          id: `chk_mock_${Date.now()}`,
-          status: 'paid',
-          final_due_minor: toMinorUnits(previewTotals.finalTotal),
-          paid_minor: toMinorUnits(previewTotals.paidTotal),
-          finalTotal: previewTotals.finalTotal,
-          paidTotal: previewTotals.paidTotal,
-          receiptNumber: `REC-MOCK-${Date.now().toString().slice(-6)}`,
-          completedAt: new Date().toISOString(),
-          isMockReceipt: true,
-          isAuthoritative: false
-        }
-      };
+    const fetchFn = (typeof window !== 'undefined' && typeof window.fetch === 'function')
+      ? window.fetch
+      : (typeof fetch === 'function' ? fetch : null);
+
+    if (!fetchFn) {
+      throw new Error('Fetch API is not available');
     }
 
-    try {
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'same-origin',
-        body: JSON.stringify(payload)
-      });
+    const response = await fetchFn(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify(payload)
+    });
 
-      const result = await response.json();
-      if (response.ok && result && result.success) {
-        // Server authoritative totals returned: result.data.final_due_minor, paid_minor
-        return {
-          success: true,
-          data: {
-            id: result.data.id,
-            status: result.data.status,
-            finalDueMinor: result.data.final_due_minor,
-            paidMinor: result.data.paid_minor,
-            finalTotal: fromMinorUnits(result.data.final_due_minor),
-            paidTotal: fromMinorUnits(result.data.paid_minor),
-            receiptNumber: `REC-${String(result.data.id || '').slice(-6).toUpperCase() || Date.now().toString().slice(-6)}`,
-            completedAt: new Date().toISOString(),
-            idempotent: result.idempotent || false,
-            isAuthoritative: true
-          }
-        };
-      } else {
-        throw new Error(result.code || result.message || 'Checkout failed on server');
-      }
-    } catch (err) {
-      // Fallback for disconnected / standalone prototype preview
-      const previewTotals = calculateTotals(session);
+    let result = null;
+    try {
+      result = await response.json();
+    } catch (_parseErr) {
+      const err = new Error(`Server returned non-JSON response (${response.status})`);
+      err.status = response.status;
+      throw err;
+    }
+
+    if (response.ok && result && result.success) {
+      // Server authoritative totals returned: result.data.final_due_minor, paid_minor
       return {
         success: true,
         data: {
-          id: `chk_mock_${Date.now()}`,
-          status: 'paid',
-          finalDueMinor: toMinorUnits(previewTotals.finalTotal),
-          paidMinor: toMinorUnits(previewTotals.paidTotal),
-          finalTotal: previewTotals.finalTotal,
-          paidTotal: previewTotals.paidTotal,
-          receiptNumber: `REC-MOCK-${Date.now().toString().slice(-6)}`,
+          id: result.data.id,
+          status: result.data.status,
+          finalDueMinor: result.data.final_due_minor,
+          paidMinor: result.data.paid_minor,
+          finalTotal: fromMinorUnits(result.data.final_due_minor),
+          paidTotal: fromMinorUnits(result.data.paid_minor),
+          receiptNumber: `REC-${String(result.data.id || '').slice(-6).toUpperCase() || Date.now().toString().slice(-6)}`,
           completedAt: new Date().toISOString(),
-          isMockReceipt: true,
-          isAuthoritative: false
+          idempotent: result.idempotent || false,
+          isAuthoritative: true
         }
       };
+    } else {
+      const errorMsg = (result && (result.code || result.message)) || `Checkout failed on server (${response.status})`;
+      const error = new Error(errorMsg);
+      error.status = response.status;
+      error.code = result && result.code;
+      error.data = result;
+      throw error;
     }
   }
 

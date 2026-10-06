@@ -129,7 +129,9 @@ const {
   projectOwnerAppointmentCheckout
 } = require('./lib/owner-appointment-checkout-projection');
 const {
-  createOwnerAppointmentArriveStart
+  createOwnerAppointmentArriveStart,
+  createOwnerAppointmentMarkArrived,
+  createOwnerAppointmentStartService
 } = require('./lib/owner-appointment-arrive-start');
 const {
   getOwnerFrontDeskCreationPolicy
@@ -6908,6 +6910,49 @@ app.post(
     safeErrorCode: safeStaffAuthErrorCode
   })
 );
+
+app.post(
+  '/api/owner/appointments/:appointmentId/mark-arrived',
+  requireOwnerAuth,
+  requireOwnerRole(['owner', 'manager', 'admin', 'front_desk']),
+  createOwnerAppointmentMarkArrived({
+    pool: {
+      connect: (...args) => app.locals.ownerAuthPool.connect(...args)
+    },
+    isUuid,
+    runInTransaction,
+    AppointmentMutationError,
+    loadAndValidatePhaseAStructure,
+    syncAppointmentItemStatus,
+    isKnownStatus,
+    canTransition,
+    ownerStatusHistoryActorType,
+    recordStatusHistory,
+    safeErrorCode: safeStaffAuthErrorCode
+  })
+);
+
+app.post(
+  '/api/owner/appointments/:appointmentId/start-service',
+  requireOwnerAuth,
+  requireOwnerRole(['owner', 'manager', 'admin', 'front_desk']),
+  createOwnerAppointmentStartService({
+    pool: {
+      connect: (...args) => app.locals.ownerAuthPool.connect(...args)
+    },
+    isUuid,
+    runInTransaction,
+    AppointmentMutationError,
+    loadAndValidatePhaseAStructure,
+    syncAppointmentItemStatus,
+    isKnownStatus,
+    canTransition,
+    ownerStatusHistoryActorType,
+    recordStatusHistory,
+    safeErrorCode: safeStaffAuthErrorCode
+  })
+);
+
 
 app.post(
   '/api/admin/update-status-db',
