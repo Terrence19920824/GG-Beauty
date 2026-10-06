@@ -22,8 +22,9 @@ const todaySingapore = new Intl.DateTimeFormat('en-CA', {
   month: '2-digit',
   day: '2-digit'
 }).format(new Date());
+const sampleLocationId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 
-const getTodaySingaporeIso = (hour = 9, minute = 15) => {
+const getTodaySingaporeIso = (hour = 10, minute = 15) => {
   const [y, m, d] = todaySingapore.split('-').map(Number);
   const dt = new Date(Date.UTC(y, m - 1, d, hour - 8, minute, 0));
   return dt.toISOString();
@@ -31,8 +32,8 @@ const getTodaySingaporeIso = (hour = 9, minute = 15) => {
 
 const sampleAppointment = {
   id: '00000000-0000-4000-8000-000000000001',
-  start_at: getTodaySingaporeIso(9, 15),
-  end_at: getTodaySingaporeIso(10, 45),
+  start_at: getTodaySingaporeIso(10, 15),
+  end_at: getTodaySingaporeIso(11, 45),
   customer_name: 'VIP Customer',
   customer_phone: '91234567',
   service_name: 'Hair Treatment',
@@ -45,9 +46,9 @@ const sampleAppointment = {
 };
 
 const sampleStaff = [
-  { id: '11111111-1111-4000-8000-000000000001', name: 'Alice', is_active: true },
-  { id: '22222222-2222-4000-8000-000000000002', name: 'Bob', is_active: true },
-  { id: '33333333-3333-4000-8000-000000000003', name: 'Charlie', is_active: true }
+  { id: '11111111-1111-4000-8000-000000000001', name: 'Alice', is_active: true, bookable: true },
+  { id: '22222222-2222-4000-8000-000000000002', name: 'Bob', is_active: true, bookable: true },
+  { id: '33333333-3333-4000-8000-000000000003', name: 'Charlie', is_active: true, bookable: true }
 ];
 
 function parseMockButtons(contentHtml, onAttrRemoved) {
@@ -169,6 +170,11 @@ const createTestContext = (initialStorage = {}) => {
         const list = (listeners.get('click') || []).slice();
         for (const fn of list) fn({ type: 'click', target: this, preventDefault() {} });
       },
+      change(value) {
+        this.value = value;
+        const list = (listeners.get('change') || []).slice();
+        for (const fn of list) fn({ type: 'change', target: this, preventDefault() {} });
+      },
       querySelector(sel) {
         if (sel === 'span') {
           return {
@@ -259,6 +265,8 @@ const createTestContext = (initialStorage = {}) => {
   const alerts = [];
   let currentApiAppointments = [sampleAppointment];
   let currentApiStaff = sampleStaff;
+  let currentApiAvailability = null;
+  let availabilityResponder = null;
 
   const mockLocalStorage = {
     getItem(k) { return storage.get(k) || null; },
@@ -286,6 +294,26 @@ const createTestContext = (initialStorage = {}) => {
     alert: (msg) => alerts.push(msg),
     fetch: async (url, options = {}) => {
       requests.push({ url, options });
+      if (url.includes('/api/owner/calendar-staff-availability')) {
+        if (availabilityResponder) return availabilityResponder(url, options);
+        const date = new URL(url, 'http://calendar.test').searchParams.get('date');
+        const data = currentApiAvailability || {
+          date,
+          locationId: sampleLocationId,
+          timezone: 'Asia/Singapore',
+          businessWindows: [{ start: '10:00', end: '21:00' }],
+          businessHoursSource: 'fallback',
+          staff: currentApiStaff.map(staff => ({
+            id: staff.id,
+            name: staff.name,
+            status: 'working',
+            workingWindows: [{ start: '10:00', end: '21:00' }],
+            reason: 'WEEKLY_HOURS',
+            source: 'weekly+fallback'
+          }))
+        };
+        return { status: 200, ok: true, json: async () => ({ success: true, data }) };
+      }
       if (url.includes('/api/appointments-db')) {
         return {
           status: 200,
@@ -309,7 +337,7 @@ const createTestContext = (initialStorage = {}) => {
             data: {
               server_now: new Date().toISOString(),
               timezone: 'Asia/Singapore',
-              location_id: '00000000-0000-0000-0000-000000000001'
+              location_id: sampleLocationId
             }
           })
         };
@@ -365,7 +393,9 @@ const createTestContext = (initialStorage = {}) => {
     setApiData: (appts, staff) => {
       currentApiAppointments = appts;
       if (staff !== undefined) currentApiStaff = staff;
-    }
+    },
+    setAvailability: value => { currentApiAvailability = value; },
+    setAvailabilityResponder: value => { availabilityResponder = value; }
   };
 };
 
@@ -487,13 +517,13 @@ test('45. missing or unauthenticated primary staff fails closed to unassigned co
   assert.match(html, /未分配员工/);
 });
 
-test('47 & 48. time positioning and duration scale accurately for non-hourly appointments (09:15-10:45)', async () => {
-  // 09:15 - 10:45 Singapore time = 15min offset from 09:00 (15 * 1.25 = 18.75 -> 18.8px), duration 90min (90 * 1.25 = 112.5px)
+test('47 & 48. time positioning and duration scale accurately for non-hourly appointments (10:15-11:45)', async () => {
+  // 10:15 - 11:45 Singapore time = 15min offset from 10:00 (15 * 1.25 = 18.75 -> 18.8px), duration 90min (90 * 1.25 = 112.5px)
   const { elements, load } = createTestContext({ gg_beauty_owner_view: 'calendar' });
   await load([sampleAppointment], sampleStaff);
   const html = elements.get('content').innerHTML;
 
-  assert.match(html, /09:15\s*-\s*10:45/);
+  assert.match(html, /10:15\s*-\s*11:45/);
   assert.match(html, /top:\s*18\.8px;/);
   assert.match(html, /height:\s*112\.5px;/);
 });
@@ -502,15 +532,15 @@ test('49. overlapping appointments within same staff column render in concurrent
   const apptA = {
     ...sampleAppointment,
     id: '00000000-0000-4000-8000-00000000000a',
-    start_at: getTodaySingaporeIso(9, 0),
-    end_at: getTodaySingaporeIso(10, 0),
+    start_at: getTodaySingaporeIso(10, 0),
+    end_at: getTodaySingaporeIso(11, 0),
     customer_name: 'Customer One'
   };
   const apptB = {
     ...sampleAppointment,
     id: '00000000-0000-4000-8000-00000000000b',
-    start_at: getTodaySingaporeIso(9, 30),
-    end_at: getTodaySingaporeIso(10, 30),
+    start_at: getTodaySingaporeIso(10, 30),
+    end_at: getTodaySingaporeIso(11, 30),
     customer_name: 'Customer Two'
   };
   const { elements, load } = createTestContext({ gg_beauty_owner_view: 'calendar' });
@@ -711,4 +741,139 @@ test('60. calendar grid renders premium hour, half-hour, and quarter-hour visual
   assert.match(html, /owner-calendar-time-tick is-minor is-half-hour[^>]*>10:30</);
   assert.match(html, /owner-calendar-time-tick is-minor is-quarter-hour[^>]*>10:15</);
   assert.match(html, /owner-calendar-time-tick is-minor is-quarter-hour[^>]*>10:45</);
+});
+
+test('61. non-working regions are grey, blocked by schedule semantics, and appointments remain visible above them', async () => {
+  const fixture = createTestContext({ gg_beauty_owner_view: 'calendar' });
+  fixture.setAvailability({
+    date: todaySingapore,
+    locationId: sampleLocationId,
+    timezone: 'Asia/Singapore',
+    businessWindows: [{ start: '10:00', end: '21:00' }],
+    businessHoursSource: 'fallback',
+    staff: [{
+      id: sampleStaff[0].id,
+      name: sampleStaff[0].name,
+      status: 'working',
+      workingWindows: [{ start: '10:00', end: '12:00' }],
+      reason: 'WEEKLY_HOURS',
+      source: 'weekly+fallback'
+    }]
+  });
+  await fixture.load([sampleAppointment], sampleStaff);
+  const rendered = fixture.elements.get('content').innerHTML;
+  assert.match(rendered, /owner-calendar-nonworking-block/);
+  assert.match(rendered, /非工作时间/);
+  assert.match(rendered, /VIP Customer/, 'historical appointment remains visible over grey time');
+  assert.equal(fixture.context.isMinuteWithinStaffWorkingWindows(sampleStaff[0].id, 10 * 60 + 30), true);
+  assert.equal(fixture.context.isMinuteWithinStaffWorkingWindows(sampleStaff[0].id, 9 * 60 + 30), false);
+  assert.match(css, /\.owner-calendar-nonworking-block[\s\S]*z-index:\s*2/);
+  assert.match(css, /\.owner-calendar-appointment\s*\{[\s\S]*z-index:\s*4/);
+});
+
+test('62. off-day staff are hidden by default unless a historical appointment requires a read-only column', async () => {
+  const fixture = createTestContext({ gg_beauty_owner_view: 'calendar' });
+  fixture.setAvailability({
+    date: todaySingapore,
+    locationId: sampleLocationId,
+    timezone: 'Asia/Singapore',
+    businessWindows: [{ start: '10:00', end: '21:00' }],
+    businessHoursSource: 'fallback',
+    staff: [{ id: sampleStaff[0].id, name: 'Alice', status: 'working', workingWindows: [{ start: '10:00', end: '18:00' }] }]
+  });
+  await fixture.load([], sampleStaff);
+  let rendered = fixture.elements.get('content').innerHTML;
+  assert.match(rendered, new RegExp(`data-staff-id="${sampleStaff[0].id}"`));
+  assert.doesNotMatch(rendered, new RegExp(`data-staff-id="${sampleStaff[1].id}"`));
+
+  const bobHistorical = { ...sampleAppointment, staff_id: sampleStaff[1].id, staff_name: 'Bob' };
+  await fixture.load([bobHistorical], sampleStaff);
+  rendered = fixture.elements.get('content').innerHTML;
+  assert.match(rendered, new RegExp(`data-staff-id="${sampleStaff[1].id}"`));
+  assert.match(rendered, /休息/);
+  assert.match(rendered, /VIP Customer/);
+});
+
+test('63. rapid date changes ignore a stale calendar staff response', async () => {
+  const fixture = createTestContext({ gg_beauty_owner_view: 'calendar' });
+  await fixture.load([], sampleStaff);
+  const pending = new Map();
+  fixture.setAvailabilityResponder(url => new Promise(resolve => {
+    const date = new URL(url, 'http://calendar.test').searchParams.get('date');
+    pending.set(date, resolve);
+  }));
+
+  const picker = fixture.elements.get('calendarDatePicker');
+  picker.change('2030-01-08');
+  picker.change('2030-01-09');
+  await new Promise(resolve => setImmediate(resolve));
+
+  const responseFor = (date, id, name) => ({
+    status: 200,
+    ok: true,
+    json: async () => ({
+      success: true,
+      data: {
+        date,
+        locationId: sampleLocationId,
+        timezone: 'Asia/Singapore',
+        businessWindows: [{ start: '10:00', end: '21:00' }],
+        businessHoursSource: 'fallback',
+        staff: [{ id, name, status: 'working', workingWindows: [{ start: '10:00', end: '18:00' }] }]
+      }
+    })
+  });
+
+  pending.get('2030-01-09')(responseFor('2030-01-09', sampleStaff[1].id, 'Newest Bob'));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.match(fixture.elements.get('content').innerHTML, /Newest Bob/);
+
+  pending.get('2030-01-08')(responseFor('2030-01-08', sampleStaff[2].id, 'Stale Charlie'));
+  await new Promise(resolve => setImmediate(resolve));
+  const rendered = fixture.elements.get('content').innerHTML;
+  assert.match(rendered, /Newest Bob/);
+  assert.doesNotMatch(rendered, /Stale Charlie/);
+});
+
+test('65. owner calendar fallback business hours range is 10:00-21:00, not opening 09:00-10:00', async () => {
+  const fixture = createTestContext({ gg_beauty_owner_view: 'calendar' });
+  await fixture.load([], sampleStaff);
+  const html = fixture.elements.get('content').innerHTML;
+
+  // Time axis starts at 10:00 and ends at 21:00
+  assert.match(html, />10:00</);
+  assert.match(html, />21:00</);
+  assert.doesNotMatch(html, />09:00</);
+  assert.doesNotMatch(html, />09:30</);
+
+  // Calendar slot clamping clamps times earlier than 10:00 to 10:00 and past 21:00 to 21:00
+  assert.equal(fixture.context.normalizeCalendarSlotMinutes(9 * 60), 10 * 60);
+  assert.equal(fixture.context.normalizeCalendarSlotMinutes(9 * 60 + 30), 10 * 60);
+  assert.equal(fixture.context.normalizeCalendarSlotMinutes(10 * 60), 10 * 60);
+  assert.equal(fixture.context.normalizeCalendarSlotMinutes(21 * 60), 21 * 60);
+  assert.equal(fixture.context.normalizeCalendarSlotMinutes(22 * 60), 21 * 60);
+
+  // Non-working grey blocks display outside staff working window
+  assert.equal(fixture.context.isMinuteWithinStaffWorkingWindows(sampleStaff[0].id, 9 * 60 + 30), false);
+  assert.equal(fixture.context.isMinuteWithinStaffWorkingWindows(sampleStaff[0].id, 10 * 60 + 30), true);
+});
+
+test('64. working-hours calendar translations are complete and single-language', () => {
+  const expected = {
+    showOffDayStaff: ['显示休息员工', 'Show off-day staff'],
+    offDay: ['休息', 'Off Day'],
+    outsideWorkingHours: ['非工作时间', 'Outside working hours'],
+    staffNotWorking: ['员工未上班', 'Staff not working'],
+    schedulePending: ['排班待确认', 'Schedule pending'],
+    scheduleUnavailable: ['排班配置异常', 'Schedule unavailable'],
+    workingHours: ['工作时间', 'Working hours'],
+    inactiveReadOnly: ['已停用 · 只读', 'Inactive · Read only'],
+    unableLoadStaffSchedule: ['无法加载员工排班', 'Unable to load staff schedule']
+  };
+  for (const [key, [zh, en]] of Object.entries(expected)) {
+    assert.equal(i18n.t(key, 'zh-CN'), zh);
+    assert.equal(i18n.t(key, 'en'), en);
+    assert.doesNotMatch(zh, /[A-Za-z]{2,}/);
+    assert.doesNotMatch(en, /[\u4e00-\u9fff]/);
+  }
 });

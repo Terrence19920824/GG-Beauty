@@ -1384,6 +1384,9 @@ function getSingaporeToday() {
 let currentRenderGeneration = 0;
 let currentAppointmentsSnapshot = [];
 let currentStaffSnapshot = [];
+let currentCalendarStaffAvailability = null;
+let calendarStaffRequestGeneration = 0;
+let calendarStaffAbortController = null;
 const currentAppointmentMap = new Map();
 // Action records must survive rendering so in-place status refreshes can bind
 // replacement buttons without reaching into render-local state.
@@ -1466,6 +1469,12 @@ const invalidateAppointmentActionContext = () => {
   currentAppointmentMap.clear();
   currentAppointmentsSnapshot = [];
   currentStaffSnapshot = [];
+  currentCalendarStaffAvailability = null;
+  calendarStaffRequestGeneration++;
+  if (calendarStaffAbortController) {
+    try { calendarStaffAbortController.abort(); } catch (_) {}
+    calendarStaffAbortController = null;
+  }
   activeDrawerMode = 'view';
   serviceEligibleStaffCache.clear();
   stopLiveLineTimer();
@@ -1603,9 +1612,9 @@ const updateLiveLineAndLateBadges = () => {
 
     if (isSelectedToday) {
       const currentMin = getAuthoritativeLocalMinutes(nowMs, authTz);
-      if (typeof currentMin === 'number' && currentMin >= 540 && currentMin <= 1260) {
+      if (typeof currentMin === 'number' && currentMin >= calendarStartMinutes && currentMin <= calendarEndMinutes) {
         showLiveLine = true;
-        topPx = (currentMin - 540) * 1.25;
+        topPx = (currentMin - calendarStartMinutes) * CALENDAR_PIXELS_PER_MINUTE;
         timeText = formatAuthoritativeTime(nowMs, authTz);
       }
     }
@@ -1898,7 +1907,7 @@ function layoutColumnAppointments(appointments) {
     const startMin = getSingaporeMinutes(item.start_at);
     const rawEndMin = getSingaporeMinutes(item.end_at);
     const duration = Number(item.duration_minutes) || (rawEndMin && startMin != null ? rawEndMin - startMin : 60);
-    const effectiveStart = startMin != null ? startMin : 540;
+    const effectiveStart = startMin != null ? startMin : calendarStartMinutes;
     const effectiveEnd = rawEndMin != null && rawEndMin > effectiveStart ? rawEndMin : effectiveStart + Math.max(15, duration);
     return {
       item,
@@ -2049,6 +2058,9 @@ function setupCalendarToolbar() {
         currentViewMode = 'calendar';
         try { getViewStorage()?.setItem('gg_beauty_owner_view', 'calendar'); } catch (_) {}
         renderAppointmentsView();
+        if (!isCurrentCalendarAvailability()) {
+          void loadCalendarStaffAvailabilityForDate(currentCalendarDate);
+        }
       }
     });
   }
@@ -2057,7 +2069,9 @@ function setupCalendarToolbar() {
     prevBtn._hasCalendarListener = true;
     prevBtn.addEventListener('click', () => {
       currentCalendarDate = addDaysToDate(currentCalendarDate, -1);
+      currentCalendarStaffAvailability = null;
       renderAppointmentsView();
+      void loadCalendarStaffAvailabilityForDate(currentCalendarDate);
     });
   }
 
@@ -2065,7 +2079,9 @@ function setupCalendarToolbar() {
     nextBtn._hasCalendarListener = true;
     nextBtn.addEventListener('click', () => {
       currentCalendarDate = addDaysToDate(currentCalendarDate, 1);
+      currentCalendarStaffAvailability = null;
       renderAppointmentsView();
+      void loadCalendarStaffAvailabilityForDate(currentCalendarDate);
     });
   }
 
@@ -2087,6 +2103,7 @@ function setupCalendarToolbar() {
       }
       currentCalendarTimezone = ctxData.timezone.trim();
       currentCalendarDate = serverViewDate;
+      currentCalendarStaffAvailability = null;
       if (updateTimeAnchor(ctxData.server_now, ctxData.timezone)) {
         startLiveLineTimer();
         startTimeResync();
@@ -2095,6 +2112,7 @@ function setupCalendarToolbar() {
         stopTimeResync();
       }
       renderAppointmentsView();
+      await loadCalendarStaffAvailabilityForDate(currentCalendarDate);
     });
   }
 
@@ -2104,7 +2122,9 @@ function setupCalendarToolbar() {
       const val = e?.target ? e.target.value : (datePicker.value || '');
       if (val) {
         currentCalendarDate = val;
+        currentCalendarStaffAvailability = null;
         renderAppointmentsView();
+        void loadCalendarStaffAvailabilityForDate(currentCalendarDate);
       }
     });
   }
@@ -2273,28 +2293,49 @@ const renderAppointmentsView = () => {
       return getSingaporeDateString(item.start_at) === currentCalendarDate;
     });
 
-    const staffCols = [...currentStaffSnapshot].sort((a, b) =>
-      String(a?.name || '').localeCompare(String(b?.name || ''))
-    );
+    const projectedStaff = isCurrentCalendarAvailability()
+      ? currentCalendarStaffAvailability.staff
+      : [];
+    const staffCols = projectedStaff.map(projection => {
+      const profile = currentStaffSnapshot.find(staff => String(staff?.id || '') === String(projection?.id || '')) || {};
+      return { ...profile, ...projection };
+    }).sort((a, b) => String(a?.name || '').localeCompare(String(b?.name || '')));
 
     const staffMap = new Map();
     for (const s of staffCols) {
       staffMap.set(String(s.id).trim(), []);
     }
+    const columnsToRender = [...staffCols];
 
     const unassignedAppointments = [];
 
     for (const appt of dayAppointments) {
       const { staffId, isUnassigned, assistants } = resolveAppointmentPrimaryStaff(appt, currentStaffSnapshot);
       appt._resolvedAssistants = assistants;
-      if (!isUnassigned && staffId && staffMap.has(staffId)) {
-        staffMap.get(staffId).push(appt);
+      if (!isUnassigned && staffId) {
+        if (!staffMap.has(staffId)) {
+          const historicalProfile = currentStaffSnapshot.find(staff => String(staff?.id || '') === staffId);
+          if (historicalProfile) {
+            const historicalColumn = {
+              ...historicalProfile,
+              historicalOnly: true,
+              workingWindows: [],
+              status: 'off_day'
+            };
+            columnsToRender.push(historicalColumn);
+            staffMap.set(staffId, []);
+          }
+        }
+        if (staffMap.has(staffId)) {
+          staffMap.get(staffId).push(appt);
+        } else {
+          unassignedAppointments.push(appt);
+        }
       } else {
         unassignedAppointments.push(appt);
       }
     }
 
-    const columnsToRender = [...staffCols];
     if (unassignedAppointments.length > 0 || columnsToRender.length === 0) {
       const unassignedCol = {
         id: '__unassigned__',
@@ -2307,6 +2348,9 @@ const renderAppointmentsView = () => {
 
     const headerColsHtml = columnsToRender.map(staff => {
       const count = (staffMap.get(staff.id) || []).length;
+      const readOnlyLabel = staff.historicalOnly
+        ? (staff.is_active === false || staff.bookable === false ? adminT('inactiveReadOnly') : adminT('offDay'))
+        : '';
       const initials = !staff.isUnassignedCol && globalThis.ggI18n && typeof globalThis.ggI18n.getStaffInitials === 'function'
         ? globalThis.ggI18n.getStaffInitials(staff.name)
         : '';
@@ -2321,13 +2365,15 @@ const renderAppointmentsView = () => {
           </div>
           <div class="owner-calendar-staff-name notranslate" translate="no">${escapeHtml(staff.name || adminT('unassigned'))}</div>
           <div class="owner-calendar-staff-count">${count} ${escapeHtml(adminT('appointmentsCount'))}</div>
+          ${readOnlyLabel ? `<div class="owner-calendar-staff-state">${escapeHtml(readOnlyLabel)}</div>` : ''}
         </div>
       `;
     }).join('');
 
     let timeAxisHtml = '';
-    for (let slot = 0; slot <= 48; slot++) {
-      const totalMinutes = CALENDAR_START_MINUTES + (slot * FRONT_DESK_SLOT_MINUTES);
+    const calendarSlotCount = Math.ceil((calendarEndMinutes - calendarStartMinutes) / FRONT_DESK_SLOT_MINUTES);
+    for (let slot = 0; slot <= calendarSlotCount; slot++) {
+      const totalMinutes = Math.min(calendarEndMinutes, calendarStartMinutes + (slot * FRONT_DESK_SLOT_MINUTES));
       const hourNum = Math.floor(totalMinutes / 60);
       const minuteNum = totalMinutes % 60;
       const timeStr = `${String(hourNum).padStart(2, '0')}:${String(minuteNum).padStart(2, '0')}`;
@@ -2336,12 +2382,19 @@ const renderAppointmentsView = () => {
         : minuteNum === 30
           ? 'owner-calendar-time-tick is-minor is-half-hour'
           : 'owner-calendar-time-tick is-minor is-quarter-hour';
-      timeAxisHtml += `<div class="${tickClass}" style="top: ${(totalMinutes - CALENDAR_START_MINUTES) * CALENDAR_PIXELS_PER_MINUTE}px;">${escapeHtml(timeStr)}</div>`;
+      timeAxisHtml += `<div class="${tickClass}" style="top: ${(totalMinutes - calendarStartMinutes) * CALENDAR_PIXELS_PER_MINUTE}px;">${escapeHtml(timeStr)}</div>`;
     }
 
     const bodyColsHtml = columnsToRender.map(staff => {
       const colAppointments = staffMap.get(staff.id) || [];
       const laidOut = layoutColumnAppointments(colAppointments);
+      const nonWorkingBlocksHtml = getNonWorkingCalendarSegments(
+        staff.isUnassignedCol || staff.historicalOnly ? [] : staff.workingWindows
+      ).map(segment => {
+        const top = (segment.start - calendarStartMinutes) * CALENDAR_PIXELS_PER_MINUTE;
+        const height = (segment.end - segment.start) * CALENDAR_PIXELS_PER_MINUTE;
+        return `<div class="owner-calendar-nonworking-block" data-nonworking="true" style="top:${top.toFixed(1)}px;height:${height.toFixed(1)}px;" aria-label="${escapeHtml(adminT('outsideWorkingHours'))}"><span>${escapeHtml(staff.historicalOnly ? adminT('offDay') : adminT('outsideWorkingHours'))}</span></div>`;
+      }).join('');
 
       const cardsHtml = laidOut.map(layout => {
         const item = layout.item;
@@ -2356,8 +2409,9 @@ const renderAppointmentsView = () => {
 
         const { statusBtnsHtml, checkoutBtnHtml } = renderActionButtonsForAppointment(item);
 
-        const topPx = Math.max(0, (Math.min(1260, layout.startMin) - 540) * 1.25);
-        const bottomPx = Math.min(900, (Math.min(1260, layout.endMin) - 540) * 1.25);
+        const calendarHeightPx = (calendarEndMinutes - calendarStartMinutes) * CALENDAR_PIXELS_PER_MINUTE;
+        const topPx = Math.max(0, (Math.min(calendarEndMinutes, layout.startMin) - calendarStartMinutes) * CALENDAR_PIXELS_PER_MINUTE);
+        const bottomPx = Math.min(calendarHeightPx, (Math.min(calendarEndMinutes, layout.endMin) - calendarStartMinutes) * CALENDAR_PIXELS_PER_MINUTE);
         const heightPx = Math.max(44, bottomPx - topPx);
         const widthPercent = (100 / layout.totalLanes).toFixed(2);
         const leftPercent = ((layout.lane * 100) / layout.totalLanes).toFixed(2);
@@ -2468,6 +2522,7 @@ const renderAppointmentsView = () => {
 
       return `
         <div class="owner-calendar-staff-column" data-staff-id="${escapeHtml(staff.id)}">
+          ${nonWorkingBlocksHtml}
           ${cardsHtml}
         </div>
       `;
@@ -2482,8 +2537,8 @@ const renderAppointmentsView = () => {
     let liveLineHtml = '';
     if (isSelectedToday) {
       const currentMin = getAuthoritativeLocalMinutes(nowMs, authTz);
-      if (typeof currentMin === 'number' && currentMin >= 540 && currentMin <= 1260) {
-        const topPx = (currentMin - 540) * 1.25;
+      if (typeof currentMin === 'number' && currentMin >= calendarStartMinutes && currentMin <= calendarEndMinutes) {
+        const topPx = (currentMin - calendarStartMinutes) * CALENDAR_PIXELS_PER_MINUTE;
         const timeText = formatAuthoritativeTime(nowMs, authTz);
         liveLineHtml = `
           <div class="owner-calendar-live-line" style="top: ${topPx.toFixed(1)}px;" aria-hidden="true">
@@ -2504,7 +2559,7 @@ const renderAppointmentsView = () => {
             <div class="owner-calendar-corner" aria-hidden="true">${escapeHtml(adminT('time'))}</div>
             ${headerColsHtml}
           </div>
-          <div class="owner-calendar-body">
+          <div class="owner-calendar-body" style="--calendar-body-height:${((calendarEndMinutes - calendarStartMinutes) * CALENDAR_PIXELS_PER_MINUTE).toFixed(1)}px">
             <div class="owner-calendar-time-axis" aria-hidden="true">
               ${timeAxisHtml}
             </div>
@@ -2743,9 +2798,13 @@ const renderAppointmentsView = () => {
             const rect = column.getBoundingClientRect();
             const y = Number(event.clientY) - rect.top;
             if (!Number.isFinite(y) || y < 0 || y > rect.height) return;
-            const rawMinutes = CALENDAR_START_MINUTES + (y / CALENDAR_PIXELS_PER_MINUTE);
+            const rawMinutes = calendarStartMinutes + (y / CALENDAR_PIXELS_PER_MINUTE);
             const snappedMinutes = normalizeCalendarSlotMinutes(rawMinutes);
             if (!Number.isInteger(snappedMinutes)) return;
+            if (!isMinuteWithinStaffWorkingWindows(staffId, snappedMinutes)) {
+              showAdminToast(adminT('staffNotWorking'), 'error');
+              return;
+            }
             const time = `${String(Math.floor(snappedMinutes / 60)).padStart(2, '0')}:${String(snappedMinutes % 60).padStart(2, '0')}`;
             openFrontDeskAppointment({ staffId, date: currentCalendarDate, time, mode: 'assisted' });
           });
@@ -3326,14 +3385,118 @@ function getStatusText(status) {
 }
 
 const FRONT_DESK_SLOT_MINUTES = 15;
-const CALENDAR_START_MINUTES = 9 * 60;
-const CALENDAR_END_MINUTES = 21 * 60;
 const CALENDAR_PIXELS_PER_MINUTE = 1.25;
+// NOTE: 仅用于门店营业时间数据模型就绪前的日历展示 fallback；最终以服务端校验为准。
+// 与后端 DEFAULT_BUSINESS_WINDOWS 保持严格一致 (10:00–21:00)。
+const FALLBACK_CALENDAR_BUSINESS_WINDOWS = Object.freeze([{ start: '10:00', end: '21:00' }]);
+let calendarStartMinutes = 10 * 60;
+let calendarEndMinutes = 21 * 60;
+
+function calendarTimeToMinutes(value) {
+  if (typeof value !== 'string' || !/^([01]\d|2[0-3]):[0-5]\d$/.test(value)) return null;
+  const [hour, minute] = value.split(':').map(Number);
+  return hour * 60 + minute;
+}
+
+function applyCalendarBusinessBounds(windows) {
+  const valid = (Array.isArray(windows) ? windows : []).map(window => ({
+    start: calendarTimeToMinutes(window?.start),
+    end: calendarTimeToMinutes(window?.end)
+  })).filter(window => Number.isInteger(window.start) && Number.isInteger(window.end) && window.end > window.start);
+  const effective = valid.length > 0 ? valid : FALLBACK_CALENDAR_BUSINESS_WINDOWS.map(window => ({
+    start: calendarTimeToMinutes(window.start),
+    end: calendarTimeToMinutes(window.end)
+  }));
+  calendarStartMinutes = Math.min(...effective.map(window => window.start));
+  calendarEndMinutes = Math.max(...effective.map(window => window.end));
+}
+
+function isCurrentCalendarAvailability() {
+  return Boolean(
+    currentCalendarStaffAvailability &&
+    currentCalendarStaffAvailability.date === currentCalendarDate &&
+    String(currentCalendarStaffAvailability.locationId || '') === String(currentRequestedLocationId || '')
+  );
+}
+
+function getCalendarWorkingWindows(staffId) {
+  if (!isCurrentCalendarAvailability()) return [];
+  const projection = (currentCalendarStaffAvailability.staff || []).find(staff =>
+    String(staff?.id || '') === String(staffId || '')
+  );
+  return Array.isArray(projection?.workingWindows) ? projection.workingWindows : [];
+}
+
+function isMinuteWithinStaffWorkingWindows(staffId, minute) {
+  if (!Number.isInteger(minute)) return false;
+  return getCalendarWorkingWindows(staffId).some(window => {
+    const start = calendarTimeToMinutes(window?.start);
+    const end = calendarTimeToMinutes(window?.end);
+    return Number.isInteger(start) && Number.isInteger(end) && minute >= start && minute < end;
+  });
+}
+
+function getNonWorkingCalendarSegments(workingWindows) {
+  const normalized = (Array.isArray(workingWindows) ? workingWindows : []).map(window => ({
+    start: Math.max(calendarStartMinutes, calendarTimeToMinutes(window?.start)),
+    end: Math.min(calendarEndMinutes, calendarTimeToMinutes(window?.end))
+  })).filter(window => Number.isInteger(window.start) && Number.isInteger(window.end) && window.end > window.start)
+    .sort((left, right) => left.start - right.start);
+  const segments = [];
+  let cursor = calendarStartMinutes;
+  for (const window of normalized) {
+    if (window.start > cursor) segments.push({ start: cursor, end: window.start });
+    cursor = Math.max(cursor, window.end);
+  }
+  if (cursor < calendarEndMinutes) segments.push({ start: cursor, end: calendarEndMinutes });
+  return segments;
+}
+
+async function loadCalendarStaffAvailabilityForDate(date, { render = true } = {}) {
+  const locationId = String(currentRequestedLocationId || '').trim();
+  if (!UUID_REGEX.test(locationId) || typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return false;
+  }
+  const requestGeneration = ++calendarStaffRequestGeneration;
+  if (calendarStaffAbortController) {
+    try { calendarStaffAbortController.abort(); } catch (_) {}
+  }
+  const controller = typeof AbortController === 'function' ? new AbortController() : null;
+  calendarStaffAbortController = controller;
+  try {
+    const response = await fetch(`/api/owner/calendar-staff-availability?locationId=${encodeURIComponent(locationId)}&date=${encodeURIComponent(date)}`, {
+      credentials: 'same-origin',
+      cache: 'no-store',
+      ...(controller ? { signal: controller.signal } : {})
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (requestGeneration !== calendarStaffRequestGeneration || date !== currentCalendarDate || locationId !== String(currentRequestedLocationId || '')) {
+      return false;
+    }
+    if (!response.ok || !payload.success || !payload.data || !Array.isArray(payload.data.staff)) {
+      throw new Error(adminT('unableLoadStaffSchedule'));
+    }
+    currentCalendarStaffAvailability = payload.data;
+    applyCalendarBusinessBounds(payload.data.businessWindows);
+    if (render) renderAppointmentsView();
+    return true;
+  } catch (error) {
+    if (error?.name === 'AbortError' || requestGeneration !== calendarStaffRequestGeneration) return false;
+    currentCalendarStaffAvailability = null;
+    if (render) {
+      renderAppointmentsView();
+      showAdminToast(adminT('unableLoadStaffSchedule'), 'error');
+    }
+    return false;
+  } finally {
+    if (requestGeneration === calendarStaffRequestGeneration) calendarStaffAbortController = null;
+  }
+}
 
 function normalizeCalendarSlotMinutes(rawMinutes) {
   if (!Number.isFinite(rawMinutes)) return null;
   const normalized = Math.round(rawMinutes / FRONT_DESK_SLOT_MINUTES) * FRONT_DESK_SLOT_MINUTES;
-  return Math.max(CALENDAR_START_MINUTES, Math.min(CALENDAR_END_MINUTES, normalized));
+  return Math.max(calendarStartMinutes, Math.min(calendarEndMinutes, normalized));
 }
 
 function isNormalizedFrontDeskSlotTime(value) {
@@ -3503,6 +3666,13 @@ async function openFrontDeskAppointment({ staffId = '', date: prefilledDate = ''
             SERVICE_NOT_FOUND: 'serviceUnavailable',
             STAFF_NOT_ELIGIBLE: 'staffUnavailable',
             STAFF_SERVICE_NOT_ALLOWED: 'staffUnavailable',
+            STAFF_NOT_BOOKABLE: 'staffUnavailable',
+            NO_WORKING_HOURS: 'staffNotWorking',
+            OUTSIDE_WORKING_HOURS: 'staffNotWorking',
+            OUTSIDE_BUSINESS_HOURS: 'staffNotWorking',
+            STAFF_ON_LEAVE: 'staffNotWorking',
+            SCHEDULE_OVERRIDE_PENDING: 'schedulePending',
+            SCHEDULE_CONFIGURATION_INVALID: 'scheduleUnavailable',
             CUSTOMER_IDENTITY_CONFLICT: 'identityConflict'
           }[result.code];
           throw new Error(knownErrorKey ? adminT(knownErrorKey) : adminResultMessage(result, 'operationFailed'));
@@ -3541,19 +3711,47 @@ async function loadAppointments(targetLocationId = '') {
   }
 
   try {
+    const calendarContextData = await fetchCalendarContext(targetLocationId || currentRequestedLocationId).catch(() => null);
+    if (!calendarContextData?.location_id || !calendarContextData?.server_now || !calendarContextData?.timezone) {
+      throw new Error(adminT('unableLoadStaffSchedule'));
+    }
 
-    const [appointmentsResponse, staffResponse, calendarContextData] =
-      await Promise.all([
-        fetch('/api/appointments-db', {
-          credentials: 'same-origin',
-          cache: 'no-store'
-        }),
-        fetch('/api/owner/staff', {
-          credentials: 'same-origin',
-          cache: 'no-store'
-        }).catch(() => null),
-        fetchCalendarContext(targetLocationId || currentRequestedLocationId).catch(() => null)
-      ]);
+    const authoritativeLocationId = String(calendarContextData.location_id).trim();
+    if (!UUID_REGEX.test(authoritativeLocationId)) {
+      throw new Error(adminT('unableLoadStaffSchedule'));
+    }
+    currentRequestedLocationId = authoritativeLocationId;
+
+    const serverViewDate = getViewDateFromServerSnapshot(
+      calendarContextData.server_now,
+      calendarContextData.timezone
+    );
+    if (serverViewDate) {
+      currentCalendarTimezone = calendarContextData.timezone.trim();
+      if (!currentCalendarDate) currentCalendarDate = serverViewDate;
+    }
+    if (updateTimeAnchor(calendarContextData.server_now, calendarContextData.timezone)) {
+      startTimeResync();
+      const authToday = getAuthoritativeToday();
+      if (!currentCalendarDate && authToday) currentCalendarDate = authToday;
+    } else {
+      stopLiveLineTimer();
+      stopTimeResync();
+    }
+
+    const locationQuery = `?locationId=${encodeURIComponent(authoritativeLocationId)}`;
+    const availabilityPromise = loadCalendarStaffAvailabilityForDate(currentCalendarDate, { render: false });
+    const [appointmentsResponse, staffResponse] = await Promise.all([
+      fetch(`/api/appointments-db${locationQuery}`, {
+        credentials: 'same-origin',
+        cache: 'no-store'
+      }),
+      fetch('/api/owner/staff', {
+        credentials: 'same-origin',
+        cache: 'no-store'
+      }).catch(() => null),
+      availabilityPromise
+    ]);
 
     if (thisLoadGen !== adminLoadGeneration) {
       return;
@@ -3584,31 +3782,6 @@ async function loadAppointments(targetLocationId = '') {
           currentStaffSnapshot = cloneStaff(staffResult.data);
         }
       } catch (_) {}
-    }
-
-    if (calendarContextData && calendarContextData.server_now && calendarContextData.timezone) {
-      const serverViewDate = getViewDateFromServerSnapshot(
-        calendarContextData.server_now,
-        calendarContextData.timezone
-      );
-      if (serverViewDate) {
-        currentCalendarTimezone = calendarContextData.timezone.trim();
-        if (!currentCalendarDate) currentCalendarDate = serverViewDate;
-      }
-      if (updateTimeAnchor(calendarContextData.server_now, calendarContextData.timezone)) {
-        startTimeResync();
-        const authToday = getAuthoritativeToday();
-        if (!currentCalendarDate && authToday) {
-          currentCalendarDate = authToday;
-        }
-      } else {
-        stopLiveLineTimer();
-        stopTimeResync();
-      }
-    } else {
-      invalidateTimeAnchor();
-      stopLiveLineTimer();
-      stopTimeResync();
     }
 
     const appointments =

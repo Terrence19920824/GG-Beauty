@@ -33,6 +33,12 @@ const {
   validateStaffBookability
 } = require('./lib/staff-bookability-validator');
 const {
+  DEFAULT_BUSINESS_WINDOWS,
+  DEFAULT_BUSINESS_HOURS_SOURCE,
+  isValidDate: isValidScheduleDate,
+  loadCalendarStaffAvailability
+} = require('./lib/staff-effective-schedule');
+const {
   createOwnerAuth
 } = require('./lib/owner-auth');
 const {
@@ -3038,6 +3044,83 @@ app.get(
 
 
 // ==================================================
+// Owner / front-desk calendar staff projection
+// ==================================================
+
+app.get(
+  '/api/owner/calendar-staff-availability',
+  requireOwnerAuth,
+  requireOwnerRole(['owner', 'manager', 'admin', 'front_desk']),
+  async (req, res) => {
+    const trustedShopId = req.ownerAuth.shopId;
+    const locationId = typeof req.query.locationId === 'string'
+      ? req.query.locationId.trim()
+      : '';
+    const date = typeof req.query.date === 'string' ? req.query.date.trim() : '';
+
+    if (
+      Object.prototype.hasOwnProperty.call(req.query, 'shopId') ||
+      Object.prototype.hasOwnProperty.call(req.query, 'shop_id') ||
+      Object.prototype.hasOwnProperty.call(req.query, 'tenantId')
+    ) {
+      return res.status(400).json({
+        success: false,
+        code: 'CLIENT_SHOP_ID_NOT_ALLOWED',
+        message: 'shopId 只能来自已认证会话'
+      });
+    }
+
+    if (!isUuid(locationId) || !isValidScheduleDate(date)) {
+      return res.status(400).json({
+        success: false,
+        code: 'CALENDAR_STAFF_INPUT_INVALID',
+        message: 'locationId 或 date 无效'
+      });
+    }
+
+    let client;
+    try {
+      client = await app.locals.ownerAuthPool.connect();
+      const data = await loadCalendarStaffAvailability({
+        dbClient: client,
+        shopId: trustedShopId,
+        locationId,
+        date,
+        businessWindows: DEFAULT_BUSINESS_WINDOWS,
+        businessHoursSource: DEFAULT_BUSINESS_HOURS_SOURCE
+      });
+      res.set('Cache-Control', 'no-store, private, max-age=0');
+      res.set('Pragma', 'no-cache');
+      return res.json({ success: true, data });
+    } catch (error) {
+      if (error && error.code === 'LOCATION_NOT_FOUND') {
+        return res.status(404).json({
+          success: false,
+          code: error.code,
+          message: '未找到请求的地点'
+        });
+      }
+      if (error && error.code === 'LOCATION_TIMEZONE_INVALID') {
+        return res.status(422).json({
+          success: false,
+          code: error.code,
+          message: '地点时区配置无效'
+        });
+      }
+      console.error('Read calendar staff availability error:', safeStaffAuthErrorCode(error));
+      return res.status(500).json({
+        success: false,
+        code: 'CALENDAR_STAFF_AVAILABILITY_FAILED',
+        message: '无法加载员工排班'
+      });
+    } finally {
+      if (client) client.release();
+    }
+  }
+);
+
+
+// ==================================================
 // 从数据库读取真实预约
 // ==================================================
 
@@ -4595,19 +4678,7 @@ app.get('/api/available-times', async (req, res) => {
       });
     }
 
-    const allTimes = [
-      '10:00', '10:30',
-      '11:00', '11:30',
-      '12:00', '12:30',
-      '13:00', '13:30',
-      '14:00', '14:30',
-      '15:00', '15:30',
-      '16:00', '16:30',
-      '17:00', '17:30',
-      '18:00', '18:30',
-      '19:00', '19:30',
-      '20:00', '20:30'
-    ];
+    const allTimes = CUSTOMER_BOOKING_TIMES;
 
     let availableTimes = allTimes;
     if (date && staff) {
@@ -4672,6 +4743,7 @@ const UNAVAILABLE_SLOT_ERROR_CODES = new Set([
   'STAFF_SERVICE_NOT_ALLOWED',
   'STAFF_LOCATION_NOT_ASSIGNED',
   'NO_WORKING_HOURS',
+  'OUTSIDE_BUSINESS_HOURS',
   'OUTSIDE_WORKING_HOURS',
   'STAFF_ON_LEAVE',
   'SCHEDULE_OVERRIDE_PENDING',
@@ -5100,11 +5172,20 @@ const filterAnyStaffCandidateSlots = async ({
   return availableTimes;
 };
 
-const CUSTOMER_BOOKING_TIMES = [
-  '10:00','10:30','11:00','11:30','12:00','12:30','13:00','13:30',
-  '14:00','14:30','15:00','15:30','16:00','16:30','17:00','17:30',
-  '18:00','18:30','19:00','19:30','20:00','20:30'
-];
+// NOTE: Derived directly from the uniform business hours fallback (DEFAULT_BUSINESS_WINDOWS: 10:00–21:00).
+// Ensures customer candidate slots are never generated for non-business hours (e.g. 09:00–10:00).
+// When structured location business hours are introduced, this source should be dynamically derived.
+const CUSTOMER_BOOKING_TIMES = Object.freeze(DEFAULT_BUSINESS_WINDOWS.flatMap(window => {
+  const [startHour, startMinute] = window.start.split(':').map(Number);
+  const [endHour, endMinute] = window.end.split(':').map(Number);
+  const start = startHour * 60 + startMinute;
+  const end = endHour * 60 + endMinute;
+  const times = [];
+  for (let minute = start; minute < end; minute += 30) {
+    times.push(`${String(Math.floor(minute / 60)).padStart(2, '0')}:${String(minute % 60).padStart(2, '0')}`);
+  }
+  return times;
+}));
 
 const loadMultiServiceAvailableTimes = async ({ client, context, date, validator, now }) => {
   const resultByDate = await computeBatchAvailability({
@@ -5117,6 +5198,7 @@ const loadMultiServiceAvailableTimes = async ({ client, context, date, validator
     loadEligibleBookingStaff,
     planMultiServiceStaff,
     bookingTimes: CUSTOMER_BOOKING_TIMES,
+    businessWindows: DEFAULT_BUSINESS_WINDOWS,
     earlyExitPerDate: false,
     now
   });
@@ -5134,6 +5216,7 @@ const loadMultiServiceAvailableDates = async ({ client, context, startDate, endD
     loadEligibleBookingStaff,
     planMultiServiceStaff,
     bookingTimes: CUSTOMER_BOOKING_TIMES,
+    businessWindows: DEFAULT_BUSINESS_WINDOWS,
     earlyExitPerDate: true,
     now
   });
@@ -5521,20 +5604,9 @@ app.get(
         serviceResult.rows[0].duration_minutes;
 
 
-      // 5. 保留现有 30-minute candidate grid.
-      const allTimes = [
-        '10:00', '10:30',
-        '11:00', '11:30',
-        '12:00', '12:30',
-        '13:00', '13:30',
-        '14:00', '14:30',
-        '15:00', '15:30',
-        '16:00', '16:30',
-        '17:00', '17:30',
-        '18:00', '18:30',
-        '19:00', '19:30',
-        '20:00', '20:30'
-      ];
+      // 5. The 30-minute grid is derived from the same authoritative
+      // business-hours source used by calendar display and final validation.
+      const allTimes = CUSTOMER_BOOKING_TIMES;
 
 
       // 6. PostgreSQL uses the authoritative location timezone to build

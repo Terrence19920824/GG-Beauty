@@ -32,6 +32,7 @@ const validRow = () => ({
   capability_active: true,
   location_assignment_id: ID.assignment,
   interval_valid: true,
+  business_interval_contained: true,
   duration_matches: true,
   weekly_range_count: '1',
   weekly_ranges_overlap: false,
@@ -64,8 +65,10 @@ const inputFor = row => ({
       assert.match(sql, /assignment\.blocks_time = TRUE/);
       assert.doesNotMatch(sql, /staff_working_hours/);
       assert.doesNotMatch(sql, /staff_time_off/);
-      assert.equal(params.length, 7);
+      assert.equal(params.length, 9);
       assert.equal(params[6], null);
+      assert.equal(params[7], '10:00');
+      assert.equal(params[8], '21:00');
       return { rows: [row] };
     }
   },
@@ -119,6 +122,47 @@ test('outside weekly hours fails closed', async () => {
   await expectCode(
     { weekly_interval_contained: false },
     'OUTSIDE_WORKING_HOURS'
+  );
+});
+
+test('outside fallback business hours fails closed', async () => {
+  await expectCode(
+    { business_interval_contained: false },
+    'OUTSIDE_BUSINESS_HOURS'
+  );
+});
+
+test('final booking validator strictly rejects 09:00-10:00 outside fallback business hours', async () => {
+  const row = validRow();
+  const input = inputFor(row);
+  input.requestedStartAt = '2030-01-07T09:00:00.000000+08:00';
+  input.requestedEndAt = '2030-01-07T10:00:00.000000+08:00';
+  // SQL evaluation would set business_interval_contained: false because local_start (09:00) < 10:00
+  input.dbClient.query = async (sql, params) => {
+    assert.equal(params[7], '10:00');
+    assert.equal(params[8], '21:00');
+    return { rows: [{ ...row, business_interval_contained: false }] };
+  };
+  await assert.rejects(
+    validateStaffBookability(input),
+    error => error instanceof StaffBookabilityError && error.code === 'OUTSIDE_BUSINESS_HOURS'
+  );
+});
+
+test('final booking validator strictly rejects 20:30-21:30 exceeding business closing 21:00', async () => {
+  const row = validRow();
+  const input = inputFor(row);
+  input.requestedStartAt = '2030-01-07T20:30:00.000000+08:00';
+  input.requestedEndAt = '2030-01-07T21:30:00.000000+08:00';
+  // SQL evaluation would set business_interval_contained: false because local_end (21:30) > 21:00
+  input.dbClient.query = async (sql, params) => {
+    assert.equal(params[7], '10:00');
+    assert.equal(params[8], '21:00');
+    return { rows: [{ ...row, business_interval_contained: false }] };
+  };
+  await assert.rejects(
+    validateStaffBookability(input),
+    error => error instanceof StaffBookabilityError && error.code === 'OUTSIDE_BUSINESS_HOURS'
   );
 });
 

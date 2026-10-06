@@ -49,6 +49,8 @@ const makeMockPool = ({
   hasSkills = true,
   isWorking = true,
   offDutyReason = null, // 'day_off' | 'not_scheduled' | 'outside_hours'
+  staffActive = true,
+  staffBookable = true,
   hasConflict = false
 } = {}) => {
   const state = {
@@ -125,17 +127,21 @@ const makeMockPool = ({
       }
 
       if (/^SELECT \(\(\$1::DATE \+ \$2::TIME\) AT TIME ZONE \$3\) AS new_start_at/i.test(normalized)) {
+        const [hour, min] = String(params[1] || '14:30').split(':').map(Number);
+        const [y, m, d] = String(params[0] || '2026-10-02').split('-').map(Number);
+        const startUtc = new Date(Date.UTC(y, m - 1, d, hour - 8, min, 0));
+        const endUtc = new Date(startUtc.getTime() + 60 * 60 * 1000);
         return {
           rows: [{
-            new_start_at: '2026-10-02T06:30:00.000Z',
-            new_end_at: '2026-10-02T07:30:00.000Z'
+            new_start_at: startUtc.toISOString(),
+            new_end_at: endUtc.toISOString()
           }]
         };
       }
 
-      if (/^SELECT id, name, is_active FROM staff WHERE id = \$1 AND shop_id = \$2/i.test(normalized)) {
+      if (/^SELECT id, name, is_active, bookable FROM staff WHERE id = \$1 AND shop_id = \$2/i.test(normalized)) {
         if (params[0] === ID.staffTarget || params[0] === ID.staffOriginal || params[0] === ID.staffUnskilled) {
-          return { rows: [{ id: params[0], name: 'Target Staff', is_active: true }] };
+          return { rows: [{ id: params[0], name: 'Target Staff', is_active: staffActive, bookable: staffBookable }] };
         }
         return { rows: [] };
       }
@@ -151,25 +157,30 @@ const makeMockPool = ({
         return { rows: [] }; // skill mismatch
       }
 
-      if (/^SELECT override_type, start_time, end_time, approval_status FROM staff_schedule_overrides/i.test(normalized)) {
+      if (/^SELECT schedule_date::TEXT AS schedule_date, override_type,/i.test(normalized)) {
         if (offDutyReason === 'day_off') {
-          return { rows: [{ override_type: 'day_off', start_time: null, end_time: null, approval_status: 'approved' }] };
+          return { rows: [{ schedule_date: '2026-10-02', override_type: 'day_off', start_time: null, end_time: null, approval_status: 'approved', is_active: true }] };
+        }
+        if (offDutyReason === 'partial_leave') {
+          return { rows: [{ schedule_date: '2026-10-02', override_type: 'leave', start_time: '14:00:00', end_time: '15:00:00', approval_status: 'approved', is_active: true }] };
         }
         return { rows: [] };
       }
 
-      if (/^SELECT start_time, end_time FROM staff_location_working_hours/i.test(normalized)) {
+      if (/^SELECT day_of_week, start_time::TEXT AS start_time,/i.test(normalized)) {
         if (offDutyReason === 'not_scheduled') {
           return { rows: [] };
         }
-        return { rows: [{ start_time: '09:00:00', end_time: '19:00:00' }] };
-      }
-
-      if (/SELECT \(\(\$1::TIMESTAMPTZ AT TIME ZONE \$3\)::TIME >= \$4::TIME/i.test(normalized)) {
         if (offDutyReason === 'outside_hours') {
-          return { rows: [{ is_contained: false }] };
+          return { rows: [{ day_of_week: 5, start_time: '09:00:00', end_time: '14:00:00', effective_from: null, effective_to: null, is_active: true }] };
         }
-        return { rows: [{ is_contained: true }] };
+        if (offDutyReason === 'split_shift') {
+          return { rows: [
+            { day_of_week: 5, start_time: '09:00:00', end_time: '12:00:00', effective_from: null, effective_to: null, is_active: true },
+            { day_of_week: 5, start_time: '15:00:00', end_time: '19:00:00', effective_from: null, effective_to: null, is_active: true }
+          ] };
+        }
+        return { rows: [{ day_of_week: 5, start_time: '09:00:00', end_time: '19:00:00', effective_from: null, effective_to: null, is_active: true }] };
       }
 
       if (/SELECT p\.id AS appointment_id, p\.appointment_no/i.test(normalized)) {
@@ -400,6 +411,39 @@ test('6. staff not working: off-duty returns 422 STAFF_NOT_WORKING', async () =>
   assert.equal(json3.code, 'STAFF_NOT_WORKING');
 });
 
+test('6d. all owner calendar roles fail closed for leave and split-shift gaps even with overrideConflict', async () => {
+  for (const role of ['owner', 'manager', 'front_desk']) {
+    for (const offDutyReason of ['partial_leave', 'split_shift']) {
+      const fixture = makeMockPool({ role, offDutyReason, staffSelectionType: 'no_preference' });
+      const response = await runRequest(fixture, ID.appointmentA, {
+        newDate: '2026-10-02',
+        newTime: '14:30',
+        newStaffId: ID.staffTarget,
+        overrideConflict: true
+      });
+      assert.equal(response.status, 422);
+      assert.equal((await response.json()).code, 'STAFF_NOT_WORKING');
+      assert.equal(fixture.state.appointmentUpdates.length, 0);
+    }
+  }
+});
+
+test('6e. inactive and bookable=false staff cannot receive adjusted appointments', async () => {
+  const inactiveFixture = makeMockPool({ staffActive: false, staffSelectionType: 'no_preference' });
+  const inactiveResponse = await runRequest(inactiveFixture, ID.appointmentA, {
+    newDate: '2026-10-02', newTime: '14:30', newStaffId: ID.staffTarget
+  });
+  assert.equal(inactiveResponse.status, 422);
+  assert.equal((await inactiveResponse.json()).code, 'STAFF_NOT_FOUND');
+
+  const unbookableFixture = makeMockPool({ staffBookable: false, staffSelectionType: 'no_preference' });
+  const unbookableResponse = await runRequest(unbookableFixture, ID.appointmentA, {
+    newDate: '2026-10-02', newTime: '14:30', newStaffId: ID.staffTarget
+  });
+  assert.equal(unbookableResponse.status, 422);
+  assert.equal((await unbookableResponse.json()).code, 'STAFF_NOT_BOOKABLE');
+});
+
 test('7. specified staff reassignment: reason and customer consent strictly required', async () => {
   const fixture = makeMockPool({ staffSelectionType: 'specific' });
 
@@ -526,6 +570,21 @@ test('10. owner/manager conflict rules: returns 409 canOverride: true when unfor
   assert.equal(fixture.state.appointmentUpdates[0].params[3], true); // override_conflict = true
   assert.equal(fixture.state.auditInserts[0].params[14], true); // override_conflict = true
   assert.equal(fixture.state.auditInserts[0].params[15], 'authorized_time_conflict_override');
+});
+
+test('10d. overrideConflict cannot bypass business hours (09:00-10:00 fails closed with STAFF_NOT_WORKING)', async () => {
+  const fixture = makeMockPool({ role: 'owner', hasConflict: true, staffSelectionType: 'no_preference' });
+  const res = await runRequest(fixture, ID.appointmentA, {
+    newDate: '2026-10-02',
+    newTime: '09:00',
+    newStaffId: ID.staffTarget,
+    overrideConflict: true
+  });
+  assert.equal(res.status, 422);
+  const json = await res.json();
+  assert.equal(json.code, 'STAFF_NOT_WORKING');
+  assert.match(json.message, /所选预约时间超出目标员工工作时间/);
+  assert.equal(fixture.state.appointmentUpdates.length, 0);
 });
 
 test('11. no service or price modification and no checkout writes occur during adjustment', async () => {

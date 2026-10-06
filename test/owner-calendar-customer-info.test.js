@@ -177,6 +177,34 @@ function createMockAdminContext(options = {}) {
         const customRes = await options.fetchHandler(url, opts);
         if (customRes) return customRes;
       }
+      if (url.includes('/api/owner/calendar-staff-availability')) {
+        const date = new URL(url, 'http://calendar.test').searchParams.get('date');
+        const staff = options.initialStaff || [
+          { id: '11111111-1111-4000-8000-000000000001', name: 'Alice Staff', is_active: true }
+        ];
+        return {
+          status: 200,
+          ok: true,
+          async json() {
+            return {
+              success: true,
+              data: {
+                date,
+                locationId: '55555555-5555-4555-8555-555555555555',
+                timezone: 'Asia/Singapore',
+                businessWindows: [{ start: '10:00', end: '21:00' }],
+                businessHoursSource: 'fallback',
+                staff: staff.map(member => ({
+                  id: member.id,
+                  name: member.name,
+                  status: 'working',
+                  workingWindows: [{ start: '10:00', end: '21:00' }]
+                }))
+              }
+            };
+          }
+        };
+      }
       if (url.includes('/api/owner/staff')) {
         return {
           status: 200,
@@ -198,9 +226,11 @@ function createMockAdminContext(options = {}) {
           async json() {
             return {
               success: true,
-              server_now: '2026-09-23T02:00:00.000Z',
-              timezone: 'Asia/Singapore',
-              location_id: '55555555-5555-4555-8555-555555555555'
+              data: {
+                server_now: '2026-09-23T02:00:00.000Z',
+                timezone: 'Asia/Singapore',
+                location_id: '55555555-5555-4555-8555-555555555555'
+              }
             };
           }
         };

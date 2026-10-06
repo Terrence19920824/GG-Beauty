@@ -453,8 +453,10 @@ test('Customer Batch Availability Semantic Safety & Differential Parity Suite', 
       await t.test('10. Differential Parity: Batch schedule evaluation matches validateStaffBookability', async () => {
         // Test various slots on 2026-06-15 in Singapore
         const testSlots = [
-          { start: '2026-06-15T01:00:00.000Z', end: '2026-06-15T02:00:00.000Z', expected: 'OK' }, // 09:00 - 10:00 (contained)
-          { start: '2026-06-15T00:30:00.000Z', end: '2026-06-15T01:30:00.000Z', expected: 'OUTSIDE_WORKING_HOURS' }, // 08:30 - 09:30 (outside)
+          { start: '2026-06-15T02:00:00.000Z', end: '2026-06-15T03:00:00.000Z', expected: 'OK' }, // 10:00 - 11:00 (contained in business hours 10:00-21:00)
+          { start: '2026-06-15T01:00:00.000Z', end: '2026-06-15T02:00:00.000Z', expected: 'OUTSIDE_BUSINESS_HOURS' }, // 09:00 - 10:00 (outside fallback business hours)
+          { start: '2026-06-15T00:30:00.000Z', end: '2026-06-15T01:30:00.000Z', expected: 'OUTSIDE_BUSINESS_HOURS' }, // 08:30 - 09:30 (outside business fallback)
+          { start: '2026-06-15T12:30:00.000Z', end: '2026-06-15T13:30:00.000Z', expected: 'OUTSIDE_BUSINESS_HOURS' }, // 20:30 - 21:30 (exceeds 21:00 fallback business closing)
           { start: '2026-06-15T09:30:00.000Z', end: '2026-06-15T10:30:00.000Z', expected: 'OUTSIDE_WORKING_HOURS' }, // 17:30 - 18:30 (outside)
           { start: '2026-06-15T15:30:00.000Z', end: '2026-06-15T16:30:00.000Z', expected: 'BOOKABILITY_INTERVAL_INVALID' } // 23:30 - 00:30 (midnight)
         ];
@@ -498,6 +500,28 @@ test('Customer Batch Availability Semantic Safety & Differential Parity Suite', 
             assert.equal(batchError, slot.expected, `Batch error must be ${slot.expected}`);
           }
         }
+      });
+
+      // TEST 11: Business Hours Fallback Boundary (10:00-21:00) Customer Candidate Invariance
+      await t.test('11. Customer candidate times strictly start from 10:00 and exclude 09:00 and 09:30', async () => {
+        app.locals.bookingNow = new Date('2026-06-01T00:00:00.000Z');
+        const res = await fetch(`${base}/api/booking/multi-service-available-times`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            shopSlug: 'gg-singapore',
+            date: '2026-06-22',
+            locale: 'zh-CN',
+            items: [{ serviceId: id.srvFacial, staffSelectionType: 'specific', staffId: id.staffAmy }]
+          })
+        });
+        assert.equal(res.status, 200);
+        const json = await res.json();
+        assert.equal(json.success, true);
+        const times = json.data.map(slot => slot.time);
+        assert.ok(!times.includes('09:00'), 'Customer available times must NEVER include 09:00');
+        assert.ok(!times.includes('09:30'), 'Customer available times must NEVER include 09:30');
+        assert.equal(times[0], '10:00', 'Customer available times must start strictly at baseline 10:00');
       });
 
     });

@@ -311,18 +311,25 @@ test('4. Live time line is rendered for today but hidden when navigating to yest
 });
 
 // ============================================================================
-// 5. HIDE LIVE LINE OUTSIDE BUSINESS HOURS (09:00 - 21:00)
+// 5. HIDE LIVE LINE OUTSIDE BUSINESS HOURS (10:00 - 21:00)
 // ============================================================================
 
-test('5. Live time line is hidden when current time is outside 09:00 - 21:00', async () => {
+test('5. Live time line is hidden when current time is outside 10:00 - 21:00', async () => {
   const { context, elements, load, setServerNow } = createTestContext({ gg_beauty_owner_view: 'calendar' });
 
-  // 08:30 (before 09:00) -> 00:30 UTC
+  // 08:30 (before 10:00) -> 00:30 UTC
   setServerNow(`${todaySingapore}T00:30:00.000Z`);
   await load([], sampleStaff);
 
   let htmlEarly = elements.get('content').innerHTML;
-  assert.doesNotMatch(htmlEarly, /owner-calendar-live-line/, 'Live line must not show at 08:30 (before 09:00)');
+  assert.doesNotMatch(htmlEarly, /owner-calendar-live-line/, 'Live line must not show at 08:30 (before 10:00)');
+
+  // 09:30 (before 10:00) -> 01:30 UTC
+  setServerNow(`${todaySingapore}T01:30:00.000Z`);
+  await load([], sampleStaff);
+
+  let htmlPreOpen = elements.get('content').innerHTML;
+  assert.doesNotMatch(htmlPreOpen, /owner-calendar-live-line/, 'Live line must not show at 09:30 (before 10:00)');
 
   // 21:30 (after 21:00) -> 13:30 UTC
   setServerNow(`${todaySingapore}T13:30:00.000Z`);
@@ -331,14 +338,14 @@ test('5. Live time line is hidden when current time is outside 09:00 - 21:00', a
   let htmlLate = elements.get('content').innerHTML;
   assert.doesNotMatch(htmlLate, /owner-calendar-live-line/, 'Live line must not show at 21:30 (after 21:00)');
 
-  // 14:00 (inside 09:00-21:00) -> 06:00 UTC
+  // 14:00 (inside 10:00-21:00) -> 06:00 UTC
   setServerNow(`${todaySingapore}T06:00:00.000Z`);
   await load([], sampleStaff);
 
   let htmlValid = elements.get('content').innerHTML;
-  assert.match(htmlValid, /owner-calendar-live-line/, 'Live line must show at 14:00 (inside 09:00-21:00)');
-  // (840 - 540) * 1.25 = 375px
-  assert.match(htmlValid, /top:\s*375\.0px/);
+  assert.match(htmlValid, /owner-calendar-live-line/, 'Live line must show at 14:00 (inside 10:00-21:00)');
+  // (840 - 600) * 1.25 = 300px
+  assert.match(htmlValid, /top:\s*300\.0px/);
 });
 
 // ============================================================================
