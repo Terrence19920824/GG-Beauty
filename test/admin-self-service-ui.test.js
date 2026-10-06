@@ -462,6 +462,10 @@ test('English locale translates owner staff, schedule and override UI without ch
   assert.doesNotMatch(p.elements.get('staffTabContent').innerHTML, /周一|每周排班|保存排班/);
   p.api.openStaffTab('overrides');
   assert.match(p.elements.get('staffTabContent').innerHTML, /Day Off|Special Dates/);
+  assert.match(p.elements.get('staffDetail').innerHTML, /Allow customers to book this staff online/);
+  assert.match(p.elements.get('staffDetail').innerHTML, /Staff active \/ employed/);
+  assert.match(p.elements.get('staffDetail').innerHTML, /When disabled, customers will not see or be automatically assigned to this staff online\./);
+  assert.match(p.elements.get('staffDetail').innerHTML, /When disabled, this staff will no longer appear in appointment reception; historical records are retained\./);
 });
 
 test('Chinese locale translates owner service and staff controls', () => {
@@ -470,7 +474,87 @@ test('Chinese locale translates owner service and staff controls', () => {
   p.api.setLocale('zh-CN');
   p.api.openStaffForm();
   assert.match(p.elements.get('staffDetail').innerHTML, /新增员工/);
-  assert.match(p.elements.get('staffDetail').innerHTML, /允许顾客预约/);
+  assert.match(p.elements.get('staffDetail').innerHTML, /允许顾客线上预约此员工/);
+  assert.match(p.elements.get('staffDetail').innerHTML, /员工在职\/启用/);
+  assert.match(p.elements.get('staffDetail').innerHTML, /关闭后，顾客端不会看到或自动分配到此员工。/);
+  assert.match(p.elements.get('staffDetail').innerHTML, /关闭后，此员工不再进入预约接待栏；历史预约记录保留。/);
+});
+
+test('staff profile save without changes displays No changes and skips network mutation', async () => {
+  const p = page();
+  p.api.setProfile(owner);
+  p.api.setLocale('zh-CN');
+  p.api._state.selectedStaffId = 'u1';
+  p.api._state.staff = [{ id: 'u1', name: 'Amy', staff_code: 'A01', phone: '12345678', email: 'amy@test.com', bookable: true, is_active: true }];
+  p.elements.get('staffName').value = 'Amy';
+  p.elements.get('staffCode').value = 'A01';
+  p.elements.get('staffPhone').value = '12345678';
+  p.elements.get('staffEmail').value = 'amy@test.com';
+  p.elements.get('staffBookable').checked = true;
+  p.elements.get('staffActive').checked = true;
+
+  await p.api.saveStaff(false);
+  assert.equal(p.requests.length, 0);
+  assert.equal(p.elements.get('staffSaveStatus').textContent, '没有变化');
+  assert.equal(p.elements.get('saveStaffButton').disabled, false);
+
+  p.api.setLocale('en');
+  await p.api.saveStaff(false);
+  assert.equal(p.requests.length, 0);
+  assert.equal(p.elements.get('staffSaveStatus').textContent, 'No changes');
+  assert.equal(p.elements.get('saveStaffButton').disabled, false);
+});
+
+test('staff profile save with changes displays Saved and resets button state', async () => {
+  const p = page([
+    response(200, { success: true, data: { id: 'u1', name: 'Amy White', staff_code: 'A01', phone: '12345678', email: 'amy@test.com', bookable: true, is_active: true } }),
+    response(200, { success: true, data: [{ id: 'u1', name: 'Amy White', staff_code: 'A01', phone: '12345678', email: 'amy@test.com', bookable: true, is_active: true }] }),
+    response(200, { success: true, data: [] }), response(200, { success: true, data: [] }), response(200, { success: true, data: [] })
+  ]);
+  p.api.setProfile(owner);
+  p.api.setLocale('zh-CN');
+  p.api._state.selectedStaffId = 'u1';
+  p.api._state.staff = [{ id: 'u1', name: 'Amy', staff_code: 'A01', phone: '12345678', email: 'amy@test.com', bookable: true, is_active: true }];
+  p.elements.get('staffName').value = 'Amy White';
+  p.elements.get('staffCode').value = 'A01';
+  p.elements.get('staffPhone').value = '12345678';
+  p.elements.get('staffEmail').value = 'amy@test.com';
+  p.elements.get('staffBookable').checked = true;
+  p.elements.get('staffActive').checked = true;
+
+  await p.api.saveStaff(false);
+  assert.equal(p.requests[0].options.method, 'PATCH');
+  assert.equal(p.elements.get('staffSaveStatus').textContent, '已保存');
+  assert.equal(p.elements.get('staffMessage').textContent, '已保存');
+  assert.equal(p.elements.get('saveStaffButton').disabled, false);
+
+  const pEn = page([
+    response(200, { success: true, data: { id: 'u1', name: 'Amy Brown', staff_code: 'A01', phone: '12345678', email: 'amy@test.com', bookable: true, is_active: true } }),
+    response(200, { success: true, data: [{ id: 'u1', name: 'Amy Brown', staff_code: 'A01', phone: '12345678', email: 'amy@test.com', bookable: true, is_active: true }] }),
+    response(200, { success: true, data: [] }), response(200, { success: true, data: [] }), response(200, { success: true, data: [] })
+  ]);
+  pEn.api.setProfile(owner);
+  pEn.api.setLocale('en');
+  pEn.api._state.selectedStaffId = 'u1';
+  pEn.api._state.staff = [{ id: 'u1', name: 'Amy', staff_code: 'A01', phone: '12345678', email: 'amy@test.com', bookable: true, is_active: true }];
+  pEn.elements.get('staffName').value = 'Amy Brown';
+  pEn.elements.get('staffCode').value = 'A01';
+  pEn.elements.get('staffPhone').value = '12345678';
+  pEn.elements.get('staffEmail').value = 'amy@test.com';
+  pEn.elements.get('staffBookable').checked = true;
+  pEn.elements.get('staffActive').checked = true;
+
+  await pEn.api.saveStaff(false);
+  assert.equal(pEn.elements.get('staffSaveStatus').textContent, 'Saved');
+  assert.equal(pEn.elements.get('saveStaffButton').disabled, false);
+});
+
+test('editing staff profile form clears stale save status message', () => {
+  const p = page();
+  p.api.setProfile(owner);
+  p.elements.get('staffSaveStatus').textContent = '没有变化';
+  p.api.clearStaffSaveStatus();
+  assert.equal(p.elements.get('staffSaveStatus').textContent, '');
 });
 
 test('self-service UI provides no hard-delete action or endpoint', () => {

@@ -729,14 +729,51 @@
     renderStaffList();
   }
 
+  function clearStaffSaveStatus() {
+    setMessage('staffSaveStatus', '');
+  }
+
   function renderStaffForm(staff) {
     const isNew = !staff;
     const disabled = canWrite() ? '' : 'disabled';
-    byId('staffDetail').innerHTML = `<div class="section-heading"><h3>${isNew ? t('addStaff') : t('basicDetails')}</h3></div>${isNew ? `<div class="notice">${t('staffSetupNotice')}</div>` : ''}<div class="form-grid"><label class="field"><span>${t('staffName')}</span><input id="staffName" maxlength="200" value="${escapeHtml(staff?.name || '')}" ${disabled}></label><label class="field"><span>${t('staffCode')}</span><input id="staffCode" maxlength="50" value="${escapeHtml(apiValue(staff, 'staffCode', 'staff_code') || '')}" ${disabled}></label><label class="field"><span>${t('phone')}</span><input id="staffPhone" maxlength="50" value="${escapeHtml(staff?.phone || '')}" ${disabled}></label><label class="field"><span>${t('email')}</span><input id="staffEmail" maxlength="254" value="${escapeHtml(staff?.email || '')}" ${disabled}></label><label class="check-row"><input id="staffBookable" type="checkbox" ${staff?.bookable ? 'checked' : ''} ${disabled}>${t('allowBooking')}</label><label class="check-row"><input id="staffActive" type="checkbox" ${isNew || apiValue(staff, 'isActive', 'is_active') ? 'checked' : ''} ${disabled}>${t('staffActive')}</label></div>${canWrite() ? `<div class="form-actions"><span id="staffSaveStatus" class="save-status"></span><button id="saveStaffButton" class="primary-btn" onclick="ownerSelfService.saveStaff(${isNew ? 'true' : 'false'})">${t('saveProfile')}</button></div>` : `<div class="notice">${t('adminReadOnly')}</div>`}${isNew ? '' : '<div id="staffSettings"></div>'}`;
+    byId('staffDetail').innerHTML = `<div class="section-heading"><h3>${isNew ? t('addStaff') : t('basicDetails')}</h3></div>${isNew ? `<div class="notice">${t('staffSetupNotice')}</div>` : ''}<div class="form-grid" oninput="ownerSelfService.clearStaffSaveStatus()" onchange="ownerSelfService.clearStaffSaveStatus()"><label class="field"><span>${t('staffName')}</span><input id="staffName" maxlength="200" value="${escapeHtml(staff?.name || '')}" ${disabled}></label><label class="field"><span>${t('staffCode')}</span><input id="staffCode" maxlength="50" value="${escapeHtml(apiValue(staff, 'staffCode', 'staff_code') || '')}" ${disabled}></label><label class="field"><span>${t('phone')}</span><input id="staffPhone" maxlength="50" value="${escapeHtml(staff?.phone || '')}" ${disabled}></label><label class="field"><span>${t('email')}</span><input id="staffEmail" maxlength="254" value="${escapeHtml(staff?.email || '')}" ${disabled}></label><label class="check-row" style="align-items: flex-start;"><input id="staffBookable" type="checkbox" ${staff?.bookable ? 'checked' : ''} ${disabled} style="margin-top: 3px;"><span><span>${t('staffBookable')}</span><span class="muted" style="display: block; font-size: 12px; margin-top: 2px;">${t('staffBookableHelp')}</span></span></label><label class="check-row" style="align-items: flex-start;"><input id="staffActive" type="checkbox" ${isNew || apiValue(staff, 'isActive', 'is_active') ? 'checked' : ''} ${disabled} style="margin-top: 3px;"><span><span>${t('staffActive')}</span><span class="muted" style="display: block; font-size: 12px; margin-top: 2px;">${t('staffActiveHelp')}</span></span></label></div>${canWrite() ? `<div class="form-actions"><span id="staffSaveStatus" class="save-status"></span><button id="saveStaffButton" class="primary-btn" onclick="ownerSelfService.saveStaff(${isNew ? 'true' : 'false'})">${t('saveProfile')}</button></div>` : `<div class="notice">${t('adminReadOnly')}</div>`}${isNew ? '' : '<div id="staffSettings"></div>'}`;
+  }
+
+  function hasStaffProfileChanges() {
+    if (!state.selectedStaffId) return true;
+    const currentStaff = state.staff.find(item => item.id === state.selectedStaffId);
+    if (!currentStaff) return true;
+    const currentName = (currentStaff.name || '').trim();
+    const currentPhone = (currentStaff.phone || '').trim() || null;
+    const currentEmail = (currentStaff.email || '').trim() || null;
+    const currentCode = (apiValue(currentStaff, 'staffCode', 'staff_code') || '').trim() || null;
+    const currentBookable = Boolean(currentStaff.bookable);
+    const rawActive = apiValue(currentStaff, 'isActive', 'is_active');
+    const currentActive = rawActive !== undefined ? Boolean(rawActive) : true;
+
+    const newName = value('staffName').trim();
+    const newPhone = value('staffPhone').trim() || null;
+    const newEmail = value('staffEmail').trim() || null;
+    const newCode = value('staffCode').trim() || null;
+    const newBookable = checked('staffBookable');
+    const newActive = checked('staffActive');
+
+    return (
+      newName !== currentName ||
+      newPhone !== currentPhone ||
+      newEmail !== currentEmail ||
+      newCode !== currentCode ||
+      newBookable !== currentBookable ||
+      newActive !== currentActive
+    );
   }
 
   async function saveStaff(isNew) {
     if (!canWrite()) return;
+    if (!isNew && !hasStaffProfileChanges()) {
+      setMessage('staffSaveStatus', t('noChanges'));
+      return;
+    }
     if (!isNew && hasUnsavedStaffChanges()) {
       const discard = typeof global.confirm === 'function' && global.confirm(t('profileSaveDiscardsUnsaved'));
       if (!discard) return false;
@@ -748,8 +785,9 @@
     try {
       const saved = await request(isNew ? '/api/owner/staff' : `/api/owner/staff/${encodeURIComponent(state.selectedStaffId)}`, { method: isNew ? 'POST' : 'PATCH', body: JSON.stringify(body) });
       state.selectedStaffId = saved.id || state.selectedStaffId;
-      setMessage('staffMessage', t('saved'));
       await loadStaff();
+      setMessage('staffSaveStatus', t('saved'));
+      setMessage('staffMessage', t('saved'));
     } catch (error) {
       if (!error.sessionExpired) setMessage('staffSaveStatus', error.message, true);
     } finally { setBusy('saveStaffButton', false); }
@@ -1539,6 +1577,7 @@
     showActivationLinkModal, copyActivationUrl,
     loadFrontDesk, openFrontDeskInviteModal, submitFrontDeskInvite, revokeFrontDeskInvite, disableFrontDesk, reactivateFrontDesk,
     openFrontDeskPasswordResetModal, onFrontDeskResetModeChange, submitFrontDeskPasswordReset, showTempPasswordModal, copyTempPassword,
+    clearStaffSaveStatus,
     _state: state, _request: request
   };
   setLocale(initialLocale());

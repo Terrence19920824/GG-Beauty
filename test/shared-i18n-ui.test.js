@@ -30,10 +30,18 @@ test('owner calendar has translated navigation, summaries, table, statuses and a
 });
 
 test('owner staff, weekly schedule and overrides have complete bilingual keys', () => {
-  for (const key of ['basicDetails', 'staffName', 'staffCode', 'phone', 'email', 'allowBooking', 'staffActive', 'capabilities', 'locations', 'weeklySchedule', 'specialDates', 'saveCapabilities', 'saveLocations', 'saveSchedule', 'addSpecialDate', 'monday', 'sunday', 'working', 'dayOff', 'leave', 'customHours', 'startTime', 'endTime', 'notesOptional', 'noOverrides']) {
+  for (const key of ['basicDetails', 'staffName', 'staffCode', 'phone', 'email', 'allowBooking', 'staffActive', 'staffActiveHelp', 'staffBookable', 'staffBookableHelp', 'noChanges', 'capabilities', 'locations', 'weeklySchedule', 'specialDates', 'saveCapabilities', 'saveLocations', 'saveSchedule', 'addSpecialDate', 'monday', 'sunday', 'working', 'dayOff', 'leave', 'customHours', 'startTime', 'endTime', 'notesOptional', 'noOverrides']) {
     assert.notEqual(i18n.t(key, 'zh-CN'), key);
     assert.notEqual(i18n.t(key, 'en'), key);
   }
+  assert.equal(i18n.t('staffBookable', 'zh-CN'), '允许顾客线上预约此员工');
+  assert.equal(i18n.t('staffBookable', 'en'), 'Allow customers to book this staff online');
+  assert.equal(i18n.t('staffActive', 'zh-CN'), '员工在职/启用');
+  assert.equal(i18n.t('staffActive', 'en'), 'Staff active / employed');
+  assert.equal(i18n.t('staffBookableHelp', 'zh-CN'), '关闭后，顾客端不会看到或自动分配到此员工。');
+  assert.equal(i18n.t('staffActiveHelp', 'zh-CN'), '关闭后，此员工不再进入预约接待栏；历史预约记录保留。');
+  assert.equal(i18n.t('noChanges', 'zh-CN'), '没有变化');
+  assert.equal(i18n.t('noChanges', 'en'), 'No changes');
   assert.doesNotMatch(adminJs, /[\u3400-\u9fff]/);
 });
 
