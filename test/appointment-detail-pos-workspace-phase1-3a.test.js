@@ -444,9 +444,10 @@ test('8. Server derives authoritative final due from appointment items and enfor
 
   // Authoritative total: item1 (6000) + item2 (4000) = 10000
   const txInsert = f.calls.find(c => /INSERT INTO checkout_transactions/.test(c.q));
-  assert.ok(txInsert);
-  assert.equal(txInsert.p[7], 10000, 'final_due_minor must equal sum of items (10000)');
-  assert.equal(txInsert.p[8], 10000, 'paid_minor must equal final_due_minor (full payment)');
+  const finalDueMinorParam = txInsert.p.length === 12 ? txInsert.p[8] : txInsert.p[7];
+  const paidMinorParam = txInsert.p.length === 12 ? txInsert.p[9] : txInsert.p[8];
+  assert.equal(finalDueMinorParam, 10000, 'final_due_minor must equal sum of items (10000)');
+  assert.equal(paidMinorParam, 10000, 'paid_minor must equal final_due_minor (full payment)');
   assert.equal(txInsert.p[3], 'paid', 'Transaction status must be paid');
 });
 
