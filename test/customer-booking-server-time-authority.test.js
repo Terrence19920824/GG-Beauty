@@ -100,7 +100,10 @@ test('Customer Booking Server Time Authority & Final Write Revalidation Suite', 
       '014_assignment_collision_projection_schema.sql',
       '015_assignment_collision_backfill.sql',
       '016_assignment_collision_constraint.sql',
-      '026_multi_service_parent_collision_compatibility.sql'
+      '026_multi_service_parent_collision_compatibility.sql',
+      '108_booking_channel_attribution_preflight_readonly.sql',
+      '109_booking_channel_attribution_schema.sql',
+      '110_booking_channel_attribution_verification_readonly.sql'
     ]) {
       await db.query(migration(number));
     }

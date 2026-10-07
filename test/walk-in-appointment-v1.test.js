@@ -33,7 +33,7 @@ test('walk-in uses the existing appointment architecture with server-side author
   assert.match(route, /canonicalPhone = validateBookingPhone\(phone, customer\.countryCode\)/);
   assert.match(route, /resolveOrCreateCustomer\(client, \{ shopId: scope\.shop_id, name: customerName, phone: canonicalPhone, email \}\)/);
   assert.match(route, /getOwnerFrontDeskCreationPolicy\(walkIn\)/);
-  assert.match(route, /booking_source,override_conflict\)[\s\S]*'pending',\$11,\$12/);
+  assert.match(route, /booking_source,booking_channel,override_conflict\)[\s\S]*'pending',\$11,NULL,\$12/);
   assert.match(route, /createMultiServiceRows\(client/);
   assert.match(server, /appointment_item_staff_assignments/);
   assert.match(route, /validateBookingPhone\(phone, customer\.countryCode\)/);
@@ -92,10 +92,11 @@ test('walk-in acceptance actions remain server-authoritative and non-mutating un
   assert.match(server, /const resolveCountryIso = countryInput/);
   assert.match(server, /validateCustomerIdentityPhone/);
   assert.doesNotMatch(route, /phone_verified_at/);
-  assert.match(admin, /data-action="arrive-and-start"/);
+  assert.match(admin, /data-action="mark-arrived"/);
+  assert.match(admin, /data-action="start-service"/);
   assert.match(admin, /data-target-status="cancelled"/);
   assert.match(admin, /canonicalStatus === 'confirmed'[\s\S]*data-target-status="no_show"/);
-  assert.match(admin, /canonicalStatus === 'pending'[\s\S]*data-action="arrive-and-start"/);
+  assert.match(admin, /canonicalStatus === 'pending'[\s\S]*data-action="mark-arrived"/);
   assert.match(admin, /isAppointmentLate\(item, nowMs, authToday\)/);
   assert.match(admin, /canonicalStatus !== 'pending' && canonicalStatus !== 'confirmed'/);
   assert.match(admin, /startMs \+ fifteenMinutesMs/);

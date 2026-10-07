@@ -93,6 +93,7 @@ const {
 const {
   normalizeLocale
 } = require('./public/service-locale');
+const bookingChannelAttribution = require('./public/booking-channel');
 const {
   bookingIdentityPresentation,
   CustomerIdentityError,
@@ -3349,6 +3350,7 @@ app.get(
         a.end_at,
         a.status,
         a.booking_source,
+        a.booking_channel,
         a.internal_notes,
         a.customer_special_request,
 
@@ -3992,7 +3994,16 @@ const mapCustomerIdentityBookingError = error => {
   return new AppointmentMutationError(error.code, 409, '顾客联系方式无法唯一识别');
 };
 
-const createMultiServiceBooking = async (req,verifiedSession=null) => {
+const normalizeBookingChannelInput = value => {
+  if (value === undefined || value === null) return null;
+  const normalized = bookingChannelAttribution.normalize(value);
+  if (!normalized) {
+    throw new AppointmentMutationError('BOOKING_CHANNEL_INVALID', 400, '预约渠道无效');
+  }
+  return normalized;
+};
+
+const createMultiServiceBooking = async (req,verifiedSession=null,bookingChannel=null) => {
   const body = req.body;
   const items = normalizeBookingItems(body, isUuid);
   const locale = normalizeLocale(body.locale);
@@ -4038,14 +4049,14 @@ const createMultiServiceBooking = async (req,verifiedSession=null) => {
          shop_id,location_id,customer_id,booker_customer_id,recipient_customer_id,
          booker_name_snapshot,booker_phone_snapshot,booker_email_snapshot,
          recipient_name_snapshot,recipient_phone_snapshot,recipient_email_snapshot,
-         service_id,staff_id,start_at,end_at,status,booking_source,customer_special_request
+         service_id,staff_id,start_at,end_at,status,booking_source,customer_special_request,booking_channel
        )
-       VALUES ($1,$2,$3,$4,$3,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'pending','online',$15)
+       VALUES ($1,$2,$3,$4,$3,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'pending','online',$15,$16)
        RETURNING id,shop_id,location_id,customer_id,service_id,staff_id,appointment_no,start_at,end_at,status,created_at`,
       [scope.shop_id, scope.location_id, parties.recipient.customerId, parties.booker.customerId,
        parties.bookerDraft.name, parties.booker.phone, parties.bookerDraft.email,
        parties.recipientDraft.name, parties.recipient.phone, parties.recipientDraft.email,
-       first.serviceId, first.staffId, first.startAt, last.endAt, customerSpecialRequest]
+       first.serviceId, first.staffId, first.startAt, last.endAt, customerSpecialRequest, bookingChannel]
     );
     if (appointmentResult.rows.length !== 1) throw new AppointmentMutationError('appointment_insert_mismatch', 500, '预约创建失败');
     await createMultiServiceRows(client, { appointment: appointmentResult.rows[0], items: planned, serviceLocale: locale });
@@ -4070,6 +4081,17 @@ app.post('/api/new-db', async (req, res) => {
     return res.status(400).json({ success: false, message: 'Invalid customer identity' });
   }
 
+  let bookingChannel;
+  try {
+    bookingChannel = normalizeBookingChannelInput(req.body?.bookingChannel);
+  } catch (error) {
+    return res.status(error.status || 400).json({
+      success: false,
+      code: 'BOOKING_CHANNEL_INVALID',
+      message: error.publicMessage || '预约渠道无效'
+    });
+  }
+
   let verifiedSession=null;
   const sessionToken=customerCookie(req);
   if(sessionToken){
@@ -4084,7 +4106,7 @@ app.post('/api/new-db', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Invalid shop context' });
     }
     try {
-      const created = await createMultiServiceBooking(req,verifiedSession);
+      const created = await createMultiServiceBooking(req,verifiedSession,bookingChannel);
       let calendar = null;
       try {
         const poolToUse = req.app.locals.bookingPool || pool;
@@ -4481,13 +4503,15 @@ app.post('/api/new-db', async (req, res) => {
             end_at,
             status,
             booking_source,
-            customer_special_request
+            customer_special_request,
+            booking_channel
           )
           VALUES (
             $1, $2, $3, $4, $3, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
             'pending',
             'online',
-            $15
+            $15,
+            $16
           )
           RETURNING
             id,
@@ -4517,7 +4541,8 @@ app.post('/api/new-db', async (req, res) => {
             staffId,
             startAt,
             endAt,
-            customerSpecialRequest
+            customerSpecialRequest,
+            bookingChannel
           ]
         );
 
@@ -4966,6 +4991,13 @@ const createOwnerFrontDeskAppointmentHandler = ({ walkIn }) =>
     const creationPolicy = getOwnerFrontDeskCreationPolicy(walkIn);
     const { bookingSource, historySource } = creationPolicy;
     const body = req.body || {};
+    if (body.bookingChannel !== undefined || body.booking_channel !== undefined) {
+      return res.status(400).json({
+        success: false,
+        code: 'BOOKING_CHANNEL_INVALID',
+        message: '不能为前台预约指定营销渠道'
+      });
+    }
     const overrideConflictRequested = body.overrideConflict === true;
     // Keep this aligned with the existing appointment-adjustment override
     // policy.  A front-desk session must never gain this authority merely by
@@ -5076,8 +5108,8 @@ const createOwnerFrontDeskAppointmentHandler = ({ walkIn }) =>
         const appointmentResult = await client.query(
           `INSERT INTO appointments (shop_id,location_id,customer_id,booker_customer_id,recipient_customer_id,
              booker_name_snapshot,booker_phone_snapshot,booker_email_snapshot,recipient_name_snapshot,recipient_phone_snapshot,recipient_email_snapshot,
-             service_id,staff_id,start_at,end_at,status,booking_source,override_conflict)
-           VALUES ($1,$2,$3,$3,$3,$4,$5,$6,$4,$5,$6,$7,$8,$9,$10,'pending',$11,$12)
+             service_id,staff_id,start_at,end_at,status,booking_source,booking_channel,override_conflict)
+           VALUES ($1,$2,$3,$3,$3,$4,$5,$6,$4,$5,$6,$7,$8,$9,$10,'pending',$11,NULL,$12)
            RETURNING id,shop_id,location_id,customer_id,appointment_no,start_at,end_at,status,override_conflict,created_at`,
           [scope.shop_id, scope.location_id, identity.customerId, customerName, identity.phone, email,
             first.serviceId, first.staffId, first.startAt, last.endAt, bookingSource, hasTimeConflict]);

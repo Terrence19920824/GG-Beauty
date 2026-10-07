@@ -1115,6 +1115,34 @@ const adminT = key => globalThis.ggI18n.t(
   key,
   globalThis.ownerSelfService?._state.locale || globalThis.ggI18n.DEFAULT_LOCALE
 );
+const BOOKING_SOURCE_I18N_KEYS = Object.freeze({
+  online: 'bookingSourceOnline',
+  walk_in: 'bookingSourceWalkIn',
+  owner_assisted: 'bookingSourceOwnerAssisted'
+});
+const BOOKING_CHANNEL_I18N_KEYS = Object.freeze({
+  whatsapp: 'bookingChannelWhatsApp',
+  instagram: 'bookingChannelInstagram',
+  tiktok: 'bookingChannelTikTok',
+  xiaohongshu: 'bookingChannelXiaohongshu',
+  douyin: 'bookingChannelDouyin',
+  google: 'bookingChannelGoogle',
+  website: 'bookingChannelWebsite'
+});
+
+function getBookingSourceLabel(bookingSource) {
+  const key = BOOKING_SOURCE_I18N_KEYS[bookingSource];
+  return adminT(key || 'bookingSourceUnknown');
+}
+
+function getBookingChannelLabel(bookingSource, bookingChannel) {
+  const key = BOOKING_CHANNEL_I18N_KEYS[bookingChannel];
+  if (key) return adminT(key);
+  if (bookingSource === 'walk_in' || bookingSource === 'owner_assisted') {
+    return adminT('bookingChannelNotApplicable');
+  }
+  return adminT('bookingChannelUnknown');
+}
 const adminResultMessage = (result, fallbackKey) =>
   globalThis.ownerSelfService?._state.locale === 'zh-CN' && result?.message
     ? result.message
@@ -4750,6 +4778,8 @@ function renderAppointmentDrawer(appointment) {
     appendDrawerField(appointmentSection, adminT('date'), dateFormatted, 'notranslate');
     appendDrawerField(appointmentSection, adminT('time'), timeFormatted, 'notranslate');
     appendDrawerField(appointmentSection, adminT('status'), getStatusText(appointment.status), 'notranslate');
+    appendDrawerField(appointmentSection, adminT('bookingMethod'), getBookingSourceLabel(appointment.booking_source));
+    appendDrawerField(appointmentSection, adminT('marketingChannel'), getBookingChannelLabel(appointment.booking_source, appointment.booking_channel));
     if (['pending', 'confirmed'].includes(canonicalStatus)) {
       const adjustBtn = drawerElement('button', 'drawer-adjust-btn', adminT('adjustAppointment'));
       adjustBtn.type = 'button';

@@ -35,6 +35,7 @@ const appointmentRow = {
   end_at: '2030-01-01T03:00:00Z',
   status: 'pending',
   booking_source: 'online',
+  booking_channel: 'instagram',
   customer_name: 'Shop A Customer',
   customer_phone: '+6591234567',
   customer_email: 'a@example.invalid',
@@ -176,6 +177,7 @@ for (const role of ['owner', 'manager', 'admin']) {
       assert.deepEqual(payload.data, [projectedAppointmentRow]);
       assert.equal(payload.data[0].customer_phone, appointmentRow.customer_phone);
       assert.equal(payload.data[0].internal_notes, 'Owner-only note');
+      assert.equal(payload.data[0].booking_channel, 'instagram');
     });
   });
 }

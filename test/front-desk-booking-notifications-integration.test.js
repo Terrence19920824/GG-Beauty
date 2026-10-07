@@ -279,6 +279,20 @@ test('assisted no-preference input fails before booking and never broadcasts a s
   assert.deepEqual(fixture.state.notifications, []);
 });
 
+test('assisted and walk-in creation reject forged marketing attribution before appointment writes', async () => {
+  for (const endpoint of ['/api/owner/assisted-appointments', '/api/owner/walk-in-appointments']) {
+    const fixture = makeFixture({ role: 'front_desk' });
+    const result = await createAppointment(fixture, endpoint, {
+      ...requestBody('specific'),
+      bookingChannel: 'instagram'
+    });
+    assert.equal(result.status, 400);
+    assert.equal(result.body.code, 'BOOKING_CHANNEL_INVALID');
+    assert.equal(fixture.state.connectCount, 0);
+    assert.deepEqual(fixture.state.notifications, []);
+  }
+});
+
 test('post-commit notification failure does not roll back a successfully created assisted booking', async () => {
   const fixture = makeFixture({ role: 'owner', failNotifications: true });
   const result = await createAppointment(fixture, '/api/owner/assisted-appointments');

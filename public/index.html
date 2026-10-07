@@ -529,6 +529,7 @@
 <!-- canonical script source: src="/shared-i18n.js" -->
 <script src="/service-locale.js"></script>
 <script src="/customer-shop-context.js"></script>
+<script src="/booking-channel.js"></script>
 <script src="/customer-theme.js"></script>
 <script src="/customer-category-flow.js"></script>
 <script src="/customer-multi-service-cart.js?v=2.0.0"></script>
@@ -631,6 +632,7 @@ let availableCategories = [];
 let availableServices = [];
 let customerShopSlug = '';
 let customerShopName = '';
+let bookingChannel = null;
 let selectedCategoryId = '';
 let cart = cartApi.create();
 let bookingFor = 'myself';
@@ -654,6 +656,15 @@ const NO_PREFERENCE_VALUE = '__no_preference__';
 const localeApi = globalThis.ggI18n;
 const shopContextApi = globalThis.ggCustomerShopContext;
 const categoryFlowApi = globalThis.ggCustomerCategoryFlow;
+const rawBookingChannelApi = globalThis.ggBookingChannel;
+const bookingChannelApi = rawBookingChannelApi &&
+  typeof rawBookingChannelApi.captureFromLocation === 'function' &&
+  typeof rawBookingChannelApi.clearForShop === 'function'
+  ? rawBookingChannelApi
+  : Object.freeze({
+      captureFromLocation: () => null,
+      clearForShop: () => {}
+    });
 
 let announcementExpanded = false;
 
@@ -1764,6 +1775,12 @@ async function initializeCustomerPage() {
     } else {
       customerShopName = nextName;
     }
+    bookingChannel = bookingChannelApi.captureFromLocation({
+      locationLike: globalThis.location,
+      historyLike: globalThis.history,
+      storage: globalThis.sessionStorage,
+      shopSlug: customerShopSlug
+    });
 
     shopBrandName.textContent = result.data.shopName || customerShopSlug;
     if (globalThis.ggCustomerTheme && typeof globalThis.ggCustomerTheme.resolveTheme === 'function') {
@@ -2239,7 +2256,8 @@ document
                 ...(recipient ? { recipient } : {}),
                 customerSpecialRequest,
                 date,
-                startAt: selectedSlot.startAt
+                startAt: selectedSlot.startAt,
+                bookingChannel
               })
             }
           );
@@ -2256,6 +2274,8 @@ document
         }
 
         bookingSucceeded = true;
+        bookingChannelApi.clearForShop(globalThis.sessionStorage, customerShopSlug);
+        bookingChannel = null;
 
         messageBox.className =
           'message success';

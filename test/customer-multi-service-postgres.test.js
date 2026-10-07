@@ -7,6 +7,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawn, spawnSync } = require('node:child_process');
 const { Client, Pool } = require('pg');
+const { CHANNELS } = require('../public/booking-channel');
 
 const ROOT = path.join(__dirname, '..');
 const PG_BIN = process.env.PG17_BIN || '/opt/homebrew/opt/postgresql@17/bin';
@@ -59,6 +60,9 @@ test('real PostgreSQL customer endpoint creates canonical multi-service and lega
     await db.query(migration('015_assignment_collision_backfill.sql'));
     await db.query(migration('016_assignment_collision_constraint.sql'));
     await db.query(migration('026_multi_service_parent_collision_compatibility.sql'));
+    await db.query(migration('108_booking_channel_attribution_preflight_readonly.sql'));
+    await db.query(migration('109_booking_channel_attribution_schema.sql'));
+    await db.query(migration('110_booking_channel_attribution_verification_readonly.sql'));
     await db.query(`INSERT INTO shops VALUES($1,'tenant-a','Tenant A','active')`, [id.shop]);
     await db.query(`INSERT INTO shops VALUES($1,'tenant-b','Tenant B','active')`, [id.shopB]);
     await db.query(`INSERT INTO customers(id,shop_id,name,phone,phone_normalized) VALUES($1,$2,'Foreign customer','+60123456789','+60123456789')`, [id.customerB, id.shopB]);
@@ -78,8 +82,11 @@ test('real PostgreSQL customer endpoint creates canonical multi-service and lega
 
     await withServer(app, async base => {
       await t.test('same staff stores exactly two authoritative sequential items', async () => {
-        const response = await post(base, { ...baseBody, phone: '+6581110001', startAt: '2030-01-07T02:00:00Z', items: [{ serviceId: id.serviceA, staffSelectionType: 'specific', staffId: id.staffA }, { serviceId: id.serviceB, staffSelectionType: 'specific', staffId: id.staffA }] });
-        assert.equal(response.status, 200); const saved = await inspect((await response.json()).data.id);
+        const response = await post(base, { ...baseBody, phone: '+6581110001', bookingChannel: '  InStaGram  ', startAt: '2030-01-07T02:00:00Z', items: [{ serviceId: id.serviceA, staffSelectionType: 'specific', staffId: id.staffA }, { serviceId: id.serviceB, staffSelectionType: 'specific', staffId: id.staffA }] });
+        assert.equal(response.status, 200); const payload = await response.json(); const saved = await inspect(payload.data.id);
+        assert.equal(saved.booking_channel, 'instagram');
+        assert.equal(Object.hasOwn(payload.data, 'booking_channel'), false);
+        assert.equal(Object.hasOwn(payload.data, 'bookingChannel'), false);
         assert.equal(saved.items.length, 2); assert.deepEqual(saved.items.map(item => item.sequence), [1, 2]); assert.deepEqual(saved.items.map(item => item.staff), [id.staffA, id.staffA]);
         assert.equal(new Date(saved.items[1].start).toISOString(), new Date(saved.items[0].end).toISOString()); assert.equal(saved.staff_id, id.staffA); assert.equal(saved.service_id, id.serviceA);
         assert.equal(new Date(saved.start_at).toISOString(), new Date(saved.items[0].start).toISOString()); assert.equal(new Date(saved.end_at).toISOString(), new Date(saved.items[1].end).toISOString());
@@ -123,9 +130,27 @@ test('real PostgreSQL customer endpoint creates canonical multi-service and lega
         const response = await post(base, { ...baseBody, phone: reverse ? '+6581110003' : '+6581110004', startAt: reverse ? '2030-01-09T02:00:00Z' : '2030-01-10T02:00:00Z', items });
         assert.equal(response.status, 200); const saved = await inspect((await response.json()).data.id); assert.equal(saved.items[specificIndex].staff, id.staffA);
       });
+      await t.test('all seven allowlisted marketing channels pass the public API and persist canonically', async () => {
+        for (const [index, bookingChannel] of CHANNELS.entries()) {
+          const response = await post(base, {
+            ...baseBody,
+            phone: `+658222220${index}`,
+            bookingChannel,
+            startAt: `2030-02-${String(index + 1).padStart(2, '0')}T02:00:00Z`,
+            items: [{ serviceId: id.serviceA, staffSelectionType: 'specific', staffId: id.staffA }]
+          });
+          assert.equal(response.status, 200, bookingChannel);
+          const payload = await response.json();
+          const saved = await inspect(payload.data.id);
+          assert.equal(saved.booking_channel, bookingChannel);
+          assert.equal(Object.hasOwn(payload.data, 'booking_channel'), false);
+          assert.equal(Object.hasOwn(payload.data, 'bookingChannel'), false);
+        }
+      });
       await t.test('legacy date/time and startAt-only shapes both create parent item and primary', async () => {
-        let response = await post(base, { ...baseBody, phone: '+6581110005', serviceId: id.serviceA, staffSelectionType: 'specific', staffId: id.staffA, date: '2030-01-11', time: '10:00' }); assert.equal(response.status, 200); let saved = await inspect((await response.json()).data.id); assert.equal(saved.items.length, 1);
+        let response = await post(base, { ...baseBody, phone: '+6581110005', bookingChannel: 'WHATSAPP', serviceId: id.serviceA, staffSelectionType: 'specific', staffId: id.staffA, date: '2030-01-11', time: '10:00' }); assert.equal(response.status, 200); let saved = await inspect((await response.json()).data.id); assert.equal(saved.items.length, 1); assert.equal(saved.booking_channel, 'whatsapp');
         response = await post(base, { ...baseBody, phone: '+6581110006', serviceId: id.serviceA, staffSelectionType: 'no_preference', startAt: '2030-01-12T02:00:00Z' }); assert.equal(response.status, 200); saved = await inspect((await response.json()).data.id); assert.equal(saved.items.length, 1); assert.ok([id.staffA, id.staffB].includes(saved.items[0].staff));
+        assert.equal(saved.booking_channel, null);
       });
     });
   } finally {

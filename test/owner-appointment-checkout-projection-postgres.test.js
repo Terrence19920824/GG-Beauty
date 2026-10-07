@@ -90,7 +90,7 @@ test('owner appointment checkout projection executes once on PostgreSQL and isol
         id uuid PRIMARY KEY, shop_id uuid NOT NULL, location_id uuid NOT NULL,
         customer_id uuid NOT NULL, service_id uuid NOT NULL, staff_id uuid NOT NULL,
         appointment_no text, start_at timestamptz, end_at timestamptz,
-        status text, booking_source text, internal_notes text NULL,
+        status text, booking_source text, booking_channel text NULL, internal_notes text NULL,
         customer_special_request text NULL,
         booker_customer_id uuid NULL, recipient_customer_id uuid NULL,
         booker_name_snapshot text NULL, booker_phone_snapshot text NULL, booker_email_snapshot text NULL,
@@ -151,13 +151,13 @@ test('owner appointment checkout projection executes once on PostgreSQL and isol
     await db.query(`INSERT INTO staff VALUES ($1,$2,'A Staff','A1'),($3,$4,'B Staff','B1')`, [ID.staffA, ID.shopA, ID.staffB, ID.shopB]);
     await db.query(`INSERT INTO appointments (
         id, shop_id, location_id, customer_id, service_id, staff_id,
-        appointment_no, start_at, end_at, status, booking_source, internal_notes,
+        appointment_no, start_at, end_at, status, booking_source, booking_channel, internal_notes,
         booker_customer_id, recipient_customer_id,
         booker_name_snapshot, booker_phone_snapshot, booker_email_snapshot,
         recipient_name_snapshot, recipient_phone_snapshot, recipient_email_snapshot
       ) VALUES
-      ($1,$2,$3,$4,$5,$6,'A-1','2030-01-01T02:00Z','2030-01-01T04:00Z','in_service','online',NULL,$4,$4,'A Customer','0000','a@example.invalid','A Customer','0000','a@example.invalid'),
-      ($7,$8,$9,$10,$11,$12,'B-1','2030-01-02T02:00Z','2030-01-02T03:00Z','in_service','online',NULL,$10,$10,'B Customer','9999','b@example.invalid','B Customer','9999','b@example.invalid')`, [
+      ($1,$2,$3,$4,$5,$6,'A-1','2030-01-01T02:00Z','2030-01-01T04:00Z','in_service','online','instagram',NULL,$4,$4,'A Customer','0000','a@example.invalid','A Customer','0000','a@example.invalid'),
+      ($7,$8,$9,$10,$11,$12,'B-1','2030-01-02T02:00Z','2030-01-02T03:00Z','in_service','online',NULL,NULL,$10,$10,'B Customer','9999','b@example.invalid','B Customer','9999','b@example.invalid')`, [
       ID.appointmentA, ID.shopA, ID.locationA, ID.customerA, ID.serviceA, ID.staffA,
       ID.appointmentB, ID.shopB, ID.locationB, ID.customerB, ID.serviceB, ID.staffB
     ]);
@@ -218,12 +218,12 @@ test('owner appointment checkout projection executes once on PostgreSQL and isol
 
     await db.query(`INSERT INTO appointments (
         id, shop_id, location_id, customer_id, service_id, staff_id,
-        appointment_no, start_at, end_at, status, booking_source, internal_notes,
+        appointment_no, start_at, end_at, status, booking_source, booking_channel, internal_notes,
         booker_customer_id, recipient_customer_id,
         booker_name_snapshot, booker_phone_snapshot, booker_email_snapshot,
         recipient_name_snapshot, recipient_phone_snapshot, recipient_email_snapshot
       ) VALUES
-      ($1,$2,$3,$4,$5,$6,'A-TIME','2030-01-03T02:00Z','2030-01-03T03:00Z','in_service','online',NULL,$4,$4,'A Customer','0000','a@example.invalid','A Customer','0000','a@example.invalid')`,
+      ($1,$2,$3,$4,$5,$6,'A-TIME','2030-01-03T02:00Z','2030-01-03T03:00Z','in_service','online',NULL,NULL,$4,$4,'A Customer','0000','a@example.invalid','A Customer','0000','a@example.invalid')`,
     [ID.appointmentTime, ID.shopA, ID.locationA, ID.customerA, ID.serviceA, ID.staffA]);
     await db.query(`INSERT INTO appointment_items VALUES
       ($1,$2,$3,$4,$5,1,'A Service','en',60,60,'2030-01-03T02:00:00.000000Z','2030-01-03T03:00:00.000000Z','in_service')`,
@@ -297,6 +297,7 @@ test('owner appointment checkout projection executes once on PostgreSQL and isol
       assert.equal(body.data.length, 2);
       const projectedA = body.data.find(row => row.id === ID.appointmentA);
       assert.ok(projectedA);
+      assert.equal(projectedA.booking_channel, 'instagram');
       const serialized = JSON.stringify(body);
       for (const forbidden of [
         'B Customer', 'B Service', 'B Staff', ID.appointmentB,
