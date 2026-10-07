@@ -261,10 +261,11 @@ test('1. i18n purity: Phase 1.1A keys exist and follow single-language purity', 
   }
 });
 
-test('2. CSS responsive rules: 3-column >=1180px, 2-column 768-1179px, 1-column <768px, >=44px touch targets', () => {
+test('2. CSS responsive rules: 3-column >=1180px with POS ratio, 900-1179px, 2-column 768-899px, 1-column <768px, >=44px touch targets', () => {
   assert.match(calendarSharedCss, /\.pos-workspace-columns\s*\{/, 'Must define .pos-workspace-columns');
-  assert.match(calendarSharedCss, /@media\s*\(min-width:\s*1180px\)[\s\S]*?\.pos-workspace-columns\s*\{[\s\S]*?grid-template-columns:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\)/);
-  assert.match(calendarSharedCss, /@media\s*\(min-width:\s*768px\)\s+and\s+\(max-width:\s*1179px\)[\s\S]*?\.drawer-workspace-col-right\s*\{[\s\S]*?grid-column:\s*1\s*\/\s*-1/);
+  assert.match(calendarSharedCss, /@media\s*\(min-width:\s*1180px\)[\s\S]*?\.pos-workspace-columns\s*\{[\s\S]*?grid-template-columns:\s*minmax\(320px,\s*350px\)\s+1fr\s+minmax\(300px,\s*340px\)/);
+  assert.match(calendarSharedCss, /@media\s*\(min-width:\s*900px\)\s+and\s+\(max-width:\s*1179px\)[\s\S]*?\.pos-workspace-columns\s*\{[\s\S]*?grid-template-columns:\s*minmax\(290px,\s*320px\)\s+1fr\s+minmax\(280px,\s*310px\)/);
+  assert.match(calendarSharedCss, /@media\s*\(min-width:\s*768px\)\s+and\s+\(max-width:\s*899px\)[\s\S]*?\.drawer-workspace-col-right\s*\{[\s\S]*?grid-column:\s*1\s*\/\s*-1/);
   assert.match(calendarSharedCss, /@media\s*\(max-width:\s*767px\)[\s\S]*?\.pos-workspace-columns\s*\{[\s\S]*?grid-template-columns:\s*1fr/);
 
   // Pay bill button touch target >= 44px
