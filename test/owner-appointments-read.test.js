@@ -49,6 +49,15 @@ const appointmentRow = {
 
 const projectedAppointmentRow = {
   ...appointmentRow,
+  date_of_birth: null,
+  billing_summary: {
+    appointment_service_item_count: null,
+    billed_service_item_count: null,
+    unbilled_service_item_count: null
+  },
+  appointment_service_item_count: null,
+  billed_service_item_count: null,
+  unbilled_service_item_count: null,
   items: [],
   checkout: null,
   can_start_checkout: false

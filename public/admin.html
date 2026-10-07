@@ -1111,9 +1111,10 @@ const adminContent =
 
 let currentAppointments = [];
 globalThis.currentAppointments = currentAppointments;
-const adminT = key => globalThis.ggI18n.t(
+const adminT = (key, params) => globalThis.ggI18n.t(
   key,
-  globalThis.ownerSelfService?._state.locale || globalThis.ggI18n.DEFAULT_LOCALE
+  globalThis.ownerSelfService?._state?.locale || globalThis.ggI18n.DEFAULT_LOCALE,
+  params
 );
 const BOOKING_SOURCE_I18N_KEYS = Object.freeze({
   online: 'bookingSourceOnline',
@@ -4770,8 +4771,17 @@ function renderAppointmentDrawer(appointment) {
     statusBar.setAttribute('role', 'status');
     drawerBody.appendChild(statusBar);
 
-    // Section A: Appointment / 预约信息
-    const appointmentSection = appendDrawerSection(drawerBody, adminT('appointmentInfo'), 'drawer-appointment-section');
+    // Three-column workspace layout container
+    const columnsWrapper = drawerElement('div', 'pos-workspace-columns');
+
+    // ==========================================
+    // COLUMN 1: Customer & Appointment Info / 第一栏：顾客与预约信息
+    // ==========================================
+    const leftCol = drawerElement('div', 'drawer-workspace-col drawer-workspace-col-left');
+    leftCol.appendChild(drawerElement('div', 'drawer-col-header', adminT('colCustomerAndAppointment')));
+
+    // Section 1A: Appointment Details
+    const appointmentSection = appendDrawerSection(leftCol, adminT('appointmentInfo'), 'drawer-appointment-section');
     if (appointment.appointment_no) {
       appendDrawerField(appointmentSection, adminT('appointmentNoLabel'), appointment.appointment_no, 'drawer-appointment-no notranslate');
     }
@@ -4780,19 +4790,9 @@ function renderAppointmentDrawer(appointment) {
     appendDrawerField(appointmentSection, adminT('status'), getStatusText(appointment.status), 'notranslate');
     appendDrawerField(appointmentSection, adminT('bookingMethod'), getBookingSourceLabel(appointment.booking_source));
     appendDrawerField(appointmentSection, adminT('marketingChannel'), getBookingChannelLabel(appointment.booking_source, appointment.booking_channel));
-    if (['pending', 'confirmed'].includes(canonicalStatus)) {
-      const adjustBtn = drawerElement('button', 'drawer-adjust-btn', adminT('adjustAppointment'));
-      adjustBtn.type = 'button';
-      adjustBtn.id = 'drawerAdjustBtn';
-      adjustBtn.addEventListener('click', () => {
-        activeDrawerMode = 'adjust';
-        renderAppointmentDrawer(appointment);
-      });
-      appointmentSection.appendChild(adjustBtn);
-    }
 
-    // Section B: Customer / 顾客
-    const customerSection = appendDrawerSection(drawerBody, adminT('customers'), 'drawer-customer-section');
+    // Section 1B: Customer Details
+    const customerSection = appendDrawerSection(leftCol, adminT('customers'), 'drawer-customer-section');
     const customerNameField = drawerElement('div', 'drawer-field');
     customerNameField.appendChild(drawerElement('span', 'drawer-field-label', hasDistinctBooker ? adminT('recipient') : adminT('customerName')));
     const customerNameVal = drawerElement('span', 'drawer-field-value drawer-customer-name notranslate', recipientName);
@@ -4812,31 +4812,20 @@ function renderAppointmentDrawer(appointment) {
     customerNameField.appendChild(customerNameVal);
     customerSection.appendChild(customerNameField);
 
-    if (memberCode) {
-      appendDrawerField(customerSection, adminT('memberCode'), memberCode, 'drawer-member-code notranslate');
-    }
-
-    if (appointment.membership_enabled === true && appointment.membership_status) {
-      const membershipStatusKey = {
-        active: 'membershipStatusActive',
-        expired: 'membershipStatusExpired',
-        suspended: 'membershipStatusSuspended',
-        revoked: 'membershipStatusRevoked',
-        inactive: 'membershipStatusInactive'
-      }[String(appointment.membership_status).toLowerCase()] || 'membershipStatusInactive';
-      if (appointment.membership_tier_name) {
-        appendDrawerField(customerSection, adminT('membershipTier'), appointment.membership_tier_name, 'drawer-membership-tier notranslate');
-      }
-      appendDrawerField(customerSection, adminT('membershipStatus'), adminT(membershipStatusKey), 'drawer-membership-status');
-      if (appointment.membership_expires_at) {
-        appendDrawerField(customerSection, adminT('membershipExpiry'), getSingaporeDateString(appointment.membership_expires_at), 'drawer-membership-expiry notranslate');
-      }
+    if (appointment.member_code) {
+      appendDrawerField(customerSection, adminT('memberCode'), appointment.member_code, 'notranslate');
     }
 
     appendDrawerField(customerSection, adminT('phone'), recipientPhone || adminT('noCustomerPhone'), 'drawer-customer-phone notranslate');
     if (recipientEmail) {
       appendDrawerField(customerSection, adminT('email'), recipientEmail, 'drawer-customer-email notranslate');
     }
+
+    // Birthday (always displayed; shows date or '未填写 / Not provided')
+    const dobFormatted = appointment.date_of_birth
+      ? String(appointment.date_of_birth).slice(0, 10)
+      : adminT('notProvided');
+    appendDrawerField(customerSection, adminT('dateOfBirth'), dobFormatted, appointment.date_of_birth ? 'notranslate' : '');
 
     if (hasDistinctBooker) {
       const bookerBox = drawerElement('div', 'drawer-booker-subsection');
@@ -4864,12 +4853,66 @@ function renderAppointmentDrawer(appointment) {
       customerSection.appendChild(actions);
     }
 
-    // Section C: Services / 服务项目
-    const serviceSection = appendDrawerSection(drawerBody, adminT('servicesAndStaff'), 'drawer-services-section');
-    const itemsList = Array.isArray(appointment.items) && appointment.items.length ? appointment.items : [appointment];
-    for (const it of itemsList) {
+    // Customer Assets Blocks (only if enabled & real data exists)
+    renderCustomerAssetBlocks(leftCol, appointment);
+
+    // Section 1C: Notes (Read-only static text in Phase 1.1A)
+    const customerProfileNotesSection = appendDrawerSection(leftCol, adminT('customerProfileNotes'), 'drawer-notes-section');
+    customerProfileNotesSection.appendChild(drawerElement('div', 'drawer-field-label', adminT('customerProfileNotesHelp')));
+    const rawProfileNotes = typeof appointment.profile_notes === 'string'
+      ? appointment.profile_notes.trim()
+      : (typeof appointment.customer_profile_notes === 'string' ? appointment.customer_profile_notes.trim() : '');
+    const profileNotesBox = drawerElement('div', 'drawer-profile-notes-value notranslate', rawProfileNotes || adminT('notProvided'));
+    if (!rawProfileNotes) {
+      profileNotesBox.classList.remove('notranslate');
+    }
+    customerProfileNotesSection.appendChild(profileNotesBox);
+
+    const customerSpecialRequest = typeof appointment.customer_special_request === 'string'
+      ? appointment.customer_special_request.trim()
+      : '';
+    if (customerSpecialRequest) {
+      const customerSpecialRequestSection = appendDrawerSection(leftCol, adminT('customerSpecialRequest'), 'drawer-notes-section');
+      customerSpecialRequestSection.appendChild(drawerElement('div', 'drawer-special-request-value notranslate', customerSpecialRequest));
+    }
+
+    // Internal Notes (Staff only - read-only static text in Phase 1.1A)
+    const internalNotesSection = appendDrawerSection(leftCol, `${adminT('internalNotes')} (${adminT('staffOnly')})`, 'drawer-notes-section');
+    internalNotesSection.appendChild(drawerElement('div', 'drawer-field-label', `${adminT('internalNotesVisibility')} · ${adminT('staffOnly')}`));
+    const rawInternalNotes = typeof appointment.internal_notes === 'string' ? appointment.internal_notes.trim() : '';
+    const internalNotesBox = drawerElement('div', 'drawer-internal-notes-value notranslate', rawInternalNotes || '-');
+    internalNotesSection.appendChild(internalNotesBox);
+
+    columnsWrapper.appendChild(leftCol);
+
+    // ==========================================
+    // COLUMN 2: Appointment Items / 第二栏：本次预约项目
+    // ==========================================
+    const middleCol = drawerElement('div', 'drawer-workspace-col drawer-workspace-col-middle');
+    middleCol.appendChild(drawerElement('div', 'drawer-col-header', adminT('colAppointmentItems')));
+
+    const rawItems = Array.isArray(appointment.items) && appointment.items.length ? appointment.items : [appointment];
+    const sortedItems = [...rawItems].sort((left, right) => (Number(left.sequence_no) || 0) - (Number(right.sequence_no) || 0));
+
+    for (let idx = 0; idx < sortedItems.length; idx += 1) {
+      const it = sortedItems[idx];
       const card = drawerElement('div', 'drawer-item-card');
+      const itemCanonicalStatus = globalThis.ggI18n && typeof globalThis.ggI18n.normalizeAppointmentStatus === 'function'
+        ? globalThis.ggI18n.normalizeAppointmentStatus(it.status || appointment.status)
+        : (it.status || canonicalStatus);
+
+      // Card Header: sequence number and item status pill
+      const cardHeader = drawerElement('div', 'drawer-item-header');
+      const seqNo = it.sequence_no != null ? it.sequence_no : (idx + 1);
+      cardHeader.appendChild(drawerElement('span', 'drawer-item-seq', `#${seqNo}`));
+      cardHeader.appendChild(drawerElement('span', `drawer-item-status-pill status-${itemCanonicalStatus}`, getStatusText(it.status || appointment.status)));
+      card.appendChild(cardHeader);
+
+      // Service name
       const sName = it.service_name_snapshot || it.service_name || appointment.service_name || '-';
+      card.appendChild(drawerElement('div', 'drawer-item-name notranslate', sName));
+
+      // Price & duration
       const duration = it.duration_minutes_snapshot || it.duration_minutes || appointment.duration_minutes || '-';
       let priceText = null;
       if (it.price_snapshot_minor !== null && it.price_snapshot_minor !== undefined && it.price_snapshot_minor !== '') {
@@ -4881,10 +4924,11 @@ function renderAppointmentDrawer(appointment) {
         const p = Number(it.price);
         if (Number.isFinite(p) && p >= 0) priceText = formatMinorCurrency(Math.round(p * 100));
       }
+      appendDrawerField(card, adminT('price'), priceText || '-', 'notranslate');
+      appendDrawerField(card, adminT('duration'), `${duration} ${adminT('minutes')}`, 'notranslate');
+      appendDrawerField(card, adminT('itemStatus'), getStatusText(it.status || appointment.status));
 
-      const headerText = `${sName} · ${duration} ${adminT('minutes')}${priceText ? ` · ${priceText}` : ''}`;
-      card.appendChild(drawerElement('div', 'drawer-item-header notranslate', headerText));
-
+      // Staff assignments
       const assignments = Array.isArray(it.staff_assignments) ? it.staff_assignments : [];
       const primaryList = assignments.filter(a => a.role === 'primary');
       const assistantList = assignments.filter(a => a.role === 'assistant');
@@ -4893,176 +4937,86 @@ function renderAppointmentDrawer(appointment) {
         it.staff_name_snapshot || it.staff_name || appointment.staff_name || '-';
       const assistantNames = assistantList.map(a => a.staff_name || a.name).filter(Boolean).join(', ');
 
-      const rolesBox = drawerElement('div', 'drawer-item-roles');
-      const primaryRow = drawerElement('div', 'drawer-item-role-row notranslate');
-      primaryRow.appendChild(drawerElement('span', '', `${adminT('primaryStaff')}: `));
-      primaryRow.appendChild(drawerElement('strong', '', primaryNames));
-      rolesBox.appendChild(primaryRow);
+      appendDrawerField(card, adminT('primaryStaff'), primaryNames, 'notranslate');
+      appendDrawerField(card, adminT('assistantStaff'), assistantNames || adminT('notAssigned'), assistantNames ? 'notranslate' : '');
 
-      if (assistantNames) {
-        const assistantRow = drawerElement('div', 'drawer-item-role-row notranslate');
-        assistantRow.appendChild(drawerElement('span', '', `${adminT('assistantStaff')}: `));
-        assistantRow.appendChild(drawerElement('strong', '', assistantNames));
-        rolesBox.appendChild(assistantRow);
-      }
-      card.appendChild(rolesBox);
-      serviceSection.appendChild(card);
+      middleCol.appendChild(card);
     }
 
-    if (['arrived', 'in_service'].includes(canonicalStatus)) {
-      const addServiceButton = drawerElement('button', 'drawer-add-service-btn', adminT('activeAddService'));
-      addServiceButton.type = 'button';
-      addServiceButton.id = 'drawerAddServiceBtn';
-      addServiceButton.addEventListener('click', () => openServiceAddonDialog(appointment));
-      serviceSection.appendChild(addServiceButton);
-    }
+    columnsWrapper.appendChild(middleCol);
 
-    const customerSpecialRequest = typeof appointment.customer_special_request === 'string'
-      ? appointment.customer_special_request.trim()
-      : '';
-    if (customerSpecialRequest) {
-      const customerSpecialRequestSection = appendDrawerSection(drawerBody, adminT('customerSpecialRequest'), 'drawer-notes-section');
-      customerSpecialRequestSection.appendChild(drawerElement('div', 'drawer-notes-box notranslate', customerSpecialRequest));
-    }
+    // ==========================================
+    // COLUMN 3: Order / Checkout Summary / 第三栏：订单/结账摘要
+    // ==========================================
+    const rightCol = drawerElement('div', 'drawer-workspace-col drawer-workspace-col-right');
+    rightCol.appendChild(drawerElement('div', 'drawer-col-header', adminT('colOrderSummary')));
 
-    // Section E: Internal Notes / 内部备注
-    const internalNotesSection = appendDrawerSection(drawerBody, adminT('internalNotes'), 'drawer-notes-section');
-    internalNotesSection.appendChild(drawerElement('div', 'drawer-field-label', adminT('internalNotesVisibility')));
-    const internalNotesInput = drawerElement('textarea', 'drawer-internal-notes-input notranslate');
-    internalNotesInput.id = 'drawerInternalNotesInput';
-    internalNotesInput.maxLength = 4000;
-    internalNotesInput.value = typeof appointment.internal_notes === 'string' ? appointment.internal_notes : '';
-    internalNotesInput.setAttribute('aria-label', adminT('internalNotes'));
-    internalNotesSection.appendChild(internalNotesInput);
-    const canWriteInternalNotes = ['owner', 'manager'].includes(String(getAdminActorRole() || '').toLowerCase());
-    internalNotesInput.disabled = !canWriteInternalNotes;
-    const internalNotesStatus = drawerElement('div', 'drawer-internal-notes-status', '');
-    internalNotesStatus.id = 'drawerInternalNotesStatus';
-    internalNotesStatus.setAttribute('role', 'status');
-    internalNotesSection.appendChild(internalNotesStatus);
-    if (canWriteInternalNotes) {
-      internalNotesInput.addEventListener('input', () => {
-        if (internalNotesStatus.textContent) {
-          internalNotesStatus.textContent = '';
-        }
-      });
-      const saveInternalNotes = drawerElement('button', 'drawer-internal-notes-save primary-btn', adminT('internalNotesSave'));
-      saveInternalNotes.type = 'button';
-      saveInternalNotes.addEventListener('click', async () => {
-        const originalLabel = adminT('internalNotesSave');
-        saveInternalNotes.disabled = true;
-        internalNotesInput.disabled = true;
-        saveInternalNotes.textContent = adminT('internalNotesSaving');
-        internalNotesStatus.textContent = adminT('internalNotesSaving');
-        try {
-          const response = await fetch(`/api/owner/appointments/${encodeURIComponent(String(appointment.id || ''))}/internal-notes`, {
-            method: 'PATCH', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ internalNotes: internalNotesInput.value })
-          });
-          const result = await response.json();
-          if (!response.ok || !result?.success || !result?.data) throw new Error('save failed');
-          appointment.internal_notes = result.data.internalNotes;
-          internalNotesInput.value = result.data.internalNotes;
-          internalNotesStatus.textContent = adminT('internalNotesSaved');
-        } catch (_) {
-          internalNotesStatus.textContent = adminT('internalNotesSaveFailed');
-        } finally {
-          saveInternalNotes.disabled = false;
-          internalNotesInput.disabled = false;
-          saveInternalNotes.textContent = originalLabel;
-        }
-      });
-      internalNotesSection.appendChild(saveInternalNotes);
-    }
+    const summaryCard = drawerElement('div', 'drawer-checkout-summary-card');
 
-    // Section: Customer Profile Notes / 顾客档案备注
-    const customerProfileNotesSection = appendDrawerSection(drawerBody, adminT('customerProfileNotes'), 'drawer-notes-section');
-    customerProfileNotesSection.appendChild(drawerElement('div', 'drawer-field-label', adminT('customerProfileNotesHelp')));
-    const customerProfileNotesInput = drawerElement('textarea', 'drawer-profile-notes-input notranslate');
-    customerProfileNotesInput.id = 'drawerCustomerProfileNotesInput';
-    customerProfileNotesInput.maxLength = 4000;
-    customerProfileNotesInput.value = typeof appointment.profile_notes === 'string'
-      ? appointment.profile_notes
-      : (typeof appointment.customer_profile_notes === 'string' ? appointment.customer_profile_notes : '');
-    customerProfileNotesInput.setAttribute('aria-label', adminT('customerProfileNotes'));
-    customerProfileNotesSection.appendChild(customerProfileNotesInput);
-    const canWriteCustomerProfileNotes = ['owner', 'manager'].includes(String(getAdminActorRole() || '').toLowerCase());
-    customerProfileNotesInput.disabled = !canWriteCustomerProfileNotes;
-    const customerProfileNotesStatus = drawerElement('div', 'drawer-profile-notes-status', '');
-    customerProfileNotesStatus.id = 'drawerCustomerProfileNotesStatus';
-    customerProfileNotesStatus.setAttribute('role', 'status');
-    customerProfileNotesSection.appendChild(customerProfileNotesStatus);
-    if (canWriteCustomerProfileNotes) {
-      customerProfileNotesInput.addEventListener('input', () => {
-        if (customerProfileNotesStatus.textContent) {
-          customerProfileNotesStatus.textContent = '';
-        }
-      });
-      const saveCustomerProfileNotes = drawerElement('button', 'drawer-profile-notes-save primary-btn', adminT('customerProfileNotesSave'));
-      saveCustomerProfileNotes.type = 'button';
-      saveCustomerProfileNotes.addEventListener('click', async () => {
-        const targetCustomerId = appointment.recipient_customer_id || appointment.customer_id;
-        if (!targetCustomerId) {
-          customerProfileNotesStatus.textContent = adminT('customerProfileNotesSaveFailed');
-          return;
-        }
-        const originalLabel = adminT('customerProfileNotesSave');
-        saveCustomerProfileNotes.disabled = true;
-        customerProfileNotesInput.disabled = true;
-        saveCustomerProfileNotes.textContent = adminT('customerProfileNotesSaving');
-        customerProfileNotesStatus.textContent = adminT('customerProfileNotesSaving');
-        try {
-          const response = await fetch(`/api/owner/customers/${encodeURIComponent(String(targetCustomerId))}/profile-notes`, {
-            method: 'PATCH', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ profileNotes: customerProfileNotesInput.value })
-          });
-          const result = await response.json();
-          if (!response.ok || !result?.success || !result?.data) throw new Error('save failed');
-          const savedNotes = typeof result.data.profileNotes === 'string'
-            ? result.data.profileNotes
-            : (typeof result.data.profile_notes === 'string' ? result.data.profile_notes : '');
-          appointment.profile_notes = savedNotes;
-          if (appointment.customer_profile_notes !== undefined) {
-            appointment.customer_profile_notes = savedNotes;
-          }
-          customerProfileNotesInput.value = savedNotes;
-          customerProfileNotesStatus.textContent = adminT('customerProfileNotesSaved');
-        } catch (_) {
-          customerProfileNotesStatus.textContent = adminT('customerProfileNotesSaveFailed');
-        } finally {
-          saveCustomerProfileNotes.disabled = false;
-          customerProfileNotesInput.disabled = false;
-          saveCustomerProfileNotes.textContent = originalLabel;
-        }
-      });
-      customerProfileNotesSection.appendChild(saveCustomerProfileNotes);
-    }
-
-    // Section F: Checkout / 收银 (read-only projection when available)
-    if (appointment.checkout && appointment.checkout.exists) {
-      const checkoutSection = appendDrawerSection(drawerBody, adminT('checkout'), 'drawer-checkout-section');
+    if (!appointment.checkout || !appointment.checkout.exists) {
+      summaryCard.appendChild(drawerElement('div', 'drawer-checkout-empty', adminT('notCheckedOut')));
+    } else if (appointment.checkout.reconciliation_valid === false || appointment.checkout.payment_state === 'inconsistent') {
+      summaryCard.appendChild(drawerElement('div', 'drawer-checkout-invalid', adminT('checkoutStateInconsistent')));
+    } else {
       const checkoutStatusText = globalThis.ggI18n?.formatCheckoutStatus
         ? globalThis.ggI18n.formatCheckoutStatus(appointment.checkout.payment_state || appointment.checkout.checkout_status, currentAdminLocale)
         : (appointment.checkout.payment_state || appointment.checkout.checkout_status);
-      appendDrawerField(checkoutSection, adminT('status'), checkoutStatusText, 'notranslate');
+      appendDrawerField(summaryCard, adminT('status'), checkoutStatusText, 'notranslate');
+
+      const subtotalFormatted = formatMinorCurrency(
+        appointment.checkout.actual_total_minor ?? appointment.checkout.quote_total_minor
+      );
+      if (subtotalFormatted) {
+        appendDrawerField(summaryCard, adminT('subtotal'), subtotalFormatted, 'notranslate');
+      }
+
+      const discountFormatted = formatMinorCurrency(appointment.checkout.discount_total_minor ?? 0);
+      if (discountFormatted) {
+        appendDrawerField(summaryCard, adminT('discount'), discountFormatted, 'notranslate');
+      }
 
       const dueFormatted = formatMinorCurrency(appointment.checkout.final_due_minor);
       if (dueFormatted) {
-        appendDrawerField(checkoutSection, adminT('finalDue'), dueFormatted, 'notranslate');
+        appendDrawerField(summaryCard, adminT('finalDue'), dueFormatted, 'notranslate');
       }
 
       const paidFormatted = formatMinorCurrency(appointment.checkout.net_paid_minor ?? appointment.checkout.recorded_paid_minor);
       if (paidFormatted) {
-        appendDrawerField(checkoutSection, adminT('paidAmount'), paidFormatted, 'notranslate');
+        appendDrawerField(summaryCard, adminT('paidAmount'), paidFormatted, 'notranslate');
       }
 
-      if (appointment.checkout.outstanding_minor && appointment.checkout.outstanding_minor > 0) {
-        const outstandingFormatted = formatMinorCurrency(appointment.checkout.outstanding_minor);
-        if (outstandingFormatted) {
-          appendDrawerField(checkoutSection, adminT('outstandingAmount'), outstandingFormatted, 'notranslate');
-        }
+      const outstandingFormatted = formatMinorCurrency(appointment.checkout.outstanding_minor ?? 0);
+      if (outstandingFormatted) {
+        appendDrawerField(summaryCard, adminT('outstandingAmount'), outstandingFormatted, 'notranslate');
       }
     }
+
+    // Unbilled notice
+    const unbilledCount = appointment.unbilled_service_item_count ??
+      appointment.billing_summary?.unbilled_service_item_count;
+    if (typeof unbilledCount === 'number') {
+      if (unbilledCount > 0) {
+        summaryCard.appendChild(drawerElement('div', 'drawer-unbilled-prompt has-unbilled', adminT('unbilledCount', { count: unbilledCount })));
+      }
+    } else {
+      summaryCard.appendChild(drawerElement('div', 'drawer-unbilled-prompt coverage-unavailable', adminT('billingCoverageUnavailable')));
+    }
+
+    // Pay Bill button: strictly disabled, no event listener, no POST
+    const payBillBtn = drawerElement('button', 'drawer-pay-bill-btn', adminT('payBill'));
+    payBillBtn.type = 'button';
+    payBillBtn.id = 'drawerPayBillBtn';
+    payBillBtn.disabled = true;
+    payBillBtn.setAttribute('aria-disabled', 'true');
+    summaryCard.appendChild(payBillBtn);
+
+    const payBillNote = drawerElement('div', 'drawer-pay-bill-note', adminT('payBillUnavailable'));
+    summaryCard.appendChild(payBillNote);
+
+    rightCol.appendChild(summaryCard);
+    columnsWrapper.appendChild(rightCol);
+
+    drawerBody.appendChild(columnsWrapper);
   }
 
   const drawerFooter = safeGetElement('drawerFooter');
@@ -5159,6 +5113,82 @@ function bindActionButtonsIn(container) {
       });
     }
   });
+}
+
+function renderCustomerAssetBlocks(container, appointment) {
+  if (!container || !appointment) return;
+  const tiles = [];
+
+  const hasMembershipData = Boolean(
+    appointment.membership_tier_name ||
+    appointment.membership_tier_code ||
+    appointment.membership_status ||
+    appointment.membership_expires_at
+  );
+  if (appointment.membership_enabled === true && hasMembershipData) {
+    const tile = drawerElement('div', 'drawer-asset-tile drawer-asset-membership');
+    tile.appendChild(drawerElement('div', 'drawer-asset-tile-label', adminT('membershipCard')));
+    const tierDisplay = appointment.membership_tier_name || appointment.membership_tier_code;
+    if (tierDisplay) {
+      tile.appendChild(drawerElement('div', 'drawer-asset-tile-value notranslate', tierDisplay));
+    }
+    if (appointment.member_code) {
+      tile.appendChild(drawerElement('div', 'drawer-asset-tile-detail notranslate', `${adminT('memberCode')}: ${appointment.member_code}`));
+    }
+    if (appointment.membership_status) {
+      const statusKey = {
+        active: 'membershipStatusActive',
+        expired: 'membershipStatusExpired',
+        suspended: 'membershipStatusSuspended',
+        revoked: 'membershipStatusRevoked',
+        inactive: 'membershipStatusInactive'
+      }[String(appointment.membership_status).toLowerCase()] || 'membershipStatusInactive';
+      tile.appendChild(drawerElement('div', 'drawer-asset-tile-detail', `${adminT('membershipStatus')}: ${adminT(statusKey)}`));
+    }
+    if (appointment.membership_expires_at) {
+      const expiryFormatted = String(appointment.membership_expires_at).slice(0, 10);
+      tile.appendChild(drawerElement('div', 'drawer-asset-tile-detail notranslate', `${adminT('membershipExpiry')}: ${expiryFormatted}`));
+    }
+    tiles.push(tile);
+  }
+
+  const pointsVal = appointment.points_balance ?? appointment.pointsBalance;
+  if (appointment.points_enabled === true && pointsVal !== null && pointsVal !== undefined && pointsVal !== '') {
+    const tile = drawerElement('div', 'drawer-asset-tile drawer-asset-points');
+    tile.appendChild(drawerElement('div', 'drawer-asset-tile-label', adminT('pointsBalance')));
+    tile.appendChild(drawerElement('div', 'drawer-asset-tile-value notranslate', String(pointsVal)));
+    tiles.push(tile);
+  }
+
+  const svVal = appointment.stored_value_balance ?? appointment.storedValueBalance ?? appointment.stored_value_balance_minor;
+  if (appointment.stored_value_enabled === true && svVal !== null && svVal !== undefined && svVal !== '') {
+    const tile = drawerElement('div', 'drawer-asset-tile drawer-asset-stored-value');
+    tile.appendChild(drawerElement('div', 'drawer-asset-tile-label', adminT('storedValueBalance')));
+    const displayVal = typeof svVal === 'number' && Number.isSafeInteger(svVal) && appointment.stored_value_balance_minor !== undefined
+      ? formatMinorCurrency(svVal)
+      : String(svVal);
+    tile.appendChild(drawerElement('div', 'drawer-asset-tile-value notranslate', displayVal));
+    tiles.push(tile);
+  }
+
+  const pkgVal = appointment.package_remaining ?? appointment.packageRemaining ?? appointment.package_remaining_count;
+  if (appointment.packages_enabled === true && pkgVal !== null && pkgVal !== undefined && pkgVal !== '') {
+    const tile = drawerElement('div', 'drawer-asset-tile drawer-asset-package');
+    tile.appendChild(drawerElement('div', 'drawer-asset-tile-label', adminT('packageRemaining')));
+    tile.appendChild(drawerElement('div', 'drawer-asset-tile-value notranslate', String(pkgVal)));
+    tiles.push(tile);
+  }
+
+  if (tiles.length > 0) {
+    const assetSection = drawerElement('div', 'drawer-asset-section');
+    assetSection.appendChild(drawerElement('div', 'drawer-asset-title', adminT('customerAssets')));
+    const grid = drawerElement('div', 'drawer-asset-grid');
+    for (const tile of tiles) {
+      grid.appendChild(tile);
+    }
+    assetSection.appendChild(grid);
+    container.appendChild(assetSection);
+  }
 }
 
 function renderActionButtonsForAppointment(item) {

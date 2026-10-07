@@ -3,6 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
+  deriveBillingSummary,
   deriveCheckout,
   projectOwnerAppointmentCheckout,
   toSafeMinor
@@ -284,4 +285,97 @@ test('any existing checkout including draft, void, or refunded prevents a new ch
       role: 'owner', checkoutWriteEnabled: true
     }).can_start_checkout, false);
   }
+});
+
+test('deriveBillingSummary computes exact ID set difference |A - B| and handles edge cases', () => {
+  // Legacy / fallback: no real item IDs -> returns all nulls
+  assert.deepEqual(deriveBillingSummary([], [], null), {
+    appointment_service_item_count: null,
+    billed_service_item_count: null,
+    unbilled_service_item_count: null
+  });
+  assert.deepEqual(deriveBillingSummary([{ item_id: null }], [], null), {
+    appointment_service_item_count: null,
+    billed_service_item_count: null,
+    unbilled_service_item_count: null
+  });
+
+  const items = [
+    { item_id: 'item-1', sequence_no: 1 },
+    { item_id: 'item-2', sequence_no: 2 },
+    { item_id: 'item-3', sequence_no: 3 }
+  ];
+
+  // No checkout -> all unbilled
+  assert.deepEqual(deriveBillingSummary(items, [], null), {
+    appointment_service_item_count: 3,
+    billed_service_item_count: 0,
+    unbilled_service_item_count: 3
+  });
+  assert.deepEqual(deriveBillingSummary(items, [], { exists: false }), {
+    appointment_service_item_count: 3,
+    billed_service_item_count: 0,
+    unbilled_service_item_count: 3
+  });
+
+  const checkout = { exists: true };
+
+  // All items billed
+  assert.deepEqual(deriveBillingSummary(items, ['item-1', 'item-2', 'item-3'], checkout), {
+    appointment_service_item_count: 3,
+    billed_service_item_count: 3,
+    unbilled_service_item_count: 0
+  });
+
+  // Partial items billed (1 billed, 2 unbilled)
+  assert.deepEqual(deriveBillingSummary(items, ['item-2'], checkout), {
+    appointment_service_item_count: 3,
+    billed_service_item_count: 1,
+    unbilled_service_item_count: 2
+  });
+
+  // Duplicate billed lines and non-service lines are safely ignored
+  const rawLines = [
+    'item-1',
+    'item-1', // duplicate
+    'foreign-item-99', // not in appointment items
+    { line_type: 'product', appointment_item_id: 'item-2' }, // non-service line
+    { line_type: 'service', appointment_item_id: 'item-3' }
+  ];
+  assert.deepEqual(deriveBillingSummary(items, rawLines, checkout), {
+    appointment_service_item_count: 3,
+    billed_service_item_count: 2, // item-1 and item-3
+    unbilled_service_item_count: 1 // item-2
+  });
+});
+
+test('projectOwnerAppointmentCheckout exposes date_of_birth and billing summary correctly', () => {
+  const base = appointment({
+    date_of_birth: '1995-12-25',
+    items: [item(1, { item_id: 'item-10' })]
+  });
+  const projected = projectOwnerAppointmentCheckout(base);
+  assert.equal(projected.date_of_birth, '1995-12-25');
+  assert.deepEqual(projected.billing_summary, {
+    appointment_service_item_count: 1,
+    billed_service_item_count: 0,
+    unbilled_service_item_count: 1
+  });
+  assert.equal(projected.appointment_service_item_count, 1);
+  assert.equal(projected.billed_service_item_count, 0);
+  assert.equal(projected.unbilled_service_item_count, 1);
+
+  // Date object handling
+  const withDateObj = projectOwnerAppointmentCheckout({
+    ...base,
+    date_of_birth: new Date('1988-08-08T00:00:00Z')
+  });
+  assert.equal(withDateObj.date_of_birth, '1988-08-08');
+
+  // Null date of birth
+  const withNullDob = projectOwnerAppointmentCheckout({
+    ...base,
+    date_of_birth: null
+  });
+  assert.equal(withNullDob.date_of_birth, null);
 });

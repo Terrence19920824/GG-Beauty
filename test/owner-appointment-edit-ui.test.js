@@ -317,8 +317,8 @@ function createMockAdminContext(options = {}) {
   return { sandbox, elements, documentMock, windowMock: sandbox };
 }
 
-// 3. UI Entry in Drawer
-test('3. UI Entry: adjust button is displayed only for pending and confirmed appointments', () => {
+// 3. UI Entry in Drawer - Phase 1.1A read-only workspace hides adjust button across all statuses
+test('3. UI Entry: adjust button is removed in Phase 1.1A read-only workspace across all statuses', () => {
   const { sandbox, elements } = createMockAdminContext();
 
   const makeAppt = (status) => ({
@@ -340,23 +340,12 @@ test('3. UI Entry: adjust button is displayed only for pending and confirmed app
     ]
   });
 
-  // Pending -> should have adjust button
-  sandbox.renderAppointmentDrawer(makeAppt('pending'));
-  const adjustBtnPending = elements.get('drawerAdjustBtn');
-  assert.ok(adjustBtnPending, 'drawerAdjustBtn should exist for pending');
-  assert.strictEqual(adjustBtnPending.textContent, '调整预约');
-
-  // Confirmed -> should have adjust button
-  sandbox.renderAppointmentDrawer(makeAppt('confirmed'));
-  const adjustBtnConfirmed = elements.get('drawerAdjustBtn');
-  assert.ok(adjustBtnConfirmed, 'drawerAdjustBtn should exist for confirmed');
-
-  // Arrived, in_service, completed, cancelled, no_show -> should NOT have adjust button
-  for (const st of ['arrived', 'in_service', 'completed', 'cancelled', 'no_show']) {
+  // In Phase 1.1A read-only workspace, drawerAdjustBtn must not exist for any status
+  for (const st of ['pending', 'confirmed', 'arrived', 'in_service', 'completed', 'cancelled', 'no_show']) {
     elements.delete('drawerAdjustBtn');
     sandbox.renderAppointmentDrawer(makeAppt(st));
     const btn = elements.get('drawerAdjustBtn');
-    assert.strictEqual(btn, undefined, `drawerAdjustBtn should NOT exist for status: ${st}`);
+    assert.strictEqual(btn, undefined, `drawerAdjustBtn should NOT exist in Phase 1.1A workspace for status: ${st}`);
   }
 });
 

@@ -3300,7 +3300,13 @@ app.get(
           SUM(line.quote_price_minor)::TEXT AS line_quote_total_minor,
           SUM(line.actual_price_minor)::TEXT AS line_actual_total_minor,
           SUM(line.discount_minor)::TEXT AS line_discount_total_minor,
-          SUM(line.final_value_minor)::TEXT AS line_final_total_minor
+          SUM(line.final_value_minor)::TEXT AS line_final_total_minor,
+          COALESCE(
+            JSON_AGG(
+              line.appointment_item_id::TEXT
+            ) FILTER (WHERE line.line_type = 'service' AND line.appointment_item_id IS NOT NULL),
+            '[]'::JSON
+          ) AS billed_appointment_item_ids
         FROM checkout_line_items line
         JOIN selected_checkouts checkout
           ON checkout.id = line.checkout_id
@@ -3376,11 +3382,15 @@ app.get(
         c.name AS customer_name,
         COALESCE(c.phone_normalized, c.phone) AS customer_phone,
         c.email AS customer_email,
+        TO_CHAR(c.date_of_birth, 'YYYY-MM-DD') AS date_of_birth,
         c.member_code,
         c.identity_status,
         c.profile_notes,
 
         COALESCE(customer_settings.membership_enabled, FALSE) AS membership_enabled,
+        COALESCE(customer_settings.points_enabled, FALSE) AS points_enabled,
+        COALESCE(customer_settings.stored_value_enabled, FALSE) AS stored_value_enabled,
+        COALESCE(customer_settings.packages_enabled, FALSE) AS packages_enabled,
         membership.tier_code AS membership_tier_code,
         membership.tier_name AS membership_tier_name,
         membership.started_at AS membership_started_at,
@@ -3431,6 +3441,7 @@ app.get(
         checkout_line_projection.line_actual_total_minor,
         checkout_line_projection.line_discount_total_minor,
         checkout_line_projection.line_final_total_minor,
+        checkout_line_projection.billed_appointment_item_ids,
         COALESCE(payment_projection.payment_total_minor, '0')
           AS payment_total_minor,
         COALESCE(payment_projection.refund_total_minor, '0')
@@ -3526,6 +3537,8 @@ app.get(
       trustedShopId,
       requestedLocationId || null
     ]);
+
+    res.setHeader('Cache-Control', 'no-store, private, max-age=0');
 
     res.json({
       success: true,

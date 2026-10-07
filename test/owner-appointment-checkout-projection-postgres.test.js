@@ -80,10 +80,10 @@ test('owner appointment checkout projection executes once on PostgreSQL and isol
     db = await connectWhenReady(config, postgres, () => stderr);
     await db.query(`
       CREATE TABLE locations (id uuid PRIMARY KEY, shop_id uuid NOT NULL, name text, is_active boolean NOT NULL, UNIQUE(shop_id,id));
-      CREATE TABLE customers (id uuid PRIMARY KEY, shop_id uuid NOT NULL, name text, phone text, phone_normalized text, email text, member_code text, identity_status text, profile_notes text NULL, UNIQUE(shop_id,id), CONSTRAINT customers_profile_notes_length_check CHECK(profile_notes IS NULL OR char_length(profile_notes) <= 4000));
+      CREATE TABLE customers (id uuid PRIMARY KEY, shop_id uuid NOT NULL, name text, phone text, phone_normalized text, email text, member_code text, identity_status text, profile_notes text NULL, date_of_birth date NULL, UNIQUE(shop_id,id), CONSTRAINT customers_profile_notes_length_check CHECK(profile_notes IS NULL OR char_length(profile_notes) <= 4000));
       CREATE TABLE services (id uuid PRIMARY KEY, shop_id uuid NOT NULL, name text, duration_minutes integer, price numeric, UNIQUE(shop_id,id));
       CREATE TABLE staff (id uuid PRIMARY KEY, shop_id uuid NOT NULL, name text, staff_code text, UNIQUE(shop_id,id));
-      CREATE TABLE shop_customer_settings (shop_id uuid PRIMARY KEY, membership_enabled boolean DEFAULT false);
+      CREATE TABLE shop_customer_settings (shop_id uuid PRIMARY KEY, membership_enabled boolean DEFAULT false, points_enabled boolean DEFAULT false, stored_value_enabled boolean DEFAULT false, packages_enabled boolean DEFAULT false);
       CREATE TABLE membership_tiers (id uuid PRIMARY KEY, shop_id uuid NOT NULL, tier_code text, name text, is_active boolean DEFAULT true);
       CREATE TABLE customer_memberships (id uuid PRIMARY KEY, shop_id uuid NOT NULL, customer_id uuid NOT NULL, tier_id uuid, status text, started_at timestamptz, expires_at timestamptz, created_at timestamptz DEFAULT now());
       CREATE TABLE appointments (
@@ -130,6 +130,7 @@ test('owner appointment checkout projection executes once on PostgreSQL and isol
         appointment_item_id uuid,
         quote_price_minor bigint NOT NULL, actual_price_minor bigint NOT NULL,
         discount_minor bigint NOT NULL, final_value_minor bigint NOT NULL,
+        line_type text NOT NULL DEFAULT 'service',
         FOREIGN KEY(shop_id,checkout_id) REFERENCES checkout_transactions(shop_id,id),
         FOREIGN KEY(shop_id,appointment_item_id) REFERENCES appointment_items(shop_id,id)
       );
@@ -180,11 +181,11 @@ test('owner appointment checkout projection executes once on PostgreSQL and isol
     await db.query(`INSERT INTO checkout_transactions VALUES ($1,$2,$3,'paid','SGD',14000,14000,0,14000,14000)`, [ID.checkoutA, ID.shopA, ID.appointmentA]);
     await db.query(`INSERT INTO checkout_transactions VALUES ($1,$2,$3,'void','SGD',8000,8000,0,8000,0)`, [ID.checkoutB, ID.shopB, ID.appointmentB]);
     await db.query(`INSERT INTO checkout_line_items VALUES
-      ('aaaaaaaa-aaaa-4aaa-8aaa-111111111111',$1,$2,$3,6000,6000,0,6000),
-      ('aaaaaaaa-aaaa-4aaa-8aaa-222222222222',$1,$2,$4,8000,8000,0,8000)`, [ID.shopA, ID.checkoutA, ID.itemA1, ID.itemA2]);
+      ('aaaaaaaa-aaaa-4aaa-8aaa-111111111111',$1,$2,$3,6000,6000,0,6000,'service'),
+      ('aaaaaaaa-aaaa-4aaa-8aaa-222222222222',$1,$2,$4,8000,8000,0,8000,'service')`, [ID.shopA, ID.checkoutA, ID.itemA1, ID.itemA2]);
     await db.query(`INSERT INTO checkout_payments VALUES ('bbbbbbbb-bbbb-4bbb-8bbb-111111111111',$1,$2,'cash_collected',14000)`, [ID.shopA, ID.checkoutA]);
     await db.query(`INSERT INTO checkout_line_items VALUES
-      ('aaaaaaaa-aaaa-4aaa-8aaa-333333333333',$1,$2,$3,8000,8000,0,8000)`,
+      ('aaaaaaaa-aaaa-4aaa-8aaa-333333333333',$1,$2,$3,8000,8000,0,8000,'service')`,
     [ID.shopB, ID.checkoutB, ID.itemB]);
     await db.query(`INSERT INTO checkout_financial_audit VALUES
       ('cccccccc-cccc-4ccc-8ccc-222222222222',$1,$2,$3,'void')`,
@@ -206,7 +207,7 @@ test('owner appointment checkout projection executes once on PostgreSQL and isol
       ('99999999-9999-4999-8999-999999999993',$1,$2,'void','SGD',0,0,0,0,0)`,
     [ID.shopB, ID.appointmentA]);
     await expectTenantFkRejection('bad_line', `INSERT INTO checkout_line_items VALUES
-      ('aaaaaaaa-aaaa-4aaa-8aaa-999999999994',$1,$2,NULL,0,0,0,0)`,
+      ('aaaaaaaa-aaaa-4aaa-8aaa-999999999994',$1,$2,NULL,0,0,0,0,'service')`,
     [ID.shopB, ID.checkoutA]);
     await expectTenantFkRejection('bad_payment', `INSERT INTO checkout_payments VALUES
       ('bbbbbbbb-bbbb-4bbb-8bbb-999999999995',$1,$2,'refund',1)`,

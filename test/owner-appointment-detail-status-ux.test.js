@@ -115,11 +115,12 @@ test('3. HTML: admin.html includes drawer backdrop, aside dialog, and toast cont
   assert.match(adminHtml, /id="drawerFooter"/);
 });
 
-test('3a. Internal notes UI is localized, safely rendered, and uses the protected owner endpoint', () => {
-  assert.match(adminHtml, /drawerInternalNotesInput/);
+test('3a. Phase 1.1A read-only workspace: internal notes and customer profile notes are static text with no textarea or save buttons', () => {
   assert.match(adminHtml, /internal_notes/);
-  assert.match(adminHtml, /\/api\/owner\/appointments\/\$\{encodeURIComponent\(String\(appointment\.id/);
-  assert.match(adminHtml, /textContent = adminT\('internalNotesSaveFailed'\)/);
+  assert.match(adminHtml, /drawer-internal-notes-value/);
+  assert.match(adminHtml, /drawer-profile-notes-value/);
+  assert.doesNotMatch(adminHtml, /drawerInternalNotesInput/);
+  assert.doesNotMatch(adminHtml, /drawerProfileNotesInput/);
   assert.match(calendarSharedCss, /\.drawer-internal-notes-save[\s\S]*?min-height:\s*var\(--calendar-touch-min,\s*44px\)/);
 });
 
@@ -328,7 +329,7 @@ function findDescendant(element, predicate) {
   return null;
 }
 
-test('3b. Internal notes UI permissions: owner/manager can edit and save, admin/front_desk cannot, status clears on input', () => {
+test('3b. Internal notes UI in Phase 1.1A workspace: static text display for all roles with staff-only notice, no edit or save controls', () => {
   assert.doesNotMatch(adminHtml, /currentAdminProfile\??\.(?:\$|)?role\b/);
   assert.match(adminHtml, /getAdminActorRole\(\)/);
 
@@ -338,66 +339,24 @@ test('3b. Internal notes UI permissions: owner/manager can edit and save, admin/
     internal_notes: 'Initial internal note'
   };
 
-  // Test owner role
-  {
+  for (const role of ['owner', 'manager', 'admin', 'front_desk']) {
     const { context, elements } = createMockAdminContext();
-    context.setAdminProfile({ membership: { role: 'owner' } });
+    context.setAdminProfile({ membership: { role } });
     context.renderAppointmentDrawer(appt);
     const drawerBody = elements.get('drawerBody');
-    const textarea = findDescendant(drawerBody, el => el.id === 'drawerInternalNotesInput');
+    const textarea = findDescendant(drawerBody, el => el.id === 'drawerInternalNotesInput' || el.tagName === 'TEXTAREA');
     const saveBtn = findDescendant(drawerBody, el => String(el.className || '').includes('drawer-internal-notes-save'));
-    const status = findDescendant(drawerBody, el => el.id === 'drawerInternalNotesStatus');
-    assert.ok(textarea, 'textarea must be rendered');
-    assert.strictEqual(textarea.disabled, false, 'owner must be able to edit internal notes');
-    assert.ok(saveBtn, 'save button must be present for owner');
+    const notesValue = findDescendant(drawerBody, el => String(el.className || '').includes('drawer-internal-notes-value'));
 
-    // Test input clears status
-    status.textContent = '内部备注已保存';
-    textarea.dispatchEvent({ type: 'input', target: textarea });
-    assert.strictEqual(status.textContent, '', 'editing textarea must clear stale saved status');
-  }
-
-  // Test manager role
-  {
-    const { context, elements } = createMockAdminContext();
-    context.setAdminProfile({ membership: { role: 'manager' } });
-    context.renderAppointmentDrawer(appt);
-    const drawerBody = elements.get('drawerBody');
-    const textarea = findDescendant(drawerBody, el => el.id === 'drawerInternalNotesInput');
-    const saveBtn = findDescendant(drawerBody, el => String(el.className || '').includes('drawer-internal-notes-save'));
-    assert.ok(textarea);
-    assert.strictEqual(textarea.disabled, false, 'manager must be able to edit internal notes');
-    assert.ok(saveBtn, 'save button must be present for manager');
-  }
-
-  // Test admin role (read-only for internal notes)
-  {
-    const { context, elements } = createMockAdminContext();
-    context.setAdminProfile({ membership: { role: 'admin' } });
-    context.renderAppointmentDrawer(appt);
-    const drawerBody = elements.get('drawerBody');
-    const textarea = findDescendant(drawerBody, el => el.id === 'drawerInternalNotesInput');
-    const saveBtn = findDescendant(drawerBody, el => String(el.className || '').includes('drawer-internal-notes-save'));
-    assert.ok(textarea);
-    assert.strictEqual(textarea.disabled, true, 'admin must not be able to edit internal notes');
-    assert.strictEqual(saveBtn, null, 'save button must not be rendered for admin');
-  }
-
-  // Test front_desk role (read-only for internal notes)
-  {
-    const { context, elements } = createMockAdminContext();
-    context.setAdminProfile({ membership: { role: 'front_desk' } });
-    context.renderAppointmentDrawer(appt);
-    const drawerBody = elements.get('drawerBody');
-    const textarea = findDescendant(drawerBody, el => el.id === 'drawerInternalNotesInput');
-    const saveBtn = findDescendant(drawerBody, el => String(el.className || '').includes('drawer-internal-notes-save'));
-    assert.ok(textarea);
-    assert.strictEqual(textarea.disabled, true, 'front_desk must not be able to edit internal notes');
-    assert.strictEqual(saveBtn, null, 'save button must not be rendered for front_desk');
+    assert.strictEqual(textarea, null, `${role} must not see any internal notes textarea`);
+    assert.strictEqual(saveBtn, null, `${role} must not see any internal notes save button`);
+    assert.ok(notesValue, `${role} must see static internal notes text`);
+    assert.strictEqual(notesValue.textContent, 'Initial internal note');
+    assert.ok(drawerBody.textContent.includes('仅员工可见'), `${role} must see staff-only indicator`);
   }
 });
 
-test('3c. Add Service is visible only for arrived/in_service and stays fully localized', () => {
+test('3c. Phase 1.1A read-only workspace hides add service entry point across all statuses', () => {
   for (const locale of ['zh-CN', 'en']) {
     for (const status of ['pending', 'confirmed', 'arrived', 'in_service', 'completed', 'cancelled', 'no_show']) {
       const { context, elements } = createMockAdminContext({ locale });
@@ -409,12 +368,7 @@ test('3c. Add Service is visible only for arrived/in_service and stays fully loc
         items: [{ service_name_snapshot: 'Haircut', duration_minutes_snapshot: 60 }]
       });
       const action = findDescendant(elements.get('drawerBody'), element => element.id === 'drawerAddServiceBtn');
-      if (['arrived', 'in_service'].includes(status)) {
-        assert.ok(action, `${status} should show Add Service`);
-        assert.equal(action.textContent, i18n.t('activeAddService', locale));
-      } else {
-        assert.equal(action, null, `${status} must hide Add Service`);
-      }
+      assert.equal(action, null, `${status} must hide Add Service in Phase 1.1A read-only workspace`);
     }
   }
   assert.match(adminHtml, /const idempotencyKey = createServiceAddonKey\(\)/);
