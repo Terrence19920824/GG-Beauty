@@ -659,6 +659,105 @@
       .service-addon-filters { grid-template-columns: 1fr; }
     }
 
+    .manual-checkout-dialog {
+      width: min(560px, calc(100vw - 32px));
+      max-height: min(840px, calc(100vh - 32px));
+      overflow: auto;
+      border: 0;
+      border-radius: 14px;
+      padding: 20px;
+      box-shadow: 0 20px 60px rgba(0,0,0,.22);
+    }
+    .manual-checkout-dialog::backdrop { background: rgba(0,0,0,.35); }
+    .manual-checkout-header { margin-bottom: 12px; }
+    .manual-checkout-title { margin: 0 0 4px; font-size: 18px; font-weight: 700; color: #111; }
+    .manual-checkout-subtitle { font-size: 13px; color: #64748b; }
+    .manual-checkout-disclaimer {
+      padding: 8px 12px;
+      margin-bottom: 14px;
+      border-radius: 8px;
+      background: #f1f5f9;
+      color: #475569;
+      font-size: 12px;
+      line-height: 1.4;
+    }
+    .manual-checkout-items {
+      display: grid;
+      gap: 8px;
+      margin-bottom: 14px;
+      max-height: 180px;
+      overflow-y: auto;
+      padding-right: 4px;
+    }
+    .manual-checkout-item-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 10px;
+      border-radius: 6px;
+      background: #f8fafc;
+      font-size: 14px;
+    }
+    .manual-checkout-item-name { font-weight: 600; color: #1e293b; }
+    .manual-checkout-item-staff { font-size: 12px; color: #64748b; }
+    .manual-checkout-item-price { font-weight: 700; color: #0f172a; }
+    .manual-checkout-totals {
+      display: grid;
+      gap: 6px;
+      padding: 12px;
+      border-radius: 8px;
+      background: #f8fafc;
+      margin-bottom: 16px;
+      border: 1px solid #e2e8f0;
+    }
+    .manual-checkout-totals-row {
+      display: flex;
+      justify-content: space-between;
+      font-size: 14px;
+      color: #475569;
+    }
+    .manual-checkout-totals-row.is-total {
+      font-size: 16px;
+      font-weight: 700;
+      color: #0f172a;
+      padding-top: 6px;
+      border-top: 1px dashed #cbd5e1;
+    }
+    .manual-checkout-methods-label { font-size: 13px; font-weight: 600; margin-bottom: 6px; color: #334155; }
+    .manual-checkout-methods {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+      gap: 8px;
+      margin-bottom: 18px;
+    }
+    .manual-checkout-method-btn {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      padding: 10px;
+      border: 2px solid #e2e8f0;
+      border-radius: 8px;
+      background: #fff;
+      cursor: pointer;
+      font: inherit;
+      text-align: left;
+      transition: border-color .15s, background .15s;
+      min-height: 52px;
+    }
+    .manual-checkout-method-btn:hover { border-color: #94a3b8; }
+    .manual-checkout-method-btn.is-active {
+      border-color: #0f172a;
+      background: #f8fafc;
+    }
+    .manual-checkout-method-label { font-size: 13px; font-weight: 700; color: #0f172a; }
+    .manual-checkout-method-sub { font-size: 11px; color: #64748b; margin-top: 2px; }
+    .manual-checkout-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .manual-checkout-actions button { min-height: 44px; border-radius: 8px; font-weight: 700; cursor: pointer; }
+    .manual-checkout-cancel-btn { border: 1px solid #cbd5e1; background: #fff; color: #334155; }
+    .manual-checkout-confirm-btn { border: 1px solid #0f172a; background: #0f172a; color: #fff; }
+    .manual-checkout-confirm-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+
     :focus-visible {
       outline: 2px solid #111;
       outline-offset: 2px;
@@ -4268,6 +4367,181 @@ async function openServiceAddonDialog(appointment) {
   }
 }
 
+function getShopCountryForCheckout(appointment) {
+  const cur = String(appointment?.currency_code || appointment?.checkout?.currency_code || '').toUpperCase();
+  if (cur === 'MYR') return 'MY';
+  if (cur === 'THB') return 'TH';
+  if (cur === 'IDR') return 'ID';
+  if (cur === 'PHP') return 'PH';
+  const phone = String(appointment?.customer_phone || '').trim();
+  if (phone.startsWith('+60')) return 'MY';
+  if (phone.startsWith('+66')) return 'TH';
+  if (phone.startsWith('+62')) return 'ID';
+  if (phone.startsWith('+63')) return 'PH';
+  return 'SG';
+}
+
+function getManualCheckoutPaymentMethods(country) {
+  const methods = [];
+  methods.push({ id: 'cash', label: adminT('paymentCash'), sub: '' });
+
+  let qrLabel = adminT('paymentQr');
+  let qrSub = '';
+  if (country === 'SG') { qrLabel = adminT('paymentPayNowSgqr'); qrSub = 'PayNow / SGQR'; }
+  else if (country === 'MY') { qrLabel = adminT('paymentDuitNowQr'); qrSub = 'DuitNow QR'; }
+  else if (country === 'TH') { qrLabel = adminT('paymentPromptPay'); qrSub = 'PromptPay'; }
+  else if (country === 'ID') { qrLabel = adminT('paymentQris'); qrSub = 'QRIS'; }
+  methods.push({ id: 'qr_payment', label: qrLabel, sub: qrSub });
+
+  methods.push({ id: 'card', label: adminT('paymentCard'), sub: '' });
+
+  let ewalletLabel = adminT('paymentEwallet');
+  let ewalletSub = '';
+  if (country === 'PH') { ewalletLabel = adminT('paymentGcashMaya'); ewalletSub = 'GCash / Maya'; }
+  else if (country === 'MY') { ewalletLabel = adminT('paymentTouchNGo'); ewalletSub = "Touch 'n Go"; }
+  methods.push({ id: 'ewallet', label: ewalletLabel, sub: ewalletSub });
+
+  methods.push({ id: 'bank_transfer', label: adminT('paymentBankTransfer'), sub: '' });
+  methods.push({ id: 'other', label: adminT('paymentOther'), sub: '' });
+  return methods;
+}
+
+function openManualCheckoutModal(appointment) {
+  if (!appointment || appointment.can_start_checkout !== true || appointment.checkout?.exists === true) return;
+  const locale = globalThis.ownerSelfService?._state?.locale === 'en' ? 'en' : 'zh-CN';
+  const country = getShopCountryForCheckout(appointment);
+  const paymentMethods = getManualCheckoutPaymentMethods(country);
+  let selectedMethod = paymentMethods[0]?.id || 'cash';
+  const idempotencyKey = crypto.randomUUID().replace(/-/g, '');
+
+  const existingDialog = document.getElementById('posManualCheckoutModal');
+  if (existingDialog) {
+    try { existingDialog.close(); } catch (_) {}
+    existingDialog.remove();
+  }
+
+  const dialog = drawerElement('dialog', 'manual-checkout-dialog');
+  dialog.id = 'posManualCheckoutModal';
+
+  const header = drawerElement('div', 'manual-checkout-header');
+  const title = drawerElement('h3', 'manual-checkout-title', adminT('manualCheckout'));
+  const customerName = appointment.customer_name || adminT('customer');
+  const subtitle = drawerElement('div', 'manual-checkout-subtitle', `${customerName} · ${adminT('fullPayment')}`);
+  header.append(title, subtitle);
+
+  const disclaimer = drawerElement('div', 'manual-checkout-disclaimer', `${adminT('manualPaymentDisclaimer')} · ${adminT('manualPaymentRecordNotice')}`);
+
+  const itemsContainer = drawerElement('div', 'manual-checkout-items');
+  const items = Array.isArray(appointment.items) ? appointment.items : [];
+  let subtotalMinor = 0;
+  for (const it of items) {
+    const minor = it.price_snapshot_minor != null
+      ? Number(it.price_snapshot_minor)
+      : (Number(it.price) ? Math.round(Number(it.price) * 100) : 0);
+    subtotalMinor += minor;
+    const row = drawerElement('div', 'manual-checkout-item-row');
+    const info = drawerElement('div', '');
+    const name = drawerElement('div', 'manual-checkout-item-name', it.service_name_snapshot || it.name || adminT('serviceItems'));
+    const staffName = it.staff_assignments?.find(a => a.role === 'primary')?.staff_name || it.staff_name || '';
+    const staff = drawerElement('div', 'manual-checkout-item-staff', staffName);
+    info.append(name, staff);
+    const price = drawerElement('div', 'manual-checkout-item-price', formatMinorCurrency(minor));
+    row.append(info, price);
+    itemsContainer.appendChild(row);
+  }
+
+  const totals = drawerElement('div', 'manual-checkout-totals');
+  const subtotalRow = drawerElement('div', 'manual-checkout-totals-row');
+  subtotalRow.append(drawerElement('span', '', adminT('subtotal')), drawerElement('span', '', formatMinorCurrency(subtotalMinor)));
+  const discountRow = drawerElement('div', 'manual-checkout-totals-row');
+  discountRow.append(drawerElement('span', '', adminT('discount')), drawerElement('span', '', formatMinorCurrency(0)));
+  const totalRow = drawerElement('div', 'manual-checkout-totals-row is-total');
+  totalRow.append(drawerElement('span', '', adminT('finalDue')), drawerElement('span', '', formatMinorCurrency(subtotalMinor)));
+  totals.append(subtotalRow, discountRow, totalRow);
+
+  const methodsLabel = drawerElement('div', 'manual-checkout-methods-label', adminT('paymentMethod'));
+  const methodsGrid = drawerElement('div', 'manual-checkout-methods');
+
+  const methodButtons = [];
+  for (const m of paymentMethods) {
+    const btn = drawerElement('button', `manual-checkout-method-btn ${m.id === selectedMethod ? 'is-active' : ''}`);
+    btn.type = 'button';
+    btn.dataset.method = m.id;
+    const lbl = drawerElement('span', 'manual-checkout-method-label', m.label);
+    btn.appendChild(lbl);
+    if (m.sub) {
+      btn.appendChild(drawerElement('span', 'manual-checkout-method-sub', m.sub));
+    }
+    btn.addEventListener('click', () => {
+      selectedMethod = m.id;
+      for (const b of methodButtons) b.classList.toggle('is-active', b.dataset.method === m.id);
+    });
+    methodButtons.push(btn);
+    methodsGrid.appendChild(btn);
+  }
+
+  const actions = drawerElement('div', 'manual-checkout-actions');
+  const cancelBtn = drawerElement('button', 'manual-checkout-cancel-btn', adminT('cancel'));
+  cancelBtn.type = 'button';
+  const confirmBtn = drawerElement('button', 'manual-checkout-confirm-btn', adminT('confirmCheckout'));
+  confirmBtn.type = 'button';
+  actions.append(cancelBtn, confirmBtn);
+
+  dialog.append(header, disclaimer, itemsContainer, totals, methodsLabel, methodsGrid, actions);
+  document.body.appendChild(dialog);
+
+  let closed = false;
+  let submitting = false;
+
+  const close = () => {
+    closed = true;
+    try { dialog.close(); } catch (_) {}
+    dialog.remove();
+  };
+
+  cancelBtn.addEventListener('click', close);
+  dialog.addEventListener('cancel', event => { event.preventDefault(); close(); });
+
+  confirmBtn.addEventListener('click', async () => {
+    if (submitting) return;
+    submitting = true;
+    confirmBtn.disabled = true;
+    cancelBtn.disabled = true;
+    confirmBtn.textContent = adminT('submittingCheckout');
+
+    try {
+      const response = await fetch(`/api/owner/appointments/${encodeURIComponent(appointment.id)}/checkout`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          idempotencyKey,
+          paymentMethod: selectedMethod,
+          locale
+        })
+      });
+      const result = await response.json().catch(() => ({}));
+      if (closed) return;
+      if (!response.ok || !result.success) {
+        throw new Error(result.code ? (adminT(result.code) || result.code) : adminT('checkoutFailed'));
+      }
+      close();
+      showAdminToast(adminT('checkoutSuccess'), 'success');
+      await loadAppointments(currentRequestedLocationId);
+      renderAppointmentDrawerById(appointment.id);
+    } catch (err) {
+      if (closed) return;
+      submitting = false;
+      confirmBtn.disabled = false;
+      cancelBtn.disabled = false;
+      confirmBtn.textContent = adminT('confirmCheckout');
+      showAdminToast(err.message || adminT('checkoutFailed'), 'error');
+    }
+  });
+
+  dialog.showModal();
+}
+
 function renderDrawerFooterWithTextContent(footer, canonicalStatus) {
   footer.replaceChildren();
   const transitions = {
@@ -5128,16 +5402,29 @@ function renderAppointmentDrawer(appointment) {
       summaryCard.appendChild(drawerElement('div', 'drawer-unbilled-prompt coverage-unavailable', adminT('billingCoverageUnavailable')));
     }
 
-    // Pay Bill button: strictly disabled, no event listener, no POST
+    // Pay Bill button: enabled when FEATURE_CHECKOUT_ENABLED and appointment.can_start_checkout
     const payBillBtn = drawerElement('button', 'drawer-pay-bill-btn', adminT('payBill'));
     payBillBtn.type = 'button';
     payBillBtn.id = 'drawerPayBillBtn';
-    payBillBtn.disabled = true;
-    payBillBtn.setAttribute('aria-disabled', 'true');
-    summaryCard.appendChild(payBillBtn);
 
-    const payBillNote = drawerElement('div', 'drawer-pay-bill-note', adminT('payBillUnavailable'));
-    summaryCard.appendChild(payBillNote);
+    const isCheckoutFeatureEnabled = globalScope.FEATURE_CHECKOUT_ENABLED === true;
+    const canPayBill = isCheckoutFeatureEnabled && appointment.can_start_checkout === true;
+
+    if (canPayBill) {
+      payBillBtn.disabled = false;
+      payBillBtn.removeAttribute('aria-disabled');
+      payBillBtn.addEventListener('click', () => {
+        openManualCheckoutModal(appointment);
+      });
+      summaryCard.appendChild(payBillBtn);
+    } else {
+      payBillBtn.disabled = true;
+      payBillBtn.setAttribute('aria-disabled', 'true');
+      summaryCard.appendChild(payBillBtn);
+
+      const payBillNote = drawerElement('div', 'drawer-pay-bill-note', adminT('payBillUnavailable'));
+      summaryCard.appendChild(payBillNote);
+    }
 
     rightCol.appendChild(summaryCard);
     columnsWrapper.appendChild(rightCol);
