@@ -62,20 +62,38 @@ function createMockAdminContext(options = {}) {
         this._innerHTML = String(val || '');
       },
       appendChild(child) {
+        child.parentNode = this;
         this.children.push(child);
         return child;
       },
+      append(...children) {
+        children.forEach(child => this.appendChild(child));
+      },
       replaceChildren(...children) {
         this.children = children;
+        children.forEach(child => { child.parentNode = this; });
         this._textContent = '';
         this._innerHTML = '';
       },
+      remove() {
+        if (!this.parentNode) return;
+        this.parentNode.children = this.parentNode.children.filter(child => child !== this);
+        this.parentNode = null;
+      },
+      showModal() { this.open = true; },
+      close() { this.open = false; },
       hidden: false,
       disabled: false,
       style: {},
       classList: {
         add(...cls) { cls.forEach(c => classList.add(c)); },
         remove(...cls) { cls.forEach(c => classList.delete(c)); },
+        toggle(c, force) {
+          if (force === true) { classList.add(c); return true; }
+          if (force === false) { classList.delete(c); return false; }
+          if (classList.has(c)) { classList.delete(c); return false; }
+          classList.add(c); return true;
+        },
         contains(c) { return classList.has(c); },
         has(c) { return classList.has(c); }
       },
@@ -93,10 +111,10 @@ function createMockAdminContext(options = {}) {
       },
       dispatchEvent(event) {
         const arr = listeners.get(event.type) || [];
-        arr.forEach(h => h(event));
+        return Promise.all(arr.map(h => h(event)));
       },
       click() {
-        this.dispatchEvent({ type: 'click', target: this, preventDefault() {}, stopPropagation() {} });
+        return this.dispatchEvent({ type: 'click', target: this, preventDefault() {}, stopPropagation() {} });
       },
       focus() {},
       querySelector(selector) {
@@ -140,6 +158,7 @@ function createMockAdminContext(options = {}) {
 
   const alerts = [];
   const requests = [];
+  const documentBody = makeMockElement('documentBody', 'BODY');
 
   const context = {
     console,
@@ -170,6 +189,10 @@ function createMockAdminContext(options = {}) {
     alert: msg => alerts.push(msg),
     fetch: async (url, opts = {}) => {
       requests.push({ url, opts });
+      if (typeof options.fetchHandler === 'function') {
+        const customResponse = await options.fetchHandler(url, opts);
+        if (customResponse) return customResponse;
+      }
       return {
         status: 200,
         ok: true,
@@ -177,6 +200,7 @@ function createMockAdminContext(options = {}) {
       };
     },
     document: {
+      body: documentBody,
       getElementById(id) { return elements.get(id) || null; },
       createElement(tag) { return makeMockElement('', tag); },
       querySelector(sel) { return null; },
@@ -192,7 +216,7 @@ function createMockAdminContext(options = {}) {
     vm.runInNewContext(scriptMatch[1], context, { filename: 'public/admin.html' });
   }
 
-  return { context, elements, alerts, requests };
+  return { context, elements, alerts, requests, documentBody };
 }
 
 function findDescendant(node, predicate) {
@@ -459,7 +483,7 @@ test('5. Customer asset tiles: member_code alone does NOT render membership card
   assert.strictEqual(assetSectionD, null, 'Must NOT render any asset section when features are disabled');
 });
 
-test('6. Middle column: multi-service ordering, prices, duration, primary/assistant staff, item status, and strictly NO edit/add controls', () => {
+test('6. Middle column: multi-service ordering and Phase 1.2A Add Service entry', () => {
   const { context, elements } = createMockAdminContext({ locale: 'zh-CN' });
   const appointment = {
     id: '55555555-5555-4555-8555-555555555555',
@@ -508,15 +532,115 @@ test('6. Middle column: multi-service ordering, prices, duration, primary/assist
   assert.ok(itemCards[1].textContent.includes('Kelly'));
   assert.ok(itemCards[1].textContent.includes('未分配')); // assistant staff missing -> '未分配'
 
-  // Strictly NO add item / add product / edit / delete buttons
+  // Phase 1.2A adds only the existing-service action for eligible appointments.
   const addServiceBtn = findDescendant(drawerBody, el => el.id === 'drawerAddServiceBtn');
-  assert.equal(addServiceBtn, null, 'Must NOT contain Add Service button');
+  assert.ok(addServiceBtn, 'In-service appointment without checkout must expose Add Service');
+  assert.equal(addServiceBtn.textContent, '添加服务');
 
-  const anyAddOrEditBtn = findDescendant(drawerBody, el => {
+  const forbiddenControl = findDescendant(drawerBody, el => {
     const text = (el.textContent || '').toLowerCase();
-    return text.includes('添加项目') || text.includes('add service') || text.includes('添加产品') || text.includes('修改项目');
+    return text.includes('添加产品') || text.includes('自定义项目') || text.includes('修改项目') || text.includes('付款');
   });
-  assert.equal(anyAddOrEditBtn, null, 'Must NOT contain any add or edit service/product controls');
+  assert.equal(forbiddenControl, null, 'Must not expose product, custom item, edit or payment controls');
+});
+
+test('6a. Phase 1.2A no available staff keeps confirmation disabled and sends no POST', async () => {
+  let postCount = 0;
+  const serviceId = '11111111-1111-4111-8111-111111111111';
+  const { context, documentBody } = createMockAdminContext({
+    locale: 'en',
+    fetchHandler: async (url, opts) => {
+      if (opts?.method === 'POST') postCount += 1;
+      if (url.includes('/service-addons/options')) {
+        return { ok: true, status: 200, json: async () => ({ success: true, data: {
+          categories: [{ categoryId: 'cat-a', displayName: 'Facial' }],
+          services: [{ serviceId, displayName: 'Hydrating Facial', categoryId: 'cat-a', durationMinutes: 30, priceMinor: 8800, currencyCode: 'SGD' }]
+        } }) };
+      }
+      if (url.includes('/service-addons/staff-options')) {
+        return { ok: true, status: 200, json: async () => ({ success: true, data: {
+          computedStartAt: '2031-04-05T02:00:00.000Z',
+          computedEndAt: '2031-04-05T02:30:00.000Z',
+          staffOptions: []
+        } }) };
+      }
+      return null;
+    }
+  });
+  await context.openServiceAddonDialog({
+    id: '22222222-2222-4222-8222-222222222222',
+    status: 'in_service',
+    checkout: null
+  });
+  const dialog = findDescendant(documentBody, element => element.classList?.contains('service-addon-dialog'));
+  const serviceSelect = findDescendant(dialog, element => element.classList?.contains('service-addon-service'));
+  const save = findDescendant(dialog, element => element.tagName === 'BUTTON' && element.textContent === 'Add Service');
+  serviceSelect.value = serviceId;
+  await serviceSelect.dispatchEvent({ type: 'change', target: serviceSelect });
+  assert.equal(save.disabled, true);
+  await save.click();
+  assert.equal(postCount, 0);
+  assert.ok(dialog.textContent.includes('No staff are available'));
+});
+
+test('6b. Phase 1.2A double confirmation sends one POST and refreshes authoritative DTO once', async () => {
+  let postCount = 0;
+  let refreshCount = 0;
+  let redrawnAppointmentId = null;
+  let resolvePost;
+  const postGate = new Promise(resolve => { resolvePost = resolve; });
+  const serviceId = '33333333-3333-4333-8333-333333333333';
+  const staffId = '44444444-4444-4444-8444-444444444444';
+  const appointmentId = '55555555-5555-4555-8555-555555555555';
+  const { context, documentBody, requests } = createMockAdminContext({
+    locale: 'en',
+    fetchHandler: async (url, opts) => {
+      if (url.includes('/service-addons/options')) {
+        return { ok: true, status: 200, json: async () => ({ success: true, data: {
+          categories: [{ categoryId: 'cat-a', displayName: 'Facial' }],
+          services: [{ serviceId, displayName: 'Hydrating Facial', categoryId: 'cat-a', durationMinutes: 30, priceMinor: 8800, currencyCode: 'SGD' }]
+        } }) };
+      }
+      if (url.includes('/service-addons/staff-options')) {
+        return { ok: true, status: 200, json: async () => ({ success: true, data: {
+          computedStartAt: '2031-04-05T02:00:00.000Z',
+          computedEndAt: '2031-04-05T02:30:00.000Z',
+          staffOptions: [{ staffId, displayName: 'Available Staff' }]
+        } }) };
+      }
+      if (opts?.method === 'POST' && url.endsWith('/service-addons')) {
+        postCount += 1;
+        await postGate;
+        return { ok: true, status: 201, json: async () => ({ success: true, data: {} }) };
+      }
+      return null;
+    }
+  });
+  context.loadAppointments = async () => { refreshCount += 1; };
+  context.renderAppointmentDrawerById = id => { redrawnAppointmentId = id; };
+
+  await context.openServiceAddonDialog({ id: appointmentId, status: 'arrived', checkout: null });
+  const dialog = findDescendant(documentBody, element => element.classList?.contains('service-addon-dialog'));
+  const serviceSelect = findDescendant(dialog, element => element.classList?.contains('service-addon-service'));
+  const staffSelect = findDescendant(dialog, element => element.classList?.contains('service-addon-staff'));
+  const save = findDescendant(dialog, element => element.tagName === 'BUTTON' && element.textContent === 'Add Service');
+  serviceSelect.value = serviceId;
+  await serviceSelect.dispatchEvent({ type: 'change', target: serviceSelect });
+  staffSelect.value = staffId;
+  await staffSelect.dispatchEvent({ type: 'change', target: staffSelect });
+  assert.equal(save.disabled, false);
+
+  const firstClick = save.click();
+  const secondClick = save.click();
+  assert.equal(postCount, 1);
+  resolvePost();
+  await Promise.all([firstClick, secondClick]);
+
+  assert.equal(postCount, 1);
+  assert.equal(refreshCount, 1);
+  assert.equal(redrawnAppointmentId, appointmentId);
+  const post = requests.find(request => request.opts?.method === 'POST');
+  assert.deepEqual(Object.keys(JSON.parse(post.opts.body)).sort(), ['idempotencyKey', 'locale', 'serviceId', 'staffId']);
 });
 
 test('7. Right column: unbilled count, checkout states, disabled pay bill button without POST triggers', () => {

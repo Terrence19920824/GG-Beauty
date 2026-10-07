@@ -356,7 +356,7 @@ test('3b. Internal notes UI in Phase 1.1A workspace: static text display for all
   }
 });
 
-test('3c. Phase 1.1A read-only workspace hides add service entry point across all statuses', () => {
+test('3c. Phase 1.2A shows Add Service only for arrived/in_service without checkout', () => {
   for (const locale of ['zh-CN', 'en']) {
     for (const status of ['pending', 'confirmed', 'arrived', 'in_service', 'completed', 'cancelled', 'no_show']) {
       const { context, elements } = createMockAdminContext({ locale });
@@ -368,54 +368,43 @@ test('3c. Phase 1.1A read-only workspace hides add service entry point across al
         items: [{ service_name_snapshot: 'Haircut', duration_minutes_snapshot: 60 }]
       });
       const action = findDescendant(elements.get('drawerBody'), element => element.id === 'drawerAddServiceBtn');
-      assert.equal(action, null, `${status} must hide Add Service in Phase 1.1A read-only workspace`);
+      assert.equal(Boolean(action), ['arrived', 'in_service'].includes(status), `${status} Add Service visibility`);
     }
+    const { context, elements } = createMockAdminContext({ locale });
+    context.renderAppointmentDrawer({
+      id: '00000000-0000-4000-8000-000000000099',
+      status: 'in_service',
+      checkout: { exists: true },
+      items: [{ service_name_snapshot: 'Haircut', duration_minutes_snapshot: 60 }]
+    });
+    assert.equal(findDescendant(elements.get('drawerBody'), element => element.id === 'drawerAddServiceBtn'), null);
   }
   assert.match(adminHtml, /const idempotencyKey = createServiceAddonKey\(\)/);
   assert.match(adminHtml, /body: JSON\.stringify\(\{ serviceId: serviceSelect\.value, staffId: staffSelect\.value, locale, idempotencyKey \}\)/);
   assert.match(adminHtml, /\.drawer-add-service-btn,[\s\S]*?min-height:\s*44px/);
 });
 
-test('3d. Add Service hides inactive services and exposes only capable staff at the appointment location', () => {
+test('3d. Add Service search and category filters combine without client eligibility inference', () => {
   const { context } = createMockAdminContext();
-  const serviceActive = { id: 'service-active', is_active: true, bookable: true };
-  const serviceInactive = { id: 'service-inactive', is_active: false, bookable: true };
-  const serviceUnbookable = { id: 'service-unbookable', is_active: true, bookable: false };
-  const serviceInactiveCategory = { id: 'service-inactive-category', is_active: true, bookable: true };
-  const locationId = 'location-a';
-  const staff = [
-    { id: 'capable', is_active: true, bookable: true, locations: [{ id: locationId }] },
-    { id: 'incapable', is_active: true, bookable: true, locations: [{ id: locationId }] },
-    { id: 'other-location', is_active: true, bookable: true, locations: [{ id: 'location-b' }] },
-    { id: 'inactive-staff', is_active: false, bookable: true, locations: [{ id: locationId }] }
-  ].filter(member => context.isActiveServiceAddonStaffAtLocation(member, locationId));
-  const capabilities = new Map([
-    ['capable', [
-      { service_id: serviceActive.id, assigned: true, is_active: true, bookable: true, category_active: true },
-      { service_id: serviceInactiveCategory.id, assigned: true, is_active: true, bookable: true, category_active: false }
-    ]],
-    ['incapable', [{ service_id: serviceActive.id, assigned: false, is_active: true, bookable: true, category_active: true }]]
-  ]);
-  const visible = [serviceActive, serviceInactive, serviceUnbookable, serviceInactiveCategory]
-    .filter(context.isActiveServiceAddonService)
-    .filter(service => context.serviceAddonStaffForService(staff, capabilities, service.id).length > 0);
-
-  assert.deepEqual(visible.map(service => service.id), [serviceActive.id]);
+  const services = [
+    { serviceId: 'facial-a', displayName: 'Hydrating Facial', categoryId: 'facial' },
+    { serviceId: 'facial-b', displayName: 'Brightening Facial', categoryId: 'facial' },
+    { serviceId: 'massage-a', displayName: 'Body Massage', categoryId: 'massage' }
+  ];
   assert.deepEqual(
-    context.serviceAddonStaffForService(staff, capabilities, serviceActive.id).map(member => member.id),
-    ['capable']
+    context.filterServiceAddonServices(services, 'bright', 'facial').map(service => service.serviceId),
+    ['facial-b']
   );
-  assert.equal(staff.some(member => member.id === 'other-location'), false);
-  assert.equal(staff.some(member => member.id === 'inactive-staff'), false);
+  assert.deepEqual(context.filterServiceAddonServices(services, 'facial', 'massage'), []);
 });
 
 test('3e. Add Service domain errors have exact Chinese and English messages', () => {
   const { context } = createMockAdminContext();
   assert.equal(context.serviceAddonErrorKey('SERVICE_INACTIVE'), 'serviceAddonServiceInactive');
   assert.equal(context.serviceAddonErrorKey('STAFF_NOT_CAPABLE'), 'serviceAddonNotCapable');
-  assert.equal(i18n.t('serviceAddonServiceInactive', 'zh-CN'), '该项目已停用');
+  assert.equal(i18n.t('serviceAddonServiceInactive', 'zh-CN'), '该服务已停用');
   assert.equal(i18n.t('serviceAddonServiceInactive', 'en'), 'This service is unavailable.');
-  assert.equal(i18n.t('serviceAddonNotCapable', 'zh-CN'), '该员工不能做此项目');
+  assert.equal(i18n.t('serviceAddonNotCapable', 'zh-CN'), '该员工不能提供此服务');
   assert.equal(i18n.t('serviceAddonNotCapable', 'en'), 'This staff member cannot perform this service.');
 });
 

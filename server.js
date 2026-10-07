@@ -1296,6 +1296,20 @@ const ownerAppointmentServiceAddon = createOwnerAppointmentServiceAddon({
   safeErrorCode: safeStaffAuthErrorCode
 });
 
+app.get(
+  '/api/owner/appointments/:appointmentId/service-addons/options',
+  requireOwnerAuth,
+  requireOwnerRole(['owner', 'manager', 'admin', 'front_desk']),
+  ownerAppointmentServiceAddon.listOptions
+);
+
+app.get(
+  '/api/owner/appointments/:appointmentId/service-addons/staff-options',
+  requireOwnerAuth,
+  requireOwnerRole(['owner', 'manager', 'admin', 'front_desk']),
+  ownerAppointmentServiceAddon.listStaffOptions
+);
+
 app.post(
   '/api/owner/appointments/:appointmentId/service-addons',
   requireOwnerAuth,

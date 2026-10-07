@@ -48,6 +48,8 @@ test('migration chain is staged, read-only at the edges, tenant-safe and append-
 });
 
 test('API route and command transaction preserve authority and lock order', () => {
+  assert.match(serverSource, /app\.get\([\s\S]*?'\/api\/owner\/appointments\/:appointmentId\/service-addons\/options'[\s\S]*?ownerAppointmentServiceAddon\.listOptions/);
+  assert.match(serverSource, /app\.get\([\s\S]*?'\/api\/owner\/appointments\/:appointmentId\/service-addons\/staff-options'[\s\S]*?ownerAppointmentServiceAddon\.listStaffOptions/);
   assert.match(serverSource, /app\.post\([\s\S]*?'\/api\/owner\/appointments\/:appointmentId\/service-addons'[\s\S]*?requireOwnerRole\(\['owner', 'manager', 'admin', 'front_desk'\]\)[\s\S]*?ownerAppointmentServiceAddon\.addService/);
   const appointmentLock = addonSource.indexOf('FROM appointments');
   const idempotencyRead = addonSource.indexOf('FROM appointment_item_mutation_commands', appointmentLock);
@@ -96,12 +98,12 @@ test('strict body rejects client price, duration, fingerprint and numeric idempo
 
 test('owner UI has a compact authoritative flow and complete Chinese/English errors', () => {
   assert.match(adminSource, /\['arrived', 'in_service'\]\.includes\(canonicalStatus\)/);
-  assert.match(adminSource, /fetch\('\/api\/owner\/services'/);
-  assert.match(adminSource, /fetch\('\/api\/owner\/staff'/);
-  assert.match(adminSource, /\/api\/owner\/staff\/\$\{encodeURIComponent\(member\.id\)\}\/services/);
-  assert.match(adminSource, /capability\?\.category_active === true/);
-  assert.match(adminSource, /serviceAddonStaffForService\(staff, capabilitiesByStaff, service\.id\)/);
-  assert.match(adminSource, /service\.durationMinutes \|\| service\.duration_minutes/);
+  assert.match(adminSource, /service-addons\/options\?locale=/);
+  assert.match(adminSource, /service-addons\/staff-options\?serviceId=/);
+  assert.doesNotMatch(adminSource, /fetch\('\/api\/owner\/services'/);
+  assert.doesNotMatch(adminSource, /\/api\/owner\/staff\/\$\{encodeURIComponent\(member\.id\)\}\/services/);
+  assert.match(adminSource, /filterServiceAddonServices\(services, searchInput\.value, categorySelect\.value\)/);
+  assert.match(adminSource, /if \(submitting \|\| !serviceSelect\.value \|\| !staffSelect\.value\) return/);
   assert.match(adminSource, /const idempotencyKey = createServiceAddonKey\(\)/);
   assert.match(adminSource, /await loadAppointments\(currentRequestedLocationId\)/);
   assert.match(adminSource, /min-height:\s*44px/);
@@ -118,8 +120,8 @@ test('owner UI has a compact authoritative flow and complete Chinese/English err
     assert.doesNotMatch(zh, /[A-Za-z]{3,}/);
     assert.doesNotMatch(en, /[\u3400-\u9fff]/);
   }
-  assert.equal(i18n.t('serviceAddonServiceInactive', 'zh-CN'), '该项目已停用');
+  assert.equal(i18n.t('serviceAddonServiceInactive', 'zh-CN'), '该服务已停用');
   assert.equal(i18n.t('serviceAddonServiceInactive', 'en'), 'This service is unavailable.');
-  assert.equal(i18n.t('serviceAddonNotCapable', 'zh-CN'), '该员工不能做此项目');
+  assert.equal(i18n.t('serviceAddonNotCapable', 'zh-CN'), '该员工不能提供此服务');
   assert.equal(i18n.t('serviceAddonNotCapable', 'en'), 'This staff member cannot perform this service.');
 });
