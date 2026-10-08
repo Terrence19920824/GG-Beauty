@@ -866,6 +866,19 @@ const {
 
 app.post('/api/owner/login', ownerLogin);
 app.get('/api/owner/me', requireOwnerAuth, ownerMe);
+app.get(
+  '/api/owner/runtime-config',
+  requireOwnerAuth,
+  (_req, res) => {
+    res.set('Cache-Control', 'no-store, private, max-age=0');
+    res.json({
+      success: true,
+      featureFlags: {
+        checkoutEnabled: process.env.FEATURE_CHECKOUT_ENABLED === 'true'
+      }
+    });
+  }
+);
 app.post('/api/owner/logout', ownerLogout);
 
 const merchantOnboarding = createMerchantOnboarding({

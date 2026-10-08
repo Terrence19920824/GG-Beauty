@@ -1279,6 +1279,30 @@ if (typeof globalScope.FEATURE_CHECKOUT_ENABLED === 'undefined') {
   globalScope.FEATURE_CHECKOUT_ENABLED = false;
 }
 
+async function fetchRuntimeConfig() {
+  try {
+    const response = await fetch('/api/owner/runtime-config', {
+      credentials: 'same-origin',
+      cache: 'no-store'
+    });
+    if (!response.ok) {
+      globalScope.FEATURE_CHECKOUT_ENABLED = false;
+      return false;
+    }
+    const result = await response.json();
+    globalScope.FEATURE_CHECKOUT_ENABLED = Boolean(
+      result &&
+      result.featureFlags &&
+      result.featureFlags.checkoutEnabled === true
+    );
+    return globalScope.FEATURE_CHECKOUT_ENABLED;
+  } catch (_) {
+    globalScope.FEATURE_CHECKOUT_ENABLED = false;
+    return false;
+  }
+}
+globalScope.fetchRuntimeConfig = fetchRuntimeConfig;
+
 function safeGetElement(id) {
   try {
     return typeof document !== 'undefined' && typeof document.getElementById === 'function'
@@ -3408,6 +3432,7 @@ async function initializeAdmin() {
     }
 
     showAdmin();
+    await fetchRuntimeConfig();
     await loadAppointments();
   } catch (_error) {
     showLogin(adminT('authCheckFailed'));
@@ -3468,6 +3493,7 @@ async function adminLogin() {
 
     showAdmin();
 
+    await fetchRuntimeConfig();
     await loadAppointments();
 
   } catch (error) {
@@ -3476,6 +3502,7 @@ async function adminLogin() {
 }
 
 async function ownerLogout() {
+  globalScope.FEATURE_CHECKOUT_ENABLED = false;
   if (typeof closeAppointmentDrawer === 'function') {
     closeAppointmentDrawer();
   }
